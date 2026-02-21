@@ -61,6 +61,16 @@ class Tool(ABC):
 
     def _validate(self, val: Any, schema: dict[str, Any], path: str) -> list[str]:
         t, label = schema.get("type"), path or "parameter"
+        
+        # Check for null/None values
+        if val is None:
+            if "nullable" in schema and schema["nullable"]:
+                return []
+            elif schema.get("type") == "null":
+                return []
+            else:
+                return [f"{label} cannot be null"]
+        
         if t in self._TYPE_MAP and not isinstance(val, self._TYPE_MAP[t]):
             return [f"{label} should be {t}"]
         

@@ -58,6 +58,51 @@ class CronService:
         self._store: CronStore | None = None
         self._timer_task: asyncio.Task | None = None
         self._running = False
+        # 执行记录文件：记录每个 job 的执行时间
+        self._exec_log_path = store_path.parent / "executions.json"
+        self._exec_log: dict[str, list[int]] = {}  # job_id -> list of execution timestamps
+    
+    def _load_exec_log(self) -> dict[str, list[int]]:
+        """Load execution log from disk."""
+        if self._exec_log_path.exists():
+            try:
+                data = json.loads(self._exec_log_path.read_text())
+                return data.get("executions", {})
+            except Exception:
+                return {}
+        return {}
+    
+    def _save_exec_log(self) -> None:
+        """Save execution log to disk."""
+        self._exec_log_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {"executions": self._exec_log}
+        self._exec_log_path.write_text(json.dumps(data, indent=2))
+    
+    def _get_today_start_ms(self) -> int:
+        """Get today's start timestamp in ms (midnight)."""
+        import zoneinfo
+        now = datetime.now()
+        tz = zoneinfo.ZoneInfo("Asia/Shanghai")
+        today = datetime(now.year, now.month, now.day, tzinfo=tz)
+        return int(today.timestamp() * 1000)
+    
+    def _was_executed_today(self, job_id: str, scheduled_time_ms: int) -> bool:
+        """Check if job was already executed today at the scheduled time."""
+        today_start = self._get_today_start_ms()
+        executions = self._exec_log.get(job_id, [])
+        
+        for exec_time in executions:
+            # 如果执行时间在今天之内，认为已执行
+            if exec_time >= today_start:
+                return True
+        return False
+    
+    def _record_execution(self, job_id: str) -> None:
+        """Record a job execution."""
+        if job_id not in self._exec_log:
+            self._exec_log[job_id] = []
+        self._exec_log[job_id].append(_now_ms())
+        self._save_exec_log()
     
     def _load_store(self) -> CronStore:
         """Load jobs from disk."""
@@ -153,11 +198,98 @@ class CronService:
     async def start(self) -> None:
         """Start the cron service."""
         self._running = True
+        self._store = None  # Force reload from disk
         self._load_store()
+        self._exec_log = self._load_exec_log()  # 加载执行记录
+        
+        # Bug 2 fix: 先检查 missed jobs（使用当前存储的 next_run_at_ms）
+        await self._run_missed_jobs()
+        
+        # 然后重新计算下次运行时间
         self._recompute_next_runs()
+        
         self._save_store()
         self._arm_timer()
         logger.info(f"Cron service started with {len(self._store.jobs if self._store else [])} jobs")
+    
+    def _compute_today_run_time(self, schedule: CronSchedule) -> int | None:
+        """计算今天应该执行的时间。返回今天第一个执行时间（无论是否已错过）。"""
+        if schedule.kind != "cron" or not schedule.expr:
+            return None
+        
+        try:
+            from croniter import croniter
+            from zoneinfo import ZoneInfo
+            
+            now = datetime.now()
+            tz = ZoneInfo(schedule.tz) if schedule.tz else now.astimezone().tzinfo
+            now_dt = now.astimezone(tz)
+            
+            # 获取今天开始的时间
+            today_start = datetime(now_dt.year, now_dt.month, now_dt.day, tzinfo=tz)
+            
+            # 使用 croniter 获取今天的执行时间
+            cron = croniter(schedule.expr, today_start)
+            
+            # 获取今天的第一个执行时间
+            next_dt = cron.get_next(datetime)
+            
+            # 如果今天的已经全部错过，返回 None
+            if next_dt.date() > today_start.date():
+                return None
+            
+            # 返回今天第一个执行时间（无论是否已错过）
+            return int(next_dt.timestamp() * 1000)
+        except Exception:
+            return None
+    
+    async def _run_missed_jobs(self) -> None:
+        """Run jobs that were missed because the service was down.
+        
+        检查执行记录，避免重复执行同一天的 job。
+        """
+        if not self._store:
+            return
+        
+        now = _now_ms()
+        missed_jobs = []
+        
+        for job in self._store.jobs:
+            if not job.enabled:
+                continue
+            
+            if not job.state.next_run_at_ms:
+                continue
+            
+            # 对于 cron job，需要计算今天应该执行的时间
+            if job.schedule.kind == "cron":
+                today_run_time = self._compute_today_run_time(job.schedule)
+                
+                if today_run_time is None:
+                    # 今天的执行时间已经全部错过或还没到
+                    continue
+                
+                # 如果当前时间 >= 今天应该执行的时间
+                if now >= today_run_time:
+                    # 检查今天是否已执行
+                    if self._was_executed_today(job.id, today_run_time):
+                        logger.info(f"Cron: job '{job.name}' already executed today, skipping")
+                        continue
+                    
+                    missed_jobs.append(job)
+                    logger.info(f"Cron: missed job '{job.name}' ({job.id}), scheduled at {datetime.fromtimestamp(today_run_time/1000)}")
+            else:
+                # 对于 other job types，使用存储的 next_run_at_ms
+                if now >= job.state.next_run_at_ms:
+                    missed_jobs.append(job)
+                    logger.info(f"Cron: missed job '{job.name}' ({job.id}), scheduled at {datetime.fromtimestamp(job.state.next_run_at_ms/1000)}")
+        
+        # 执行所有错过的 jobs
+        for job in missed_jobs:
+            # 注意：_execute_job 中会调用 _record_execution
+            # 更新下次运行时间（避免重复执行）
+            job.state.next_run_at_ms = _compute_next_run(job.schedule, now)
+            await self._execute_job(job)
     
     def stop(self) -> None:
         """Stop the cron service."""
@@ -188,19 +320,32 @@ class CronService:
         if self._timer_task:
             self._timer_task.cancel()
         
-        next_wake = self._get_next_wake_ms()
-        if not next_wake or not self._running:
+        if not self._running:
             return
         
-        delay_ms = max(0, next_wake - _now_ms())
-        delay_s = delay_ms / 1000
+        # 修复: 即使没有 job，也要保持一个基础 timer 运行
+        # 这样可以检测新添加的 job
+        next_wake = self._get_next_wake_ms()
+        
+        if next_wake:
+            # 有 job，按下次运行时间安排
+            delay_ms = max(0, next_wake - _now_ms())
+            delay_s = delay_ms / 1000
+        else:
+            # 没有 job，每 60 秒检查一次文件变化
+            delay_s = 60
         
         async def tick():
             await asyncio.sleep(delay_s)
             if self._running:
+                # 每次 tick 都重新加载 jobs（检测新添加的 job）
+                self._load_store()
                 await self._on_timer()
         
         self._timer_task = asyncio.create_task(tick())
+        
+        if not next_wake:
+            logger.debug("Cron: no jobs, running background monitor (checking every 60s)")
     
     async def _on_timer(self) -> None:
         """Handle timer tick - run due jobs."""
@@ -240,6 +385,9 @@ class CronService:
         
         job.state.last_run_at_ms = start_ms
         job.updated_at_ms = _now_ms()
+        
+        # 记录执行（用于防止重复执行）
+        self._record_execution(job.id)
         
         # Handle one-shot jobs
         if job.schedule.kind == "at":

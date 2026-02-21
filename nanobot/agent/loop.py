@@ -5,6 +5,7 @@ from contextlib import AsyncExitStack
 import json
 import json_repair
 from pathlib import Path
+import time
 from typing import Any
 
 from loguru import logger
@@ -20,6 +21,10 @@ from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.cron import CronTool
+from nanobot.agent.tools.save_skill import SaveSkillTool
+from nanobot.agent.tools.outlook import OutlookTool
+from nanobot.agent.tools.attachment_analyzer import AttachmentAnalyzerTool
+from nanobot.agent.tools.task_memory import TaskMemoryTool
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.subagent import SubagentManager
 from nanobot.session.manager import Session, SessionManager
@@ -121,6 +126,16 @@ class AgentLoop:
         # Cron tool (for scheduling)
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
+        
+        # Save skill tool (for saving workflows as reusable skills)
+        self.tools.register(SaveSkillTool(self.workspace))
+        
+        # Outlook tools (for email processing)
+        self.tools.register(OutlookTool())
+        self.tools.register(AttachmentAnalyzerTool())
+        
+        # Task knowledge tool
+        self.tools.register(TaskMemoryTool(self.workspace))
     
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -197,7 +212,15 @@ class AgentLoop:
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
-                messages.append({"role": "user", "content": "Reflect on the results and decide next steps."})
+                
+                # 根据最后执行的工具决定是否提示继续
+                last_tool = response.tool_calls[-1].name if response.tool_calls else ""
+                
+                # 需要继续的工具：outlook, attachment_analyzer, message
+                continue_tools = {"outlook", "attachment_analyzer", "message"}
+                
+                if last_tool in continue_tools:
+                    messages.append({"role": "user", "content": "继续执行！如果需要提取附件、分析内容、发邮件，立即调用工具。不要只返回文字，立即行动！"})
             else:
                 final_content = response.content
                 break
@@ -209,6 +232,71 @@ class AgentLoop:
         self._running = True
         await self._connect_mcp()
         logger.info("Agent loop started")
+        
+        # 后台任务：检查空闲时间并触发记忆整合
+        async def idle_checker():
+            import json
+            from datetime import datetime
+            logger.info("Idle checker started")
+            while self._running:
+                await asyncio.sleep(30)  # 每 30 秒检查一次
+                try:
+                    # 从磁盘加载所有 session 文件并检查空闲时间
+                    # sessions 在 workspace/sessions 或 ~/.nanobot/workspace/sessions
+                    sessions_dir = self.workspace / "sessions"
+                    if not sessions_dir.exists():
+                        # 尝试用户目录下的 .nanobot
+                        from pathlib import Path
+                        home_sessions = Path.home() / ".nanobot" / "workspace" / "sessions"
+                        if home_sessions.exists():
+                            sessions_dir = home_sessions
+                        else:
+                            continue
+                    
+                    session_files = list(sessions_dir.glob("*.jsonl"))
+                    if not session_files:
+                        continue
+                    
+                    for session_file in session_files:
+                        try:
+                            # JSONL 文件每行是一个 JSON 对象 - 只读取最后 200 字符来获取时间戳
+                            content = session_file.read_text(encoding="utf-8").strip()
+                            if not content:
+                                continue
+                            
+                            # 快速获取最后一行
+                            last_newline = content.rfind('\n')
+                            last_line = content[last_newline+1:] if last_newline >= 0 else content
+                            
+                            data = json.loads(last_line)
+                            last_time = data.get("timestamp", "")
+                            
+                            if not last_time:
+                                continue
+                            
+                            # 解析时间戳
+                            try:
+                                last_ts = datetime.fromisoformat(last_time.replace("Z", "+00:00"))
+                                idle_duration = (datetime.now() - last_ts).total_seconds()
+                            except:
+                                continue
+                            
+                            idle_threshold = 600  # 10 分钟
+                            if idle_duration > idle_threshold:
+                                logger.info(f"Session {session_file.stem}: Idle for {idle_duration/60:.0f}min, consolidating...")
+                                # 加载 session 并触发整合（让 _consolidate_memory 内部判断是否需要）
+                                session = self.sessions.get_or_create(session_file.stem)
+                                if session:
+                                    # 直接调用，不检查 _idle_consolidated
+                                    asyncio.create_task(self._consolidate_memory(session))
+                        except Exception as e:
+                            logger.debug(f"Error checking session {session_file.name}: {e}")
+                except Exception as e:
+                    logger.error(f"Idle check error: {e}")
+        
+        # 启动后台空闲检查任务
+        logger.info("Starting idle checker...")
+        idle_task = asyncio.create_task(idle_checker())
 
         while self._running:
             try:
@@ -265,6 +353,15 @@ class AgentLoop:
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
         
+        # 检查用户是否确认整合记忆
+        user_response = msg.content.strip().lower()
+        if user_response in ["是", "好", "yes", "ok", "好 的", "是的"]:
+            # 用户确认整合记忆
+            logger.info(f"Session {session.key}: User confirmed memory consolidation")
+            asyncio.create_task(self._consolidate_memory(session))
+            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
+                                  content="好的，正在帮你整合记忆...")
+        
         # Handle slash commands
         cmd = msg.content.strip().lower()
         if cmd == "/new":
@@ -286,8 +383,31 @@ class AgentLoop:
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
                                   content="🐈 nanobot commands:\n/new — Start a new conversation\n/help — Show available commands")
         
-        if len(session.messages) > self.memory_window:
+        # 修改：不再基于对话数量触发记忆整合
+        # 改为基于空闲时间触发 + 对话数量提醒
+        
+        # 1. 初始化最后活跃时间和空闲整合状态
+        if not hasattr(session, 'last_active_time'):
+            session.last_active_time = time.time()
+        if not hasattr(session, '_idle_consolidated'):
+            session._idle_consolidated = False
+        
+        # 2. 检查是否超过 10 分钟空闲
+        idle_threshold = 10 * 60  # 10 分钟
+        idle_duration = time.time() - session.last_active_time
+        
+        # 3. 检查是否需要触发空闲记忆整合（只触发一次）
+        if idle_duration > idle_threshold and not session._idle_consolidated:
+            logger.info(f"Session {session.key}: Idle for {idle_duration/60:.1f} minutes, triggering memory consolidation")
+            session._idle_consolidated = True
             asyncio.create_task(self._consolidate_memory(session))
+        
+        # 4. 更新活跃时间（用户正在说话）
+        session.last_active_time = time.time()
+        
+        # 5. 检查是否需要提醒用户整合（每 20 个对话，但不打断执行）
+        if len(session.messages) > 0 and len(session.messages) % 20 == 0:
+            logger.info(f"Session {session.key}: {len(session.messages)} messages, user may want to consolidate")
 
         self._set_tool_context(msg.channel, msg.chat_id)
         initial_messages = self.context.build_messages(
@@ -308,6 +428,14 @@ class AgentLoop:
         session.add_message("user", msg.content)
         session.add_message("assistant", final_content,
                             tools_used=tools_used if tools_used else None)
+        
+        # 检查是否需要询问用户是否整合记忆（每 20 个对话）
+        total_messages = len(session.messages)
+        if total_messages > 0 and total_messages % 20 == 0:
+            # 在回复末尾添加整合记忆的询问
+            consolidation_prompt = "\n\n💡 已经进行了很多对话。要我帮你整合记忆吗？（输入是或好确认）"
+            final_content = final_content + consolidation_prompt
+        
         self.sessions.save(session)
         
         return OutboundMessage(

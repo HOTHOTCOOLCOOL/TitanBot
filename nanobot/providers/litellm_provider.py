@@ -8,6 +8,10 @@ from typing import Any
 import litellm
 from litellm import acompletion
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.providers.registry import find_by_model, find_gateway
 
@@ -126,6 +130,24 @@ class LiteLLMProvider(LLMProvider):
         """
         model = self._resolve_model(model or self.default_model)
         
+        # If this is different from the default model (e.g. dynamic VLM route), 
+        # ensure its provider API key is loaded into the environment
+        if model != self.default_model:
+            from nanobot.config.schema import Config
+            config = Config()
+            vlm_provider_config = config.get_provider(model)
+            if vlm_provider_config and vlm_provider_config.api_key:
+                from nanobot.providers.registry import find_by_model
+                spec = find_by_model(model)
+                if spec and spec.env_key:
+                    os.environ.setdefault(spec.env_key, vlm_provider_config.api_key)
+                    if vlm_provider_config.api_base:
+                        effective_base = vlm_provider_config.api_base
+                        for env_name, env_val in spec.env_extras:
+                            resolved = env_val.replace("{api_key}", vlm_provider_config.api_key)
+                            resolved = resolved.replace("{api_base}", effective_base)
+                            os.environ.setdefault(env_name, resolved)
+        
         # Clamp max_tokens to at least 1 — negative or zero values cause
         # LiteLLM to reject the request with "max_tokens must be at least 1".
         max_tokens = max(1, max_tokens)
@@ -155,11 +177,20 @@ class LiteLLMProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
+            
+        import time
+        with open(f"llm_payload_{int(time.time())}.json", "w", encoding="utf-8") as _f:
+            import json
+            try:
+                json.dump(kwargs, _f, ensure_ascii=False, indent=2)
+            except TypeError:
+                _f.write(str(kwargs))
         
         try:
             response = await acompletion(**kwargs)
             return self._parse_response(response)
         except Exception as e:
+            logger.error(f"LiteLLM Provider encountered an error calling {model}. Full exception details:", exc_info=True)
             # Return error as content for graceful handling
             return LLMResponse(
                 content=f"Error calling LLM: {str(e)}",

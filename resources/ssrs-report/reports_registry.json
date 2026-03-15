@@ -1,0 +1,66 @@
+{
+    "_comment": "SSRS Report Registry - 维护 Report名称/别名 到 SSRS URL 的映射。新增report只需在此文件添加条目，无需修改代码。",
+    "reports": {
+        "购物村排名": {
+            "aliases": [
+                "购物村ranking",
+                "Top sales",
+                "Top_sales_10",
+                "销售排行",
+                "门店排名"
+            ],
+            "url": "http://vcgkpb04/ReportServer?%2FDaily%20Check%2FTop_sales_10",
+            "params": {
+                "rs:ParameterLanguage": "en-US"
+            },
+            "preferred_format": "CSV",
+            "fallback_format": "HTML4.0",
+            "description": "Top 10 shopping village / store sales ranking report (daily)",
+            "auth": "ntlm",
+            "category": "sales"
+        },
+        "SHV日销售": {
+            "aliases": [
+                "SHV Daily FF Sales",
+                "SHV FF Sales",
+                "沙湾销售",
+                "SHV销售"
+            ],
+            "url": "http://vcgkpb04/ReportServer?%2FDaily%20Check%2FSHV_Daily_FF_Sales",
+            "params": {
+                "rs:ParameterLanguage": "en-US"
+            },
+            "preferred_format": "CSV",
+            "fallback_format": "HTML4.0",
+            "description": "SHV (Sha Wan Village) daily FF & Sales report",
+            "auth": "ntlm",
+            "category": "sales"
+        },
+        "SZV日销售": {
+            "aliases": [
+                "SZV Daily FF Sales",
+                "SZV FF Sales",
+                "沙洲销售",
+                "SZV销售"
+            ],
+            "url": "http://vcgkpb04/ReportServer?%2FDaily%20Check%2FSZV_Daily_FF_Sales",
+            "params": {
+                "rs:ParameterLanguage": "en-US"
+            },
+            "preferred_format": "CSV",
+            "fallback_format": "HTML4.0",
+            "description": "SZV (Sha Zhou Village) daily FF & Sales report",
+            "auth": "ntlm",
+            "category": "sales"
+        }
+    },
+    "_format_notes": {
+        "CSV": "Best for structured numeric data; LLM-friendly plain text",
+        "HTML4.0": "Good for table-heavy reports; parsed to readable text",
+        "PDF": "Binary format; use only if CSV/HTML unavailable",
+        "EXCELOPENXML": "Avoid - SSRS Excel export is not clean"
+    },
+    "_auth_notes": {
+        "ntlm": "Uses Windows NTLM authentication via SSRS_USER/SSRS_PASSWORD/SSRS_DOMAIN in .env"
+    }
+}

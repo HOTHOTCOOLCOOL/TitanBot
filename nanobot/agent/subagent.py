@@ -130,10 +130,30 @@ class SubagentManager:
             while iteration < max_iterations:
                 iteration += 1
                 
+                # Determine if this turn requires the VLM
+                target_model = self.model
+                from nanobot.config.schema import Config
+                config = Config()
+                
+                if config.agents.vlm.enabled and config.agents.vlm.model:
+                    has_image = False
+                    for msg in messages:
+                        if isinstance(msg.get("content"), list):
+                            for block in msg["content"]:
+                                if block.get("type") == "image_url":
+                                    has_image = True
+                                    break
+                        if has_image:
+                            break
+                    
+                    if has_image:
+                        target_model = config.agents.vlm.model
+                        logger.debug(f"Image detected in subagent context. Routing to VLM: {target_model}")
+
                 response = await self.provider.chat(
                     messages=messages,
                     tools=tools.get_definitions(),
-                    model=self.model,
+                    model=target_model,
                     temperature=self.temperature,
                     max_tokens=self.max_tokens,
                 )

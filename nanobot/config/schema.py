@@ -187,12 +187,33 @@ class AgentDefaults(Base):
     temperature: float = 0.7
     max_tool_iterations: int = 20
     memory_window: int = 50
+    language: str = "en"  # User-facing language: "en" or "zh"
+
+
+class VLMConfig(Base):
+    """Vision Language Model configuration for Multi-Modal tasks."""
+
+    enabled: bool = True
+    model: str | None = None  # E.g. "dashscope/qwen-vl-max". If none, falls back to default agent model.
+
+
+class VisionConfig(Base):
+    """Vision system configuration for RPA screen perception."""
+
+    ocr_enabled: bool = True           # Enable PaddleOCR fallback when UIAutomation finds too few elements
+    ocr_min_confidence: float = 0.7    # Minimum OCR confidence threshold (0-1)
+    uia_fallback_threshold: int = 3    # Trigger OCR when UIAutomation finds fewer elements than this
+    yolo_enabled: bool = False         # Enable YOLO UI element detection (requires: pip install ultralytics)
+    yolo_model: str = "gpa-gui-detector"  # Model name or absolute path to a .pt file
+    yolo_confidence: float = 0.3       # Minimum YOLO detection confidence (0-1)
 
 
 class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    vlm: VLMConfig = Field(default_factory=VLMConfig)
+    vision: VisionConfig = Field(default_factory=VisionConfig)
 
 
 class ProviderConfig(Base):
@@ -283,16 +304,31 @@ class Config(BaseSettings):
         return Path(self.agents.defaults.workspace).expanduser()
 
     def _match_provider(self, model: str | None = None) -> tuple["ProviderConfig | None", str | None]:
-        """Match provider config and its registry name. Returns (config, spec_name)."""
         from nanobot.providers.registry import PROVIDERS
 
-        model_lower = (model or self.agents.defaults.model).lower()
+        model_str = (model or self.agents.defaults.model).lower()
+        
+        # If the model explicitly specifies a provider prefix (e.g. "dashscope/qwen-vl-max")
+        # we should respect that over the custom fallback.
+        if "/" in model_str:
+            prefix = model_str.split("/")[0]
+            for spec in PROVIDERS:
+                if prefix == spec.name or prefix == spec.litellm_prefix:
+                    p = getattr(self.providers, spec.name, None)
+                    if p and (spec.is_oauth or getattr(p, "api_key", None)):
+                        return p, spec.name
+
+        # Custom provider takes priority when explicitly configured (has api_base).
+        # This ensures local endpoints (e.g. OpenCode at 127.0.0.1:4096) are used
+        # even when the model name contains a known provider keyword like "minimax".
+        if self.providers.custom.api_base:
+            return self.providers.custom, "custom"
 
         # Match by keyword (order follows PROVIDERS registry)
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
-            if p and any(kw in model_lower for kw in spec.keywords):
-                if spec.is_oauth or p.api_key:
+            if p and any(kw in model_str for kw in spec.keywords):
+                if spec.is_oauth or getattr(p, "api_key", None):
                     return p, spec.name
 
         # Fallback: gateways first, then others (follows registry order)
@@ -301,7 +337,7 @@ class Config(BaseSettings):
             if spec.is_oauth:
                 continue
             p = getattr(self.providers, spec.name, None)
-            if p and p.api_key:
+            if p and getattr(p, "api_key", None):
                 return p, spec.name
         return None, None
 
@@ -336,4 +372,10 @@ class Config(BaseSettings):
                 return spec.default_api_base
         return None
 
-    model_config = ConfigDict(env_prefix="NANOBOT_", env_nested_delimiter="__")
+    model_config = ConfigDict(
+        env_prefix="NANOBOT_",
+        env_nested_delimiter="__",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )

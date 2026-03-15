@@ -58,51 +58,7 @@ class CronService:
         self._store: CronStore | None = None
         self._timer_task: asyncio.Task | None = None
         self._running = False
-        # 执行记录文件：记录每个 job 的执行时间
         self._exec_log_path = store_path.parent / "executions.json"
-        self._exec_log: dict[str, list[int]] = {}  # job_id -> list of execution timestamps
-    
-    def _load_exec_log(self) -> dict[str, list[int]]:
-        """Load execution log from disk."""
-        if self._exec_log_path.exists():
-            try:
-                data = json.loads(self._exec_log_path.read_text())
-                return data.get("executions", {})
-            except Exception:
-                return {}
-        return {}
-    
-    def _save_exec_log(self) -> None:
-        """Save execution log to disk."""
-        self._exec_log_path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"executions": self._exec_log}
-        self._exec_log_path.write_text(json.dumps(data, indent=2))
-    
-    def _get_today_start_ms(self) -> int:
-        """Get today's start timestamp in ms (midnight)."""
-        import zoneinfo
-        now = datetime.now()
-        tz = zoneinfo.ZoneInfo("Asia/Shanghai")
-        today = datetime(now.year, now.month, now.day, tzinfo=tz)
-        return int(today.timestamp() * 1000)
-    
-    def _was_executed_today(self, job_id: str, scheduled_time_ms: int) -> bool:
-        """Check if job was already executed today at the scheduled time."""
-        today_start = self._get_today_start_ms()
-        executions = self._exec_log.get(job_id, [])
-        
-        for exec_time in executions:
-            # 如果执行时间在今天之内，认为已执行
-            if exec_time >= today_start:
-                return True
-        return False
-    
-    def _record_execution(self, job_id: str) -> None:
-        """Record a job execution."""
-        if job_id not in self._exec_log:
-            self._exec_log[job_id] = []
-        self._exec_log[job_id].append(_now_ms())
-        self._save_exec_log()
     
     def _load_store(self) -> CronStore:
         """Load jobs from disk."""
@@ -200,96 +156,21 @@ class CronService:
         self._running = True
         self._store = None  # Force reload from disk
         self._load_store()
-        self._exec_log = self._load_exec_log()  # 加载执行记录
         
-        # Bug 2 fix: 先检查 missed jobs（使用当前存储的 next_run_at_ms）
-        await self._run_missed_jobs()
+        # When starting up, we DO NOT recompute next_run_at_ms.
+        # This guarantees that if a job was scheduled at 8:00 AM, and we boot at 9:00 AM,
+        # its next_run_at_ms will still be 8:00 AM, and it will be immediately picked up
+        # by the heartbeat timer as a catch-up execution.
         
-        # 然后重新计算下次运行时间
-        self._recompute_next_runs()
+        # One thing we do want to catch: If a one-shot ('at') job was already executed,
+        # it shouldn't be executed again. But since we update state.next_run_at_ms = None
+        # for one-shot jobs after execution, those will naturally not be triggered.
         
-        self._save_store()
         self._arm_timer()
         logger.info(f"Cron service started with {len(self._store.jobs if self._store else [])} jobs")
     
-    def _compute_today_run_time(self, schedule: CronSchedule) -> int | None:
-        """计算今天应该执行的时间。返回今天第一个执行时间（无论是否已错过）。"""
-        if schedule.kind != "cron" or not schedule.expr:
-            return None
-        
-        try:
-            from croniter import croniter
-            from zoneinfo import ZoneInfo
-            
-            now = datetime.now()
-            tz = ZoneInfo(schedule.tz) if schedule.tz else now.astimezone().tzinfo
-            now_dt = now.astimezone(tz)
-            
-            # 获取今天开始的时间
-            today_start = datetime(now_dt.year, now_dt.month, now_dt.day, tzinfo=tz)
-            
-            # 使用 croniter 获取今天的执行时间
-            cron = croniter(schedule.expr, today_start)
-            
-            # 获取今天的第一个执行时间
-            next_dt = cron.get_next(datetime)
-            
-            # 如果今天的已经全部错过，返回 None
-            if next_dt.date() > today_start.date():
-                return None
-            
-            # 返回今天第一个执行时间（无论是否已错过）
-            return int(next_dt.timestamp() * 1000)
-        except Exception:
-            return None
-    
-    async def _run_missed_jobs(self) -> None:
-        """Run jobs that were missed because the service was down.
-        
-        检查执行记录，避免重复执行同一天的 job。
-        """
-        if not self._store:
-            return
-        
-        now = _now_ms()
-        missed_jobs = []
-        
-        for job in self._store.jobs:
-            if not job.enabled:
-                continue
-            
-            if not job.state.next_run_at_ms:
-                continue
-            
-            # 对于 cron job，需要计算今天应该执行的时间
-            if job.schedule.kind == "cron":
-                today_run_time = self._compute_today_run_time(job.schedule)
-                
-                if today_run_time is None:
-                    # 今天的执行时间已经全部错过或还没到
-                    continue
-                
-                # 如果当前时间 >= 今天应该执行的时间
-                if now >= today_run_time:
-                    # 检查今天是否已执行
-                    if self._was_executed_today(job.id, today_run_time):
-                        logger.info(f"Cron: job '{job.name}' already executed today, skipping")
-                        continue
-                    
-                    missed_jobs.append(job)
-                    logger.info(f"Cron: missed job '{job.name}' ({job.id}), scheduled at {datetime.fromtimestamp(today_run_time/1000)}")
-            else:
-                # 对于 other job types，使用存储的 next_run_at_ms
-                if now >= job.state.next_run_at_ms:
-                    missed_jobs.append(job)
-                    logger.info(f"Cron: missed job '{job.name}' ({job.id}), scheduled at {datetime.fromtimestamp(job.state.next_run_at_ms/1000)}")
-        
-        # 执行所有错过的 jobs
-        for job in missed_jobs:
-            # 注意：_execute_job 中会调用 _record_execution
-            # 更新下次运行时间（避免重复执行）
-            job.state.next_run_at_ms = _compute_next_run(job.schedule, now)
-            await self._execute_job(job)
+    # Legacy _run_missed_jobs completely removed.
+    # The new heartbeat timer inherently handles missed jobs without double execution.
     
     def stop(self) -> None:
         """Stop the cron service."""
@@ -304,7 +185,7 @@ class CronService:
             return
         now = _now_ms()
         for job in self._store.jobs:
-            if job.enabled:
+            if job.enabled and job.state.next_run_at_ms is None:
                 job.state.next_run_at_ms = _compute_next_run(job.schedule, now)
     
     def _get_next_wake_ms(self) -> int | None:
@@ -323,36 +204,36 @@ class CronService:
         if not self._running:
             return
         
-        # 修复: 即使没有 job，也要保持一个基础 timer 运行
-        # 这样可以检测新添加的 job
+        # We always wake up at least once every 30 seconds.
+        # This protects against PC sleep suspending the OS monotonic clock for hours.
+        # When PC wakes up, the small timeout completes immediately and time.time() jumps.
+        max_sleep_s = 30.0
+        
         next_wake = self._get_next_wake_ms()
+        delay_s = max_sleep_s
         
         if next_wake:
-            # 有 job，按下次运行时间安排
-            delay_ms = max(0, next_wake - _now_ms())
-            delay_s = delay_ms / 1000
-        else:
-            # 没有 job，每 60 秒检查一次文件变化
-            delay_s = 60
-        
-        async def tick():
+            exact_delay_ms = max(0, next_wake - _now_ms())
+            exact_delay_s = exact_delay_ms / 1000.0
+            delay_s = min(exact_delay_s, max_sleep_s)
+            
+        async def heartbeat():
             await asyncio.sleep(delay_s)
             if self._running:
-                # 每次 tick 都重新加载 jobs（检测新添加的 job）
-                self._load_store()
                 await self._on_timer()
         
-        self._timer_task = asyncio.create_task(tick())
-        
-        if not next_wake:
-            logger.debug("Cron: no jobs, running background monitor (checking every 60s)")
+        self._timer_task = asyncio.create_task(heartbeat())
     
     async def _on_timer(self) -> None:
         """Handle timer tick - run due jobs."""
         if not self._store:
             return
-        
+            
         now = _now_ms()
+        
+        # The store is kept in memory for the lifetime of the service.
+        # External edits to jobs.json are picked up on next service restart.
+        
         due_jobs = [
             j for j in self._store.jobs
             if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
@@ -361,7 +242,7 @@ class CronService:
         for job in due_jobs:
             await self._execute_job(job)
         
-        self._save_store()
+        # Rearm the timer whether we ran jobs or just hit the 30s heartbeat
         self._arm_timer()
     
     async def _execute_job(self, job: CronJob) -> None:
@@ -369,27 +250,9 @@ class CronService:
         start_ms = _now_ms()
         logger.info(f"Cron: executing job '{job.name}' ({job.id})")
         
-        try:
-            response = None
-            if self.on_job:
-                response = await self.on_job(job)
-            
-            job.state.last_status = "ok"
-            job.state.last_error = None
-            logger.info(f"Cron: job '{job.name}' completed")
-            
-        except Exception as e:
-            job.state.last_status = "error"
-            job.state.last_error = str(e)
-            logger.error(f"Cron: job '{job.name}' failed: {e}")
-        
-        job.state.last_run_at_ms = start_ms
-        job.updated_at_ms = _now_ms()
-        
-        # 记录执行（用于防止重复执行）
-        self._record_execution(job.id)
-        
-        # Handle one-shot jobs
+        # CRITICAL FAULT TOLERANCE: Update next run time BEFORE execution.
+        # If the server hard crashes during execution, we do not want to double-trigger
+        # the same heavy report on reboot. It will catch the _next_ interval.
         if job.schedule.kind == "at":
             if job.delete_after_run:
                 self._store.jobs = [j for j in self._store.jobs if j.id != job.id]
@@ -399,6 +262,39 @@ class CronService:
         else:
             # Compute next run
             job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+            
+        self._save_store()
+        
+        try:
+            response = None
+            if self.on_job:
+                response = await self.on_job(job)
+            
+            # Check if the agent turn actually succeeded by inspecting the response.
+            # process_direct() never raises — it returns error messages as plain text.
+            _fail_markers = ["Error:", "error:", "failed", "timed out"]
+            if response and any(marker in response for marker in _fail_markers):
+                job.state.last_status = "error"
+                job.state.last_error = response[:200]
+                logger.warning(f"Cron: job '{job.name}' returned error response: {response[:100]}")
+                # Schedule a retry in 15 minutes (if sooner than next regular run)
+                retry_ms = start_ms + 15 * 60 * 1000
+                if job.schedule.kind != "at" and job.state.next_run_at_ms and retry_ms < job.state.next_run_at_ms:
+                    job.state.next_run_at_ms = retry_ms
+                    logger.info(f"Cron: scheduled retry for '{job.name}' in 15 minutes")
+            else:
+                job.state.last_status = "ok"
+                job.state.last_error = None
+                logger.info(f"Cron: job '{job.name}' completed successfully")
+            
+        except Exception as e:
+            job.state.last_status = "error"
+            job.state.last_error = str(e)
+            logger.error(f"Cron: job '{job.name}' failed: {e}")
+        
+        job.state.last_run_at_ms = start_ms
+        job.updated_at_ms = _now_ms()
+        self._save_store()
     
     # ========== Public API ==========
     

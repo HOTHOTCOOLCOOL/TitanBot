@@ -20,6 +20,7 @@ def get_data_dir() -> Path:
 def load_config(config_path: Path | None = None) -> Config:
     """
     Load configuration from file or create default.
+    Environment variables and .env file take precedence over config.json.
 
     Args:
         config_path: Optional path to config file. Uses default if not provided.
@@ -27,19 +28,43 @@ def load_config(config_path: Path | None = None) -> Config:
     Returns:
         Loaded configuration object.
     """
+    from dotenv import load_dotenv, dotenv_values
+
+    # Load .env file into environment variables
+    load_dotenv()
+
     path = config_path or get_config_path()
+    data = {}
 
     if path.exists():
         try:
             with open(path) as f:
                 data = json.load(f)
             data = _migrate_config(data)
-            return Config.model_validate(data)
         except (json.JSONDecodeError, ValueError) as e:
             print(f"Warning: Failed to load config from {path}: {e}")
             print("Using default configuration.")
 
-    return Config()
+    # Explicitly merge .env values into data to ensure they override config.json
+    # Pydantic BaseSettings also picks up env vars, but merging here ensures
+    # .env values specifically take precedence over same keys in config.json.
+    env_values = dotenv_values()
+    for key, value in env_values.items():
+        if key.startswith("NANOBOT_"):
+            # Remove prefix and split by delimiter
+            parts = key[len("NANOBOT_"):].lower().split("__")
+            
+            # Navigate/build nested dict
+            curr = data
+            for i, part in enumerate(parts):
+                if i == len(parts) - 1:
+                    curr[part] = value
+                else:
+                    if part not in curr or not isinstance(curr[part], dict):
+                        curr[part] = {}
+                    curr = curr[part]
+
+    return Config(**data)
 
 
 def save_config(config: Config, config_path: Path | None = None) -> None:

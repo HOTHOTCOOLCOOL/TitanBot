@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import logging
 import json_repair
 from openai import AsyncOpenAI
+
+logger = logging.getLogger(__name__)
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 
@@ -24,9 +27,14 @@ class CustomProvider(LLMProvider):
         if tools:
             kwargs.update(tools=tools, tool_choice="auto")
         try:
+            logger.info(f"Sending request to custom provider: {self._client.base_url}")
             return self._parse(await self._client.chat.completions.create(**kwargs))
         except Exception as e:
-            return LLMResponse(content=f"Error: {e}", finish_reason="error")
+            logger.error(f"Error calling custom provider at {self._client.base_url} (HTTP 502/Gateway timeout is common for LocalLLM during cold starts). Full exception: {e}", exc_info=True)
+            return LLMResponse(
+                content=f"Error: {str(e)}",
+                finish_reason="error"
+            )
 
     def _parse(self, response: Any) -> LLMResponse:
         choice = response.choices[0]

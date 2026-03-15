@@ -13,6 +13,9 @@ Task Knowledge Store - 用于存储和管理任务知识库
             "result_summary": "分析结果摘要",
             "confirmed": true,
             "use_count": 5,
+            "success_count": 4,
+            "fail_count": 1,
+            "last_steps_detail": [{"tool": "...", "args": {}, "result": "..."}],
             "created_at": "2026-02-21"
         }
     ]
@@ -57,7 +60,8 @@ class TaskKnowledgeStore:
         description: str,
         steps: list[str],
         params: dict[str, Any],
-        result_summary: str
+        result_summary: str,
+        steps_detail: list[dict[str, Any]] | None = None,
     ) -> None:
         """添加新任务到知识库"""
         task = {
@@ -69,6 +73,9 @@ class TaskKnowledgeStore:
             "result_summary": result_summary,
             "confirmed": True,
             "use_count": 1,
+            "success_count": 1,
+            "fail_count": 0,
+            "last_steps_detail": steps_detail or [],
             "created_at": datetime.now().strftime("%Y-%m-%d")
         }
         self._tasks.append(task)
@@ -126,3 +133,40 @@ class TaskKnowledgeStore:
         self._tasks = self._tasks[:max_tasks]
         self._save()
         return removed
+
+    def record_success(self, key: str) -> bool:
+        """Record a successful task execution."""
+        for task in self._tasks:
+            if task.get("key") == key:
+                task["success_count"] = task.get("success_count", 0) + 1
+                self._save()
+                return True
+        return False
+
+    def record_failure(self, key: str) -> bool:
+        """Record a failed task execution."""
+        for task in self._tasks:
+            if task.get("key") == key:
+                task["fail_count"] = task.get("fail_count", 0) + 1
+                self._save()
+                return True
+        return False
+
+    def get_success_rate(self, key: str) -> float:
+        """Get the success rate (0.0-1.0) for a task. Returns -1 if not found."""
+        task = self.find_task(key)
+        if not task:
+            return -1.0
+        total = task.get("success_count", 0) + task.get("fail_count", 0)
+        if total == 0:
+            return 1.0
+        return task.get("success_count", 0) / total
+
+    def update_steps_detail(self, key: str, steps_detail: list[dict[str, Any]]) -> bool:
+        """Update the last detailed steps for a task."""
+        for task in self._tasks:
+            if task.get("key") == key:
+                task["last_steps_detail"] = steps_detail
+                self._save()
+                return True
+        return False

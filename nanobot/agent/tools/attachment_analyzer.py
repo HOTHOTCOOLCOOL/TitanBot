@@ -18,9 +18,12 @@ from typing import Any
 
 # Import at top level to avoid runtime import issues
 try:
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 except ImportError:
-    PdfReader = None
+    try:
+        from PyPDF2 import PdfReader
+    except ImportError:
+        PdfReader = None
 
 try:
     import pandas as pd
@@ -35,6 +38,95 @@ except ImportError:
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool
+from nanobot.compute import run_cpu_heavy
+
+
+def _extract_pdf_sync(file_path: str, max_length: int) -> str:
+    """Synchronous, picklable function to extract text from a PDF."""
+    if PdfReader is None:
+        return "Error: PyPDF2 not installed. Run: pip install PyPDF2"
+    
+    try:
+        reader = PdfReader(file_path)
+        text = ""
+        for page in reader.pages:
+            try:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text
+            except Exception:
+                continue
+        
+        if not text.strip():
+            return "=== PDF ===\n\n[No text content could be extracted]"
+        
+        if len(text) > max_length:
+            text = text[:max_length] + "\n\n... [truncated]"
+        
+        return f"=== PDF ===\n\n{text}"
+    except Exception as e:
+        return f"Error parsing PDF: {str(e)}"
+
+
+def _extract_excel_sync(file_path: str, max_length: int) -> str:
+    """Synchronous, picklable function to extract data from Excel (all sheets)."""
+    if pd is None:
+        return "Error: pandas not installed. Run: pip install pandas"
+    
+    try:
+        dfs = pd.read_excel(file_path, sheet_name=None)  # Read all sheets
+        
+        output = "=== Excel ===\n"
+        for sheet_name, df in dfs.items():
+            output += f"\n--- Sheet: {sheet_name} ---\n"
+            output += f"表格共 {df.shape[0]} 行，{df.shape[1]} 列。\n"
+            output += f"列名: {', '.join(df.columns.tolist())}\n\n"
+            output += "前5行数据:\n" + df.head().to_string() + "\n"
+        
+        if len(output) > max_length:
+            output = output[:max_length] + "\n\n... [truncated]"
+        
+        return output
+    except Exception as e:
+        return f"Error parsing Excel: {str(e)}"
+
+
+def _extract_word_sync(file_path: str, max_length: int) -> str:
+    """Synchronous, picklable function to extract text from Word."""
+    if Document is None:
+        return "Error: python-docx not installed. Run: pip install python-docx"
+    
+    try:
+        doc = Document(file_path)
+        text = "\n".join([para.text for para in doc.paragraphs])
+        
+        if len(text) > max_length:
+            text = text[:max_length] + "\n\n... [truncated]"
+        
+        return f"=== Word ===\n\n{text}"
+    except Exception as e:
+        return f"Error parsing Word: {str(e)}"
+
+
+def _extract_csv_sync(file_path: str, max_length: int) -> str:
+    """Synchronous, picklable function to extract data from CSV."""
+    if pd is None:
+        return "Error: pandas not installed. Run: pip install pandas"
+    
+    try:
+        df = pd.read_csv(file_path)
+        
+        output = f"=== CSV ===\n"
+        output += f"表格共 {df.shape[0]} 行，{df.shape[1]} 列。\n"
+        output += f"列名: {', '.join(df.columns.tolist())}\n\n"
+        output += "前10行:\n" + df.head(10).to_string()
+        
+        if len(output) > max_length:
+            output = output[:max_length] + "\n\n... [truncated]"
+        
+        return output
+    except Exception as e:
+        return f"Error parsing CSV: {str(e)}"
 
 
 class AttachmentAnalyzerTool(Tool):
@@ -161,71 +253,21 @@ Supported: {ext in ['.pdf', '.xls', '.xlsx', '.doc', '.docx', '.txt', '.csv']}""
             return f"Error parsing file: {str(e)}"
     
     async def _parse_pdf(self, file_path: str, max_length: int) -> str:
-        """Parse PDF file."""
-        if PdfReader is None:
-            return "Error: PyPDF2 not installed. Run: pip install PyPDF2"
-        
-        try:
-            reader = PdfReader(file_path)
-            text = ""
-            for page in reader.pages:
-                try:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text
-                except Exception as e:
-                    logger.debug(f"Error extracting page text: {e}")
-                    continue
-            
-            if not text.strip():
-                return f"=== PDF ===\n\n[No text content could be extracted]"
-            
-            if len(text) > max_length:
-                text = text[:max_length] + f"\n\n... [truncated]"
-            
-            return f"=== PDF ===\n\n{text}"
-        except Exception as e:
-            logger.error(f"PDF parsing error: {e}")
-            return f"Error parsing PDF: {str(e)}"
+        """Parse PDF file using ComputeBroker offloading."""
+        return await run_cpu_heavy(_extract_pdf_sync, file_path, max_length)
     
     async def _parse_excel(self, file_path: str, max_length: int) -> str:
-        """Parse Excel file."""
-        if pd is None:
-            return "Error: pandas not installed. Run: pip install pandas"
-        
-        try:
-            df = pd.read_excel(file_path)
-            
-            output = f"=== Excel ===\n"
-            output += f"表格共 {df.shape[0]} 行，{df.shape[1]} 列。\n"
-            output += f"列名: {', '.join(df.columns.tolist())}\n\n"
-            output += "前5行数据:\n" + df.head().to_string()
-            
-            if len(output) > max_length:
-                output = output[:max_length] + "\n\n... [truncated]"
-            
-            return output
-        except Exception as e:
-            return f"Error parsing Excel: {str(e)}"
+        """Parse Excel file using ComputeBroker offloading."""
+        return await run_cpu_heavy(_extract_excel_sync, file_path, max_length)
     
     async def _parse_word(self, file_path: str, max_length: int) -> str:
-        """Parse Word document."""
-        if Document is None:
-            return "Error: python-docx not installed. Run: pip install python-docx"
-        
-        try:
-            doc = Document(file_path)
-            text = "\n".join([para.text for para in doc.paragraphs])
-            
-            if len(text) > max_length:
-                text = text[:max_length] + "\n\n... [truncated]"
-            
-            return f"=== Word ===\n\n{text}"
-        except Exception as e:
-            return f"Error parsing Word: {str(e)}"
+        """Parse Word document using ComputeBroker offloading."""
+        return await run_cpu_heavy(_extract_word_sync, file_path, max_length)
     
     async def _parse_text(self, file_path: str, max_length: int) -> str:
         """Parse text file."""
+        # Text file reading is fast and I/O bound mostly; standard async is acceptable
+        # but since we lack async file I/O out of the box here, standard reading is fine.
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 text = f.read()
@@ -238,24 +280,8 @@ Supported: {ext in ['.pdf', '.xls', '.xlsx', '.doc', '.docx', '.txt', '.csv']}""
             return f"Error reading text file: {str(e)}"
     
     async def _parse_csv(self, file_path: str, max_length: int) -> str:
-        """Parse CSV file."""
-        if pd is None:
-            return "Error: pandas not installed. Run: pip install pandas"
-        
-        try:
-            df = pd.read_csv(file_path)
-            
-            output = f"=== CSV ===\n"
-            output += f"表格共 {df.shape[0]} 行，{df.shape[1]} 列。\n"
-            output += f"列名: {', '.join(df.columns.tolist())}\n\n"
-            output += "前10行:\n" + df.head(10).to_string()
-            
-            if len(output) > max_length:
-                output = output[:max_length] + "\n\n... [truncated]"
-            
-            return output
-        except Exception as e:
-            return f"Error parsing CSV: {str(e)}"
+        """Parse CSV file using ComputeBroker offloading."""
+        return await run_cpu_heavy(_extract_csv_sync, file_path, max_length)
     
     def cleanup(self):
         """Clean up temporary files."""

@@ -1,269 +1,98 @@
-# 智能任务执行工作流程规划
+# 智能任务执行工作流程规划 v3
 
 ## 🎯 核心理念
 
-用户给 nanobot 一个任务时，应该有以下智能流程：
+**Lightweight + Smart**：不是做一个企业级编排引擎，而是让一个轻量 Agent 越用越聪明。
 
 ```
-用户任务 → 知识库预分析 → 任务规划 → 执行 → 知识沉淀 → 未来复用
-```
-
----
-
-## 📋 当前状态
-
-### 已有基础
-- task_memory: 简单的 key-value 存储
-- task_knowledge.py: 基本的 CRUD
-- loop.py: idle checker + 记忆整合
-
-### 缺失能力
-- ❌ 任务预分析（是否有知识可复用）
-- ❌ 任务状态追踪（进行中/已完成/失败）
-- ❌ 执行中增量更新
-- ❌ 知识沉淀自动化
-
----
-
-## 🔄 新工作流程设计
-
-### 阶段 1: 任务预分析（Task Pre-Analyzer）
-
-**目标**：收到任务时，先查知识库，判断如何处理
-
-```
-用户: "帮我分析上周的业绩报表邮件"
-
-nanobot 内部流程:
-1. 调用 task_memory.search("业绩报表")
-2. 找到历史任务:
-   - key: "weekly_report_analysis"
-   - status: "completed"
-   - last_run: "2026-02-14"
-   - steps: ["search_emails", "analyze_attachments", "generate_summary"]
-   - params: {"folder": "inbox/reporting", "date_range": "last_week"}
-3. 判断:
-   - ✅ 相似任务存在，可复用步骤
-   - ⚠️ 参数可能不同，需要调整
-   - ⏰ 上次是2周前，可能需要更新数据
-4. 输出计划:
-   "找到相似任务「周报分析」，步骤可复用。需要：
-   - 更新日期参数（上周）
-   - 重新获取最新邮件
-   - 复用分析逻辑"
-```
-
-**实现方案**：
-```python
-class TaskPreAnalyzer:
-    def analyze(self, user_task: str) -> TaskAnalysisResult:
-        # 1. 语义搜索知识库
-        similar = self.knowledge.search_similar(user_task)
-        
-        # 2. 判断状态
-        for task in similar:
-            if task.status == "completed":
-                return TaskAnalysisResult(
-                    reusable=True,
-                    source_task=task,
-                    steps=task.steps,
-                    params_needed=self._extract_params(user_task),
-                    suggestion=f"可复用「{task.key}」的步骤"
-                )
-        
-        return TaskAnalysisResult(reusable=False, steps=[])
+用户任务 → 提取Key → 知识库匹配 → 复用/执行 → 用户确认保存 → 隐式反馈 → 自动升级Skill
 ```
 
 ---
 
-### 阶段 2: 任务状态追踪（Task State Machine）
+## ✅ 已实现
 
-**目标**：追踪每个任务的生命周期
+| 模块 | 文件 | 状态 |
+|------|------|------|
+| 知识库工作流引擎 | `knowledge_workflow.py` | ✅ Key提取→代码级匹配→保存→升级 |
+| 知识库质量追踪 | `task_knowledge.py` | ✅ success/fail计数→成功率→Few-shot |
+| 隐式反馈 | `loop.py` | ✅ 下一消息自动推断成败 |
+| Few-shot 注入 | `loop.py` + `knowledge_workflow.py` | ✅ 重新执行时注入历史成功步骤 |
+| Knowledge→Skill 升级 | `loop.py` + `knowledge_workflow.py` | ✅ 成功≥3次自动提示升级 |
+| 记忆整合 | `loop.py` + `memory.py` | ✅ 每20条消息自动consolidation |
+| 国际化 | `i18n.py` | ✅ zh/en 双语消息 |
+| 会话持久化 | `session/manager.py` | ✅ pending_knowledge/save/upgrade + 消息计数器 |
+| 语言配置 | `config/schema.py` | ✅ language 字段 |
+| 测试覆盖 | `tests/` | ✅ 204 tests passing |
+
+---
+
+## 🏗️ 架构决策
+
+### ❌ 不做：多 Expert 架构
+
+**理由**：LLM 本身就是最好的 Router。把所有工具注册给一个 Agent，LLM 会自己选择正确的工具。
+多 Expert 增加一层不必要的 LLM 调用开销，且跨 Expert 任务（如"搜邮件然后发给同事"）无法自然处理。
+
+> 单 Agent + 全工具集 = nanobot 的核心优势
+
+### ❌ 不做：LLM 语义匹配
+
+**理由**：知识库条目通常 ≤100 个。代码级匹配（精确→子串→词频）足够准确，且零 token 消耗。
+只在 Key 提取阶段使用一次轻量 LLM 调用（temperature=0.1, max_tokens=100）。
+
+### ❌ 不做：增量更新 / 断点续传
+
+**理由**：nanobot 任务通常在 2-20 个 tool call 内完成。长任务用已有的 SubagentManager 即可。
+实现断点续传需要序列化 LLM 上下文，大多数 LLM API 不支持。
+
+### ❌ 不做：自动知识沉淀
+
+**理由**：LLM 判断"质量"标准主观，误判率高。自动保存导致知识库膨胀，匹配精度下降。
+用户手动确认保存 = 高质量知识库。等积累足够数据后再考虑自动化。
+
+---
+
+## 🔄 当前工作流程
 
 ```
-任务状态机：
-- created    → 刚创建
-- planning   → 规划中（分析知识库）
-- running    → 执行中
-- pending_review → 等待用户确认
-- completed  → 完成
-- failed     → 失败
-- cancelled  → 取消
-```
+用户: "帮我分析上周发给老板的报表邮件"
 
-**存储结构扩展**：
-```python
-class TrackedTask:
-    task_id: str
-    key: str  # 任务类型标识
-    user_request: str  # 用户原始请求
-    status: TaskStatus
-    
-    # 规划阶段
-    analyzed_from: str  # 基于哪个历史任务
-    steps: list[Step]
-    params: dict
-    
-    # 执行阶段
-    current_step: int
-    step_results: list[StepResult]
-    
-    # 完成阶段
-    result_summary: str
-    knowledge_to_save: dict
-    created_at: datetime
-    updated_at: datetime
+1. KnowledgeWorkflow.extract_key()
+   → "分析上周报表邮件" (LLM 提取，≤50字)
+
+2. KnowledgeWorkflow.match_knowledge()
+   → 精确匹配 / 子串匹配 / jieba 分词相似度
+   → 找到: "分析报表邮件"（成功率 100%, 执行 3 次）
+
+3. 用户选择
+   → "直接用": 返回保存的结果
+   → "重新执行": LLM 重新处理（注入 Few-shot 参考步骤）
+
+4. 执行完成后
+   → 有工具调用 → 询问是否保存
+   → 用户回复"是" → 保存到知识库
+   → 成功≥3次 → 提示升级为 Skill
+
+5. 隐式反馈（下一条消息自动触发）
+   → 用户正常继续 → record_outcome(key, True)
+   → 用户说"不对/错了" → record_outcome(key, False)
 ```
 
 ---
 
-### 阶段 3: 执行中增量更新（Incremental Updates）
+## 📋 待办事项
 
-**目标**：执行过程中实时更新知识库
+### P1: 多用户支持（下一阶段）
+- [ ] 每个用户独立的知识库分区
+- [ ] 会话隔离与身份绑定
+- [ ] 多用户并发安全
+- [ ] 用户配置个性化（语言偏好等）
 
-```
-场景：用户让 nanobot 分析 100 封邮件
-
-当前流程（一次性）：
-1. 获取所有邮件
-2. 分析所有
-3. 全部完成后才保存
-
-改进流程（增量）：
-1. 获取前 10 封
-2. 分析 → 部分结果
-3. ⚡ 保存中间结果到知识库
-4. 继续处理下 10 封
-5. ...
-6. 最终整合全部结果
-7. 保存完整知识
-
-好处：
-- 如果中断，保留已有结果
-- 用户可随时查询进度
-- 支持长任务恢复
-```
-
----
-
-### 阶段 4: 知识沉淀自动化（Auto-Knowledge Distillation）
-
-**目标**：任务完成后自动构建可复用知识
-
-```
-当前（手动）：
-1. 用户确认"收到"
-2. 调用 task_memory.save()
-3. 手动填写信息
-
-改进（自动）：
-任务完成后自动提取：
-1. 任务类型（key）
-2. 执行步骤（steps）
-3. 参数模式（params schema）
-4. 结果摘要（result_summary）
-5. 关键教训（lessons_learned）
-
-保存到知识库，无需用户手动确认
-（除非用户明确要求不保存）
-```
-
----
-
-## 🛠️ 实施路径
-
-### Step 1: 任务状态机（基础）
-```
-优先级：P0
-时间：1-2天
-
-实现：
-1. 创建 TaskState enum
-2. 创建 TaskTracker 类
-3. 修改 task_memory 工具支持状态
-4. 添加 status 查询功能
-```
-
-### Step 2: 预分析器（核心）
-```
-优先级：P0
-时间：2-3天
-
-实现：
-1. TaskPreAnalyzer 类
-2. 语义搜索（简单关键词匹配起步）
-3. 任务相似度判断
-4. 生成任务规划建议
-5. 集成到 loop.py 入口
-```
-
-### Step 3: 增量更新（进阶）
-```
-优先级：P1
-时间：3-5天
-
-实现：
-1. 中间结果存储
-2. 断点续传支持
-3. 进度查询 API
-4. 长任务分片机制
-```
-
-### Step 4: 自动沉淀（完善）
-```
-优先级：P1
-时间：2-3天
-
-实现：
-1. LLM 自动提取知识
-2. 知识质量评估
-3. 自动保存逻辑
-4. 用户确认可选
-```
-
----
-
-## 📊 预期效果
-
-### 优化前
-```
-用户: "分析业绩报表"
-→ nanobot: 不知道以前做过类似任务
-→ 从零开始执行
-→ 完成后手动保存
-→ 下次同类任务: 重复全部工作
-```
-
-### 优化后
-```
-用户: "分析业绩报表"
-→ nanobot: 查知识库，找到"周报分析"任务
-→ "发现相似任务「周报分析」，可复用步骤：
-   - 搜索邮件 ✓
-   - 分析附件 ✓
-   - 只需更新参数（日期）"
-→ 执行（复用 70% 步骤）
-→ 自动保存新知识
-→ 下次同类任务: 复用 90%
-```
-
----
-
-## 🔧 技术要点
-
-1. **知识库 Schema 升级**
-   - 添加 status 字段
-   - 添加 steps 详情
-   - 添加 params_schema
-   - 添加 execution_history
-
-2. **LLM 参与**
-   - 任务分类（classification）
-   - 参数提取（extraction）
-   - 知识摘要（summarization）
-   - 相似度判断（similarity）
-
-3. **数据一致性**
-   - 事务性保存
-   - 版本控制
-   - 回滚机制
+### P2: 进阶优化
+- [ ] 知识库过期清理机制
+- [ ] 匹配结果置信度评分
+- [ ] 工具调用统计与分析
+- [ ] 性能指标收集（响应时间、token 用量）
+- [ ] Tool 扩展: `SqlQueryTool` → `CreateExcelTool` → `CreateDocxTool` → `PbiTool`
+- [ ] 向量搜索: 知识库条目 > 100 时考虑 embedding + FTS 混合检索

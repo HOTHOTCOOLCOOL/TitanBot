@@ -52,6 +52,11 @@
   <img src="nanobot_arch.png" alt="nanobot architecture" width="800">
 </p>
 
+> [!NOTE] 
+> **For Developers and AI Agents (LLMs)**: Before modifying the codebase or adding new skills, please read `PROJECT_STATUS.md` for a comprehensive overview of the current project state, recently integrated features (like SSRS JSON registries and Windows authentication), and easily portable skills located in the `resources/` directory.
+
+
+
 ## ✨ Features
 
 <table align="center">

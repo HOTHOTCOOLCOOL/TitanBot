@@ -29,6 +29,11 @@ class Session:
     updated_at: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
     last_consolidated: int = 0  # Number of messages already consolidated to files
+    pending_knowledge: dict[str, Any] | None = None  # Awaiting user reply on knowledge match
+    pending_save: dict[str, Any] | None = None  # Awaiting user confirmation to save
+    pending_upgrade: dict[str, Any] | None = None  # Awaiting user confirmation to upgrade skill
+    last_task_key: str | None = None  # Last completed task key (for implicit feedback tracking)
+    message_count_since_consolidation: int = 0  # Auto-consolidation trigger counter
     
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         """Add a message to the session."""
@@ -56,6 +61,10 @@ class Session:
         """Clear all messages and reset session to initial state."""
         self.messages = []
         self.last_consolidated = 0
+        self.pending_knowledge = None
+        self.pending_save = None
+        self.pending_upgrade = None
+        self.message_count_since_consolidation = 0
         self.updated_at = datetime.now()
 
 
@@ -120,6 +129,12 @@ class SessionManager:
             metadata = {}
             created_at = None
             last_consolidated = 0
+            # Store full data line to extract top-level fields
+            pending_knowledge = None
+            pending_save = None
+            pending_upgrade = None
+            msg_count_since_consolidation = 0
+            last_task_key = None
 
             with open(path) as f:
                 for line in f:
@@ -133,6 +148,11 @@ class SessionManager:
                         metadata = data.get("metadata", {})
                         created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
                         last_consolidated = data.get("last_consolidated", 0)
+                        pending_knowledge = data.get("pending_knowledge")
+                        pending_save = data.get("pending_save")
+                        pending_upgrade = data.get("pending_upgrade")
+                        msg_count_since_consolidation = data.get("message_count_since_consolidation", 0)
+                        last_task_key = data.get("last_task_key")
                     else:
                         messages.append(data)
 
@@ -141,7 +161,12 @@ class SessionManager:
                 messages=messages,
                 created_at=created_at or datetime.now(),
                 metadata=metadata,
-                last_consolidated=last_consolidated
+                last_consolidated=last_consolidated,
+                pending_knowledge=pending_knowledge,
+                pending_save=pending_save,
+                pending_upgrade=pending_upgrade,
+                last_task_key=last_task_key,
+                message_count_since_consolidation=msg_count_since_consolidation,
             )
         except Exception as e:
             logger.warning(f"Failed to load session {key}: {e}")
@@ -157,7 +182,12 @@ class SessionManager:
                 "created_at": session.created_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
                 "metadata": session.metadata,
-                "last_consolidated": session.last_consolidated
+                "last_consolidated": session.last_consolidated,
+                "pending_knowledge": session.pending_knowledge,
+                "pending_save": session.pending_save,
+                "pending_upgrade": session.pending_upgrade,
+                "last_task_key": session.last_task_key,
+                "message_count_since_consolidation": session.message_count_since_consolidation,
             }
             f.write(json.dumps(metadata_line) + "\n")
             for msg in session.messages:

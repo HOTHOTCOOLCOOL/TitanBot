@@ -15,6 +15,7 @@ import os
 import tempfile
 from datetime import datetime
 from typing import Any
+import asyncio
 
 from loguru import logger
 
@@ -50,8 +51,6 @@ class OutlookTool(Tool):
     """
     
     def __init__(self):
-        self._outlook_app = None
-        self._namespace = None
         self._current_folder_name = "inbox"
         self._last_search_results = []
     
@@ -63,9 +62,11 @@ class OutlookTool(Tool):
     def description(self) -> str:
         return """Microsoft Outlook integration tool.
 Allows you to:
-- Find emails by subject, sender, date, or folder (supports nested folders like "Inbox/Reporting")
+- Find emails by subject, sender, recipient, date, or folder
+  - Supports nested folders like "Inbox/Reporting"
+  - Supports "sent" folder for Sent Items
+- Read full email body with read_email action
 - Extract attachments from found emails (filters out images, keeps documents only)
-- Get email content and metadata
 - Send emails with attachments
 
 IMPORTANT (执行力要求):
@@ -78,6 +79,9 @@ IMPORTANT (执行力要求):
 2. DO NOT ask "do you want me to continue?" after each step
 3. Just EXECUTE the full workflow automatically
 4. If user says "send to my email", MUST call send_email
+5. To search sent emails, use folder="sent"
+6. To find emails sent TO someone, use to_email parameter
+7. To read full email body after find_emails, use read_email action
 
 Note: Requires Outlook application to be running on Windows."""
     
@@ -88,16 +92,17 @@ Note: Requires Outlook application to be running on Windows."""
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["find_emails", "get_attachment", "get_all_attachments", "send_email", "list_folders"],
-                    "description": "The action to perform"
+                    "enum": ["find_emails", "read_email", "get_attachment", "get_all_attachments", "send_email", "list_folders"],
+                    "description": "The action to perform. Use read_email to get the full body of a previously found email."
                 },
                 "criteria": {
                     "type": "object",
                     "description": "Search criteria (for find_emails action)",
                     "properties": {
                         "subject_contains": {"type": "string"},
-                        "from_email": {"type": "string"},
-                        "folder": {"type": "string"},
+                        "from_email": {"type": "string", "description": "Filter by sender email address (partial match)"},
+                        "to_email": {"type": "string", "description": "Filter by recipient email address (partial match, for sent folder)"},
+                        "folder": {"type": "string", "description": "Folder to search. 'inbox' (default), 'sent' for Sent Items, or nested path like 'inbox/reporting'"},
                         "received_after": {"type": "string"},
                         "received_before": {"type": "string"},
                         "has_attachments": {"type": "boolean", "default": False},
@@ -121,6 +126,10 @@ Note: Requires Outlook application to be running on Windows."""
         try:
             if action == "find_emails":
                 return await self._find_emails(kwargs.get("criteria", {}))
+            elif action == "read_email":
+                return await self._read_email(
+                    kwargs.get("email_index", 0)
+                )
             elif action == "get_attachment":
                 return await self._get_attachment(
                     kwargs.get("email_index", 0),
@@ -147,19 +156,18 @@ Note: Requires Outlook application to be running on Windows."""
             logger.error(f"Outlook tool error: {e}")
             return f"Error: {str(e)}"
     
-    def _get_outlook(self):
-        if self._outlook_app is None:
-            try:
-                import win32com.client
-                self._outlook_app = win32com.client.Dispatch("Outlook.Application")
-                self._namespace = self._outlook_app.GetNamespace("MAPI")
-            except Exception as e:
-                raise Exception(f"Failed to connect to Outlook: {e}")
-        return self._outlook_app, self._namespace
+    def _get_outlook():
+        try:
+            import win32com.client
+            import pythoncom
+            pythoncom.CoInitialize()
+            outlook_app = win32com.client.Dispatch("Outlook.Application")
+            namespace = outlook_app.GetNamespace("MAPI")
+            return outlook_app, namespace
+        except Exception as e:
+            raise Exception(f"Failed to connect to Outlook: {e}")
     
-    def _get_folder(self, folder_path: str):
-        outlook, namespace = self._get_outlook()
-        
+    def _get_folder(outlook_app, namespace, folder_path: str):
         if not folder_path:
             folder_path = "inbox"
         
@@ -171,6 +179,9 @@ Note: Requires Outlook application to be running on Windows."""
         
         if parts[0].lower() == 'inbox':
             current = namespace.GetDefaultFolder(6)
+            parts = parts[1:]
+        elif parts[0].lower() in ('sent', 'sent items', 'sentitems', 'sent_items'):
+            current = namespace.GetDefaultFolder(5)  # olFolderSentMail
             parts = parts[1:]
         else:
             current = None
@@ -196,13 +207,13 @@ Note: Requires Outlook application to be running on Windows."""
         
         return current
     
-    def _is_mail_item(self, item) -> bool:
+    def _is_mail_item(item) -> bool:
         try:
             return item.Class == OL_MAIL_ITEM
         except Exception:
             return False
     
-    def _get_all_attachment_info(self, item) -> list[dict]:
+    def _get_all_attachment_info(item) -> list[dict]:
         """Get information about all document attachments. Uses 0-based indexing."""
         attachments_info = []
         try:
@@ -229,17 +240,23 @@ Note: Requires Outlook application to be running on Windows."""
                                 "filtered_index": len(attachments_info),
                                 "filename": filename,
                                 "extension": ext,
-                                "type": self._get_file_type_name(ext)
+                                "type": OutlookTool._get_file_type_name(ext)
                             })
                     except Exception as e:
                         logger.debug(f"Error processing attachment {idx}: {e}")
+                        pass
+                    # Release COM object explicitly
+                    try:
+                        del att
+                    except:
                         pass
         except Exception as e:
             logger.debug(f"Error getting attachments: {e}")
             pass
         return attachments_info
     
-    def _get_file_type_name(self, ext: str) -> str:
+    @staticmethod
+    def _get_file_type_name(ext: str) -> str:
         type_map = {
             '.pdf': 'PDF Document',
             '.doc': 'Word Document',
@@ -253,13 +270,15 @@ Note: Requires Outlook application to be running on Windows."""
         }
         return type_map.get(ext, 'Document')
     
-    def _safe_get_property(self, item, prop_name: str, default=None):
+    @staticmethod
+    def _safe_get_property(item, prop_name: str, default=None):
         try:
             return getattr(item, prop_name, default)
         except Exception:
             return default
     
-    def _normalize_datetime(self, dt):
+    @staticmethod
+    def _normalize_datetime(dt):
         if dt is None:
             return None
         if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
@@ -270,108 +289,134 @@ Note: Requires Outlook application to be running on Windows."""
         return dt
     
     async def _find_emails(self, criteria: dict) -> str:
-        outlook, namespace = self._get_outlook()
-        
-        folder_name = criteria.get("folder", "inbox")
-        self._current_folder_name = folder_name
-        self._last_search_results = []
-        
-        folder = self._get_folder(folder_name)
-        
-        items = folder.Items
-        items.Sort("[ReceivedTime]", True)
-        
-        # 修复问题1: 默认获取更多邮件，默认今天
-        max_results = criteria.get("max_results", 50)  # 从10改为50
-        has_attachments = criteria.get("has_attachments", False)
-        
-        # 如果没有指定日期，默认获取今天的邮件
-        has_date_filter = bool(criteria.get("received_after") or criteria.get("received_before"))
-        if not has_date_filter:
-            # 默认获取今天的邮件
-            today = datetime.now().strftime("%Y-%m-%d")
-            criteria["received_after"] = today
-        
-        results = []
-        count = 0
-        max_check = min(100, items.Count)
-        
-        for i in range(max_check):
+        def _sync_find():
+            import pythoncom
+            outlook, namespace = None, None
             try:
-                item = items[i + 1]
+                outlook, namespace = OutlookTool._get_outlook()
                 
-                if not self._is_mail_item(item):
-                    continue
+                folder_name = criteria.get("folder", "inbox")
                 
-                # Get attachment info
-                attachment_info = self._get_all_attachment_info(item)
-                document_count = len(attachment_info)
+                folder = OutlookTool._get_folder(outlook, namespace, folder_name)
                 
-                if has_attachments and document_count == 0:
-                    continue
+                items = folder.Items
+                items.Sort("[ReceivedTime]", True)
                 
-                subject = self._safe_get_property(item, 'Subject', '') or ''
+                max_results = criteria.get("max_results", 50)
+                has_attachments = criteria.get("has_attachments", False)
                 
-                subject_keyword = criteria.get("subject_contains")
-                if subject_keyword:
-                    if subject_keyword.lower() not in subject.lower():
+                has_date_filter = bool(criteria.get("received_after") or criteria.get("received_before"))
+                if not has_date_filter:
+                    today = datetime.now().strftime("%Y-%m-%d")
+                    criteria["received_after"] = today
+                
+                results = []
+                count = 0
+                max_check = min(100, items.Count)
+                
+                for i in range(max_check):
+                    item = None
+                    try:
+                        item = items[i + 1]
+                        
+                        if not OutlookTool._is_mail_item(item):
+                            continue
+                        
+                        received_time = OutlookTool._safe_get_property(item, 'ReceivedTime')
+                        if received_time is None:
+                            continue
+                        
+                        received_time_normalized = OutlookTool._normalize_datetime(received_time)
+                        
+                        after_date = criteria.get("received_after")
+                        if after_date:
+                            after = datetime.strptime(after_date, "%Y-%m-%d")
+                            if received_time_normalized and received_time_normalized < after:
+                                continue
+                        
+                        before_date = criteria.get("received_before")
+                        if before_date:
+                            before = datetime.strptime(before_date, "%Y-%m-%d")
+                            if received_time_normalized and received_time_normalized > before:
+                                continue
+        
+                        subject = OutlookTool._safe_get_property(item, 'Subject', '') or ''
+                        
+                        subject_keyword = criteria.get("subject_contains")
+                        if subject_keyword:
+                            if subject_keyword.lower() not in subject.lower():
+                                continue
+                        
+                        sender = OutlookTool._safe_get_property(item, 'SenderEmailAddress', '') or ''
+                        
+                        from_keyword = criteria.get("from_email")
+                        if from_keyword:
+                            if from_keyword.lower() not in sender.lower():
+                                continue
+                        
+                        to_keyword = criteria.get("to_email")
+                        if to_keyword:
+                            recipients = OutlookTool._safe_get_property(item, 'To', '') or ''
+                            if to_keyword.lower() not in recipients.lower():
+                                continue
+                        
+                        attachment_info = OutlookTool._get_all_attachment_info(item)
+                        document_count = len(attachment_info)
+                        
+                        if has_attachments and document_count == 0:
+                            continue
+                        
+                        if attachment_info:
+                            attachment_desc = ", ".join([f"{a['filename']} ({a['type']})" for a in attachment_info])
+                            attachment_info_str = f" [{document_count} docs: {attachment_desc}]"
+                        else:
+                            attachment_info_str = " [No document attachments]"
+                        
+                        body = OutlookTool._safe_get_property(item, 'Body', '') or ''
+                        
+                        result_entry = {
+                            "index": count,
+                            "items_index": i + 1,
+                            "folder": folder_name,
+                            "subject": subject,
+                            "sender": sender,
+                            "received": str(received_time),
+                            "attachments": attachment_info_str,
+                            "attachment_details": attachment_info,
+                            "document_count": document_count,
+                            "body_preview": body[:200] if body else ''
+                        }
+                        results.append(result_entry)
+                        count += 1
+                        
+                        if count >= max_results:
+                            break
+                            
+                    except Exception as e:
+                        logger.debug(f"Error processing email {i}: {e}")
                         continue
+                    finally:
+                        if item:
+                            try:
+                                del item
+                            except:
+                                pass
                 
-                sender = self._safe_get_property(item, 'SenderEmailAddress', '') or ''
-                
-                from_keyword = criteria.get("from_email")
-                if from_keyword:
-                    if from_keyword.lower() not in sender.lower():
-                        continue
-                
-                received_time = self._safe_get_property(item, 'ReceivedTime')
-                if received_time is None:
-                    continue
-                
-                received_time_normalized = self._normalize_datetime(received_time)
-                
-                after_date = criteria.get("received_after")
-                if after_date:
-                    after = datetime.strptime(after_date, "%Y-%m-%d")
-                    if received_time_normalized and received_time_normalized < after:
-                        continue
-                
-                before_date = criteria.get("received_before")
-                if before_date:
-                    before = datetime.strptime(before_date, "%Y-%m-%d")
-                    if received_time_normalized and received_time_normalized > before:
-                        continue
-                
-                if attachment_info:
-                    attachment_desc = ", ".join([f"{a['filename']} ({a['type']})" for a in attachment_info])
-                    attachment_info_str = f" [{document_count} docs: {attachment_desc}]"
-                else:
-                    attachment_info_str = " [No document attachments]"
-                
-                body = self._safe_get_property(item, 'Body', '') or ''
-                
-                result_entry = {
-                    "index": count,
-                    "items_index": i + 1,
-                    "folder": folder_name,
-                    "subject": subject,
-                    "sender": sender,
-                    "received": str(received_time),
-                    "attachments": attachment_info_str,
-                    "attachment_details": attachment_info,
-                    "document_count": document_count,
-                    "body_preview": body[:200] if body else ''
-                }
-                self._last_search_results.append(result_entry)
-                results.append(result_entry)
-                count += 1
-                
-                if count >= max_results:
-                    break
-                    
+                return results, folder_name
             except Exception as e:
-                logger.debug(f"Error processing email {i}: {e}")
-                continue
+                logger.error(f"Error in find sync thread: {e}")
+                return [], folder_name
+            finally:
+                if outlook:
+                    del outlook
+                if namespace:
+                    del namespace
+                pythoncom.CoUninitialize()
+
+        results, folder_name = await asyncio.to_thread(_sync_find)
+        
+        self._current_folder_name = folder_name
+        self._last_search_results = results
         
         if not results:
             return "No emails found matching the criteria."
@@ -417,37 +462,55 @@ Preview: {preview}...""")
             save_directory = tempfile.gettempdir()
         elif not os.path.exists(save_directory):
             return f"Error: Directory does not exist."
-        
-        outlook, namespace = self._get_outlook()
-        folder = self._get_folder(folder_name)
-        items = folder.Items
-        items.Sort("[ReceivedTime]", True)
-        
-        if items_index > items.Count:
-            return "Error: Email no longer exists."
-        
-        item = items[items_index]
-        
-        if not self._is_mail_item(item):
-            return "Error: Not a valid email."
-        
-        try:
-            attachment = item.Attachments[outlook_index]  # 0-based!
-            filename = attachment.FileName
-        except Exception as e:
-            return f"Error: Could not access attachment: {e}"
-        
-        save_path = os.path.join(save_directory, filename)
-        
-        base, ext = os.path.splitext(save_path)
-        counter = 1
-        while os.path.exists(save_path):
-            save_path = f"{base}_{counter}{ext}"
-            counter += 1
-        
-        attachment.SaveAsFile(save_path)
-        
-        return f"Attachment saved to: {save_path}\nFilename: {filename}\nSize: {os.path.getsize(save_path)} bytes"
+
+        def _sync_get_attachment():
+            import pythoncom
+            outlook, namespace = None, None
+            try:
+                outlook, namespace = OutlookTool._get_outlook()
+                folder = OutlookTool._get_folder(outlook, namespace, folder_name)
+                items = folder.Items
+                items.Sort("[ReceivedTime]", True)
+                
+                if items_index > items.Count:
+                    return "Error: Email no longer exists."
+                
+                item = items[items_index]
+                
+                if not OutlookTool._is_mail_item(item):
+                    return "Error: Not a valid email."
+                
+                try:
+                    attachment = item.Attachments[outlook_index]  # 0-based!
+                    filename = attachment.FileName
+                except Exception as e:
+                    return f"Error: Could not access attachment: {e}"
+                
+                save_path = os.path.join(save_directory, filename)
+                
+                base, ext = os.path.splitext(save_path)
+                counter = 1
+                while os.path.exists(save_path):
+                    save_path = f"{base}_{counter}{ext}"
+                    counter += 1
+                
+                attachment.SaveAsFile(save_path)
+                
+                del attachment
+                del item
+                
+                return f"Attachment saved to: {save_path}\nFilename: {filename}\nSize: {os.path.getsize(save_path)} bytes"
+            except Exception as e:
+                return f"Error connecting to Outlook or obtaining attachment: {e}"
+            finally:
+                if outlook:
+                    del outlook
+                if namespace:
+                    del namespace
+                pythoncom.CoUninitialize()
+
+        res = await asyncio.to_thread(_sync_get_attachment)
+        return res if res is not None else "Error: Attachment thread returned None"
     
     async def _get_all_attachments(self, email_index: int, save_directory: str = None) -> str:
         if not self._last_search_results:
@@ -468,89 +531,203 @@ Preview: {preview}...""")
             save_directory = tempfile.gettempdir()
         elif not os.path.exists(save_directory):
             return "Error: Directory does not exist."
-        
-        outlook, namespace = self._get_outlook()
-        folder = self._get_folder(folder_name)
-        items = folder.Items
-        items.Sort("[ReceivedTime]", True)
-        
-        if items_index > items.Count:
-            return "Error: Email no longer exists."
-        
-        item = items[items_index]
-        
-        if not self._is_mail_item(item):
-            return "Error: Not a valid email."
-        
-        saved_files = []
-        errors = []
-        
-        for att_info in attachment_details:
-            outlook_index = att_info["outlook_index"]  # 0-based!
+
+        def _sync_get_all_attachments():
+            import pythoncom
+            outlook, namespace = None, None
             try:
-                attachment = item.Attachments[outlook_index]
-                filename = attachment.FileName
+                outlook, namespace = OutlookTool._get_outlook()
+                folder = OutlookTool._get_folder(outlook, namespace, folder_name)
+                items = folder.Items
+                items.Sort("[ReceivedTime]", True)
                 
-                save_path = os.path.join(save_directory, filename)
+                if items_index > items.Count:
+                    return "Error: Email no longer exists."
                 
-                base, ext = os.path.splitext(save_path)
-                counter = 1
-                while os.path.exists(save_path):
-                    save_path = f"{base}_{counter}{ext}"
-                    counter += 1
+                item = items[items_index]
                 
-                attachment.SaveAsFile(save_path)
-                saved_files.append(f"{filename} -> {save_path}")
+                if not OutlookTool._is_mail_item(item):
+                    return "Error: Not a valid email."
+                
+                saved_files = []
+                errors = []
+                
+                for att_info in attachment_details:
+                    outlook_index = att_info["outlook_index"]  # 0-based!
+                    attachment = None
+                    try:
+                        attachment = item.Attachments[outlook_index]
+                        filename = attachment.FileName
+                        
+                        save_path = os.path.join(save_directory, filename)
+                        
+                        base, ext = os.path.splitext(save_path)
+                        counter = 1
+                        while os.path.exists(save_path):
+                            save_path = f"{base}_{counter}{ext}"
+                            counter += 1
+                        
+                        attachment.SaveAsFile(save_path)
+                        saved_files.append(f"{filename} -> {save_path}")
+                    except Exception as e:
+                        errors.append(f"{att_info['filename']}: {e}")
+                    finally:
+                        if attachment:
+                            try:
+                                del attachment
+                            except:
+                                pass
+                
+                del item
+                
+                output = [f"Saved {len(saved_files)} document attachment(s):\n"]
+                for sf in saved_files:
+                    output.append(f"  - {sf}")
+                
+                if errors:
+                    output.append(f"\nErrors ({len(errors)}):")
+                    for err in errors:
+                        output.append(f"  - {err}")
+                
+                return "\n".join(output)
             except Exception as e:
-                errors.append(f"{att_info['filename']}: {e}")
-        
-        output = [f"Saved {len(saved_files)} document attachment(s):\n"]
-        for sf in saved_files:
-            output.append(f"  - {sf}")
-        
-        if errors:
-            output.append(f"\nErrors ({len(errors)}):")
-            for err in errors:
-                output.append(f"  - {err}")
-        
-        return "\n".join(output)
+                return f"Error executing all attachments task: {e}"
+            finally:
+                if outlook:
+                    del outlook
+                if namespace:
+                    del namespace
+                pythoncom.CoUninitialize()
+
+        res = await asyncio.to_thread(_sync_get_all_attachments)
+        return res if res is not None else "Error: Get all threads returned None"
     
     async def _send_email(self, recipient: str, subject: str, body: str, attachment_paths: list[str]) -> str:
-        outlook, namespace = self._get_outlook()
+        def _sync_send_email():
+            import pythoncom
+            outlook, namespace = None, None
+            try:
+                outlook, namespace = OutlookTool._get_outlook()
+                
+                mail = outlook.CreateItem(0)
+                mail.To = recipient
+                mail.Subject = subject
+                mail.Body = body
+                
+                for path in attachment_paths:
+                    if os.path.exists(path):
+                        mail.Attachments.Add(path)
+                
+                mail.Send()
+                del mail
+                
+                return f"Email sent to {recipient}"
+            except Exception as e:
+                return f"Failed to send email: {e}"
+            finally:
+                if outlook:
+                    del outlook
+                if namespace:
+                    del namespace
+                pythoncom.CoUninitialize()
         
-        mail = outlook.CreateItem(0)
-        mail.To = recipient
-        mail.Subject = subject
-        mail.Body = body
-        
-        for path in attachment_paths:
-            if os.path.exists(path):
-                mail.Attachments.Add(path)
-        
-        mail.Send()
-        
-        return f"Email sent to {recipient}"
+        res = await asyncio.to_thread(_sync_send_email)
+        return res if res is not None else "Error: Send thread returned None"
     
     async def _list_folders(self) -> str:
-        outlook, namespace = self._get_outlook()
-        
-        def get_all_folders(folder, prefix=""):
-            result = [(f"{prefix}{folder.Name}", folder.Items.Count)]
+        def _sync_list_folders():
+            import pythoncom
+            outlook, namespace = None, None
             try:
-                for subfolder in folder.Folders:
-                    result.extend(get_all_folders(subfolder, f"{prefix}{folder.Name}/"))
-            except Exception:
-                pass
-            return result
+                outlook, namespace = OutlookTool._get_outlook()
+                
+                def get_all_folders(folder, prefix=""):
+                    result = [(f"{prefix}{folder.Name}", folder.Items.Count)]
+                    try:
+                        for subfolder in folder.Folders:
+                            result.extend(get_all_folders(subfolder, f"{prefix}{folder.Name}/"))
+                    except Exception:
+                        pass
+                    return result
+                
+                inbox = namespace.GetDefaultFolder(6)
+                all_folders = get_all_folders(inbox)
+                
+                output = ["Email Folders:\n"]
+                for name, count in all_folders:
+                    output.append(f"- {name} ({count} items)")
+                
+                return "\n".join(output)
+            except Exception as e:
+                return f"Error listing folders: {e}"
+            finally:
+                if outlook:
+                    del outlook
+                if namespace:
+                    del namespace
+                pythoncom.CoUninitialize()
+
+        res = await asyncio.to_thread(_sync_list_folders)
+        return res if res is not None else "Error: List folders thread returned None"
+    
+    async def _read_email(self, email_index: int) -> str:
+        """Return the full body and metadata of a previously found email."""
+        if not self._last_search_results:
+            return "Error: No search results. Run find_emails first."
+        if email_index < 0 or email_index >= len(self._last_search_results):
+            return f"Error: Invalid email_index. Valid range: 0-{len(self._last_search_results)-1}"
         
-        inbox = namespace.GetDefaultFolder(6)
-        all_folders = get_all_folders(inbox)
+        result_info = self._last_search_results[email_index]
+        folder_name = result_info.get("folder", "inbox")
+        items_index = result_info.get("items_index", 1)
+
+        def _sync_read_email():
+            import pythoncom
+            outlook, namespace = None, None
+            try:
+                outlook, namespace = OutlookTool._get_outlook()
+                folder = OutlookTool._get_folder(outlook, namespace, folder_name)
+                items = folder.Items
+                items.Sort("[ReceivedTime]", True)
+                
+                if items_index > items.Count:
+                    return "Error: Email no longer exists in folder."
+                
+                item = items[items_index]
+                
+                if not OutlookTool._is_mail_item(item):
+                    return "Error: Not a valid email item."
+                
+                subject = OutlookTool._safe_get_property(item, 'Subject', '') or ''
+                sender = OutlookTool._safe_get_property(item, 'SenderEmailAddress', '') or ''
+                received = str(OutlookTool._safe_get_property(item, 'ReceivedTime', ''))
+                to = OutlookTool._safe_get_property(item, 'To', '') or ''
+                cc = OutlookTool._safe_get_property(item, 'CC', '') or ''
+                body = OutlookTool._safe_get_property(item, 'Body', '') or ''
+                
+                del item
+
+                output = f"""Subject: {subject}
+From: {sender}
+To: {to}
+CC: {cc}
+Received: {received}
+
+--- Email Body ---
+{body}"""
+                return output
+            except Exception as e:
+                logger.error(f"Error reading email: {e}")
+                return f"Error reading email: {str(e)}"
+            finally:
+                if outlook:
+                    del outlook
+                if namespace:
+                    del namespace
+                pythoncom.CoUninitialize()
         
-        output = ["Email Folders:\n"]
-        for name, count in all_folders:
-            output.append(f"- {name} ({count} items)")
-        
-        return "\n".join(output)
+        res = await asyncio.to_thread(_sync_read_email)
+        return res if res is not None else "Error: Thread returned None"
     
     def reset_state(self):
         self._current_folder_name = "inbox"

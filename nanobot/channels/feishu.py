@@ -23,6 +23,7 @@ try:
         CreateMessageReactionRequestBody,
         Emoji,
         P2ImMessageReceiveV1,
+        P2ImMessageMessageReadV1,
     )
     FEISHU_AVAILABLE = True
 except ImportError:
@@ -135,6 +136,8 @@ class FeishuChannel(BaseChannel):
             self.config.verification_token or "",
         ).register_p2_im_message_receive_v1(
             self._on_message_sync
+        ).register_p2_im_message_message_read_v1(
+            lambda data: None
         ).build()
         
         # Create WebSocket client for long connection

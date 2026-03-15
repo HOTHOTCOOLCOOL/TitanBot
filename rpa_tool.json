@@ -1,0 +1,64 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "rpa",
+      "description": "Perform physical mouse and keyboard actions on the computer. Allows clicking, typing, and navigating the system UI autonomously.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "click",
+              "double_click",
+              "right_click",
+              "type",
+              "press",
+              "hotkey",
+              "scroll",
+              "wait"
+            ],
+            "description": "The RPA action to perform."
+          },
+          "x": {
+            "type": "integer",
+            "description": "WARNING: DO NOT use this if you have a ui_index. X coordinate on the screen (for click actions)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "WARNING: DO NOT use this if you have a ui_index. Y coordinate on the screen (for click actions)."
+          },
+          "ui_index": {
+            "type": "string",
+            "description": "CRITICAL: The numbered UI anchor index (e.g., '15') from a recent screen_capture with annotate_ui=True. You MUST use this instead of x and y whenever possible to avoid hallucinating coordinates."
+          },
+          "text": {
+            "type": "string",
+            "description": "Text to type out (for 'type' action)."
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of keys (e.g. ['ctrl', 'c']) for 'press' or 'hotkey'."
+          },
+          "amount": {
+            "type": "integer",
+            "description": "Amount to scroll (positive for up, negative for down)."
+          },
+          "wait_after": {
+            "type": "number",
+            "description": "Seconds to wait after the action completes before returning. Default 1.0.",
+            "default": 1.0
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+]

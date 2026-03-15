@@ -348,6 +348,11 @@ def gateway(
     provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)
     
+    # Set i18n language from config
+    from nanobot.agent.i18n import set_language
+    language = config.agents.defaults.language
+    set_language(language)
+    
     # Create cron service first (callback set after agent creation)
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
@@ -368,6 +373,7 @@ def gateway(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         session_manager=session_manager,
         mcp_servers=config.tools.mcp_servers,
+        language=language,
     )
     
     # Set cron callback (needs agent)
@@ -458,6 +464,11 @@ def agent(
     
     config = load_config()
     
+    # Set i18n language from config
+    from nanobot.agent.i18n import set_language
+    language = config.agents.defaults.language
+    set_language(language)
+    
     bus = MessageBus()
     provider = _make_provider(config)
 
@@ -484,6 +495,7 @@ def agent(
         cron_service=cron,
         restrict_to_workspace=config.tools.restrict_to_workspace,
         mcp_servers=config.tools.mcp_servers,
+        language=language,
     )
     
     # Show spinner when logs are off (no output to miss); skip when logs are on

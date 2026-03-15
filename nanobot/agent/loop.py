@@ -6,6 +6,8 @@ import json
 import json_repair
 from pathlib import Path
 import time
+import traceback
+import re
 from typing import Any
 
 from loguru import logger
@@ -25,9 +27,16 @@ from nanobot.agent.tools.save_skill import SaveSkillTool
 from nanobot.agent.tools.outlook import OutlookTool
 from nanobot.agent.tools.attachment_analyzer import AttachmentAnalyzerTool
 from nanobot.agent.tools.task_memory import TaskMemoryTool
+from nanobot.agent.tools.memory_search_tool import MemorySearchTool
+from nanobot.agent.tools.screen_capture import ScreenCaptureTool
+from nanobot.agent.tools.rpa_executor import RPAExecutorTool
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.subagent import SubagentManager
+from nanobot.agent.task_tracker import TaskTracker, TaskStatus
+from nanobot.agent.knowledge_workflow import KnowledgeWorkflow
+from nanobot.agent.personalization import MemoryDistiller
 from nanobot.session.manager import Session, SessionManager
+from nanobot.plugin_loader import scan_plugins, unload_plugins
 
 
 class AgentLoop:
@@ -58,6 +67,7 @@ class AgentLoop:
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
+        language: str = "zh",
     ):
         from nanobot.config.schema import ExecToolConfig
         from nanobot.cron.service import CronService
@@ -74,7 +84,7 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
-        self.context = ContextBuilder(workspace)
+        self.context = ContextBuilder(workspace, language=language)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -93,7 +103,19 @@ class AgentLoop:
         self._mcp_servers = mcp_servers or {}
         self._mcp_stack: AsyncExitStack | None = None
         self._mcp_connected = False
+        self._dynamic_tool_names: list[str] = []  # Track plugin tools for /reload
         self._register_default_tools()
+        self._register_dynamic_tools()
+        
+        # Task Tracker - 任务状态追踪 (用于 /tasks 命令)
+        self.task_tracker = TaskTracker(workspace)
+
+        # Knowledge Workflow - 知识库工作流引擎
+        self.knowledge_workflow = KnowledgeWorkflow(
+            provider=provider,
+            model=self.model,
+            workspace=workspace,
+        )
     
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
@@ -136,6 +158,48 @@ class AgentLoop:
         
         # Task knowledge tool
         self.tools.register(TaskMemoryTool(self.workspace))
+        
+        # Memory search tool (RAG)
+        memory_search_tool = MemorySearchTool()
+        if hasattr(self.context, 'vector_memory'):
+            memory_search_tool.set_vector_memory(self.context.vector_memory)
+        self.tools.register(memory_search_tool)
+        
+        # Vision tools
+        self.tools.register(ScreenCaptureTool(self.workspace))
+        self.tools.register(RPAExecutorTool())
+    
+    def _register_dynamic_tools(self) -> None:
+        """Scan the plugins directory and register discovered tools.
+        
+        Tools that conflict with already-registered built-in tools are skipped.
+        Previously loaded dynamic tools are unregistered first (for /reload).
+        """
+        # Unload any previously loaded plugins
+        if self._dynamic_tool_names:
+            unload_plugins(self.tools, self._dynamic_tool_names)
+            self._dynamic_tool_names.clear()
+        
+        plugins_dir = self.workspace / "nanobot" / "plugins"
+        if not plugins_dir.exists():
+            # Try relative to the package itself
+            plugins_dir = Path(__file__).parent.parent / "plugins"
+        
+        discovered = scan_plugins(plugins_dir)
+        
+        for tool in discovered:
+            if self.tools.has(tool.name):
+                logger.warning(
+                    f"Plugin '{tool.name}' conflicts with built-in tool, skipping"
+                )
+                continue
+            self.tools.register(tool)
+            self._dynamic_tool_names.append(tool.name)
+        
+        if self._dynamic_tool_names:
+            logger.info(
+                f"Dynamic tools registered: {', '.join(self._dynamic_tool_names)}"
+            )
     
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -161,28 +225,71 @@ class AgentLoop:
             if isinstance(cron_tool, CronTool):
                 cron_tool.set_context(channel, chat_id)
 
-    async def _run_agent_loop(self, initial_messages: list[dict]) -> tuple[str | None, list[str]]:
+    async def _run_agent_loop(
+        self,
+        initial_messages: list[dict],
+        channel: str | None = None,
+        chat_id: str | None = None
+    ) -> tuple[str | None, list[str], list[dict]]:
         """
         Run the agent iteration loop.
 
         Args:
             initial_messages: Starting messages for the LLM conversation.
+            channel: Current communication channel (e.g., feishu, telegram).
+            chat_id: Current chat or user ID.
 
         Returns:
-            Tuple of (final_content, list_of_tools_used).
+            Tuple of (final_content, list_of_tools_used, tool_calls_with_args).
         """
         messages = initial_messages
         iteration = 0
         final_content = None
         tools_used: list[str] = []
+        tool_calls_with_args: list[dict] = []
 
         while iteration < self.max_iterations:
             iteration += 1
 
-            response = await self.provider.chat(
+            # Determine if this turn requires the VLM
+            target_model = self.model
+            from nanobot.config.schema import Config
+            config = Config()
+            
+            provider_for_turn = self.provider
+
+            if config.agents.vlm.enabled and config.agents.vlm.model:
+                has_image = False
+                for msg in messages:
+                    if isinstance(msg.get("content"), list):
+                        for block in msg["content"]:
+                            if block.get("type") == "image_url":
+                                has_image = True
+                                break
+                    if has_image:
+                        break
+                
+                if has_image:
+                    target_model = config.agents.vlm.model
+                    logger.debug(f"Image detected in context. Routing to VLM: {target_model}")
+                    
+                    # If the current provider is CustomProvider (which doesn't route) 
+                    # or if the target model provider differs, try to use LiteLLMProvider.
+                    p_conf = config.get_provider(target_model)
+                    from nanobot.providers.litellm_provider import LiteLLMProvider
+                    provider_name = config.get_provider_name(target_model)
+                    provider_for_turn = LiteLLMProvider(
+                        api_key=p_conf.api_key if p_conf else None,
+                        api_base=config.get_api_base(target_model),
+                        default_model=target_model,
+                        extra_headers=p_conf.extra_headers if p_conf else None,
+                        provider_name=provider_name
+                    )
+
+            response = await provider_for_turn.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
-                model=self.model,
+                model=target_model,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
@@ -206,6 +313,11 @@ class AgentLoop:
 
                 for tool_call in response.tool_calls:
                     tools_used.append(tool_call.name)
+                    # 保存工具名称和参数
+                    tool_calls_with_args.append({
+                        "tool": tool_call.name,
+                        "args": tool_call.arguments
+                    })
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
@@ -223,9 +335,58 @@ class AgentLoop:
                     messages.append({"role": "user", "content": "继续执行！如果需要提取附件、分析内容、发邮件，立即调用工具。不要只返回文字，立即行动！"})
             else:
                 final_content = response.content
+                
+                # Check for premature termination by reasoning models (sending a "wait" message or "fake completion" but no tools)
+                _content_str = (final_content or "").lower()
+                _wait_phrases = [
+                    "稍等", "稍候", "马上", "现在开始", "这就开始", "正在为", 
+                    "working on it", "wait a", "just a sec", "let me start"
+                ]
+                _fake_completion_phrases = [
+                    "已发送", "已完成", "发送完毕", "处理完成", "task completed", "have sent the email"
+                ]
+                
+                # If it contains wait phrases
+                if len(_content_str) < 500 and any(p in _content_str for p in _wait_phrases):
+                    logger.warning(f"LLM returned pure wait message, pushing for tool usage: {final_content[:50]}")
+                    
+                    # Forward this intermediate status to the user
+                    if channel and chat_id:
+                        await self.bus.publish_outbound(OutboundMessage(
+                            channel=channel, chat_id=chat_id, content=final_content
+                        ))
+                    
+                    # Add to context
+                    messages = self.context.add_assistant_message(
+                        messages, final_content, tool_calls=None, reasoning_content=response.reasoning_content
+                    )
+                    
+                    # Force it to call tools
+                    messages.append({
+                        "role": "user",
+                        "content": "你前一句只回复了确认的文字。这会导致动作中断！请你**立即调用实际工具**（如 exec, read_file 等）往下推进任务进程！！！"
+                    })
+                    continue
+                
+                # If it contains fake completion phrases
+                if len(_content_str) < 500 and any(p in _content_str for p in _fake_completion_phrases):
+                    logger.warning(f"LLM returned fake completion message without tools, pushing for tool usage: {final_content[:50]}")
+                    
+                    # Add to context
+                    messages = self.context.add_assistant_message(
+                        messages, final_content, tool_calls=None, reasoning_content=response.reasoning_content
+                    )
+                    
+                    # Force it to call tools
+                    messages.append({
+                        "role": "user",
+                        "content": "你声称已经完成了任务或发送了邮件，但实际上系统检测到你并没有调用任何工具！这是你的幻觉。请立刻调用正确的工具执行实际操作！"
+                    })
+                    continue
+                
                 break
 
-        return final_content, tools_used
+        return final_content, tools_used, tool_calls_with_args
 
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
@@ -233,70 +394,10 @@ class AgentLoop:
         await self._connect_mcp()
         logger.info("Agent loop started")
         
-        # 后台任务：检查空闲时间并触发记忆整合
-        async def idle_checker():
-            import json
-            from datetime import datetime
-            logger.info("Idle checker started")
-            while self._running:
-                await asyncio.sleep(30)  # 每 30 秒检查一次
-                try:
-                    # 从磁盘加载所有 session 文件并检查空闲时间
-                    # sessions 在 workspace/sessions 或 ~/.nanobot/workspace/sessions
-                    sessions_dir = self.workspace / "sessions"
-                    if not sessions_dir.exists():
-                        # 尝试用户目录下的 .nanobot
-                        from pathlib import Path
-                        home_sessions = Path.home() / ".nanobot" / "workspace" / "sessions"
-                        if home_sessions.exists():
-                            sessions_dir = home_sessions
-                        else:
-                            continue
-                    
-                    session_files = list(sessions_dir.glob("*.jsonl"))
-                    if not session_files:
-                        continue
-                    
-                    for session_file in session_files:
-                        try:
-                            # JSONL 文件每行是一个 JSON 对象 - 只读取最后 200 字符来获取时间戳
-                            content = session_file.read_text(encoding="utf-8").strip()
-                            if not content:
-                                continue
-                            
-                            # 快速获取最后一行
-                            last_newline = content.rfind('\n')
-                            last_line = content[last_newline+1:] if last_newline >= 0 else content
-                            
-                            data = json.loads(last_line)
-                            last_time = data.get("timestamp", "")
-                            
-                            if not last_time:
-                                continue
-                            
-                            # 解析时间戳
-                            try:
-                                last_ts = datetime.fromisoformat(last_time.replace("Z", "+00:00"))
-                                idle_duration = (datetime.now() - last_ts).total_seconds()
-                            except:
-                                continue
-                            
-                            idle_threshold = 600  # 10 分钟
-                            if idle_duration > idle_threshold:
-                                logger.info(f"Session {session_file.stem}: Idle for {idle_duration/60:.0f}min, consolidating...")
-                                # 加载 session 并触发整合（让 _consolidate_memory 内部判断是否需要）
-                                session = self.sessions.get_or_create(session_file.stem)
-                                if session:
-                                    # 直接调用，不检查 _idle_consolidated
-                                    asyncio.create_task(self._consolidate_memory(session))
-                        except Exception as e:
-                            logger.debug(f"Error checking session {session_file.name}: {e}")
-                except Exception as e:
-                    logger.error(f"Idle check error: {e}")
-        
-        # 启动后台空闲检查任务
-        logger.info("Starting idle checker...")
-        idle_task = asyncio.create_task(idle_checker())
+        # NOTE: idle_checker for automatic memory consolidation is disabled.
+        # It was removed because auto-triggering LLM consolidation caused
+        # interference with active user tasks. Memory consolidation is now
+        # triggered manually by the user (reply "是/好") or via /new command.
 
         while self._running:
             try:
@@ -331,41 +432,175 @@ class AgentLoop:
         """Stop the agent loop."""
         self._running = False
         logger.info("Agent loop stopping")
+        # Gracefully shutdown the compute broker
+        from nanobot.compute import shutdown_broker
+        shutdown_broker(wait=False)
     
     async def _process_message(self, msg: InboundMessage, session_key: str | None = None) -> OutboundMessage | None:
         """
         Process a single inbound message.
-        
+
+        Workflow:
+        1. Check if awaiting user reply on knowledge match (pending_knowledge)
+        2. Check if awaiting user confirmation to save (pending_save)
+        3. Handle slash commands (/new, /help)
+        4. Extract task key → match knowledge base → ask user or LLM execute
+        5. After LLM execution with tools, prompt user to save
+
         Args:
             msg: The inbound message to process.
             session_key: Override session key (used by process_direct).
-        
+
         Returns:
             The response message, or None if no response needed.
         """
+        from nanobot.agent.i18n import msg as i18n_msg
+
         # System messages route back via chat_id ("channel:chat_id")
         if msg.channel == "system":
             return await self._process_system_message(msg)
-        
+
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {preview}")
-        
+
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
-        
-        # 检查用户是否确认整合记忆
-        user_response = msg.content.strip().lower()
-        if user_response in ["是", "好", "yes", "ok", "好 的", "是的"]:
-            # 用户确认整合记忆
-            logger.info(f"Session {session.key}: User confirmed memory consolidation")
-            asyncio.create_task(self._consolidate_memory(session))
-            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
-                                  content="好的，正在帮你整合记忆...")
-        
-        # Handle slash commands
+        kw = self.knowledge_workflow
+        user_input = msg.content.strip()
+
+        # ── Implicit feedback: infer previous task outcome ──
+        if session.last_task_key:
+            if kw.is_negative_feedback(user_input):
+                kw.record_outcome(session.last_task_key, success=False)
+                logger.info(f"Implicit feedback: negative for '{session.last_task_key}'")
+            else:
+                kw.record_outcome(session.last_task_key, success=True)
+                logger.info(f"Implicit feedback: positive for '{session.last_task_key}'")
+            session.last_task_key = None
+
+        # ── Step 1: Awaiting user reply to knowledge match ──
+        if session.pending_knowledge:
+            if kw.is_use_command(user_input):
+                # User chose to use knowledge base result
+                logger.info(f"Session {session.key}: User chose to use knowledge base")
+                match = session.pending_knowledge
+                session.pending_knowledge = None
+
+                result_content = kw.get_knowledge_result(match)
+
+                session.add_message("user", msg.content)
+                session.add_message("assistant", result_content)
+                self.sessions.save(session)
+
+                return OutboundMessage(
+                    channel=msg.channel, chat_id=msg.chat_id, content=result_content
+                )
+
+            elif kw.is_redo_command(user_input):
+                # User chose to re-execute
+                logger.info(f"Session {session.key}: User chose to re-execute")
+                original_request = session.pending_knowledge.get("_original_request", "")
+                few_shot = kw.format_few_shot_prompt(session.pending_knowledge)
+                extracted_key = session.pending_knowledge.get("_extracted_key")
+                session.pending_knowledge = None
+
+                if original_request:
+                    return await self._execute_with_llm(
+                        session, msg, original_request=original_request,
+                        extracted_key=extracted_key,
+                        few_shot_context=few_shot,
+                    )
+                else:
+                    session.pending_knowledge = None
+                    self.sessions.save(session)
+                    return OutboundMessage(
+                        channel=msg.channel, chat_id=msg.chat_id,
+                        content=i18n_msg("re_execute_no_previous"),
+                    )
+            # else: not a use/redo command → clear pending and treat as new message
+            session.pending_knowledge = None
+
+        # ── Step 2: Awaiting user confirmation to save ──
+        if session.pending_save:
+            if kw.is_save_confirm(user_input):
+                logger.info(f"Session {session.key}: User confirmed save to knowledge base")
+                pending = session.pending_save
+                session.pending_save = None
+
+                await kw.save_to_knowledge(
+                    key=pending.get("key", "unknown"),
+                    steps=pending.get("steps", []),
+                    user_request=pending.get("user_request", ""),
+                    result_summary=pending.get("result_summary", ""),
+                )
+
+                # Check if this task qualifies for skill upgrade
+                save_key = pending.get("key", "")
+                if save_key and kw.should_suggest_skill_upgrade(save_key):
+                    match = kw.knowledge_store.find_task(save_key) if kw.knowledge_store else None
+                    if match:
+                        session.pending_upgrade = {
+                            "key": save_key,
+                            "match": match,
+                        }
+                        self.sessions.save(session)
+                        stats = kw.get_match_stats(match)
+                        return OutboundMessage(
+                            channel=msg.channel, chat_id=msg.chat_id,
+                            content=kw.format_save_confirmed() + kw.format_skill_upgrade_prompt(
+                                match, lang=None
+                            ),
+                        )
+
+                self.sessions.save(session)
+                return OutboundMessage(
+                    channel=msg.channel, chat_id=msg.chat_id,
+                    content=kw.format_save_confirmed(),
+                )
+            # else: user didn't confirm → clear pending_save, continue
+            session.pending_save = None
+
+        # ── Step 2.5: Awaiting user confirmation to upgrade skill ──
+        if session.pending_upgrade:
+            if kw.is_upgrade_command(user_input):
+                logger.info(f"Session {session.key}: User confirmed skill upgrade")
+                pending = session.pending_upgrade
+                session.pending_upgrade = None
+                self.sessions.save(session)
+
+                # Auto-create skill via SaveSkillTool
+                try:
+                    match = pending.get("match", {})
+                    skill_tool = self.tools.get("save_skill")
+                    if skill_tool:
+                        steps = match.get("steps", [])
+                        tool_names = []
+                        for s in steps:
+                            if isinstance(s, dict):
+                                tool_names.append(s.get("tool", "unknown"))
+                            else:
+                                tool_names.append(str(s))
+                        await skill_tool.execute(
+                            name=pending.get("key", "auto_skill"),
+                            description=match.get("description", pending.get("key", "")),
+                            steps=json.dumps(steps, ensure_ascii=False),
+                        )
+                        return OutboundMessage(
+                            channel=msg.channel, chat_id=msg.chat_id,
+                            content=i18n_msg("skill_upgrade_confirmed"),
+                        )
+                except Exception as e:
+                    logger.error(f"Skill upgrade failed: {e}")
+                    return OutboundMessage(
+                        channel=msg.channel, chat_id=msg.chat_id,
+                        content=i18n_msg("processing_error", error=str(e)),
+                    )
+            # else: user didn't confirm upgrade → clear and continue
+            session.pending_upgrade = None
+
+        # ── Step 3: Slash commands ──
         cmd = msg.content.strip().lower()
         if cmd == "/new":
-            # Capture messages before clearing (avoid race condition with background task)
             messages_to_archive = session.messages.copy()
             session.clear()
             self.sessions.save(session)
@@ -377,72 +612,160 @@ class AgentLoop:
                 await self._consolidate_memory(temp_session, archive_all=True)
 
             asyncio.create_task(_consolidate_and_cleanup())
-            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
-                                  content="New session started. Memory consolidation in progress.")
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id,
+                content=i18n_msg("new_session"),
+            )
         if cmd == "/help":
-            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
-                                  content="🐈 nanobot commands:\n/new — Start a new conversation\n/help — Show available commands")
-        
-        # 修改：不再基于对话数量触发记忆整合
-        # 改为基于空闲时间触发 + 对话数量提醒
-        
-        # 1. 初始化最后活跃时间和空闲整合状态
-        if not hasattr(session, 'last_active_time'):
-            session.last_active_time = time.time()
-        if not hasattr(session, '_idle_consolidated'):
-            session._idle_consolidated = False
-        
-        # 2. 检查是否超过 10 分钟空闲
-        idle_threshold = 10 * 60  # 10 分钟
-        idle_duration = time.time() - session.last_active_time
-        
-        # 3. 检查是否需要触发空闲记忆整合（只触发一次）
-        if idle_duration > idle_threshold and not session._idle_consolidated:
-            logger.info(f"Session {session.key}: Idle for {idle_duration/60:.1f} minutes, triggering memory consolidation")
-            session._idle_consolidated = True
-            asyncio.create_task(self._consolidate_memory(session))
-        
-        # 4. 更新活跃时间（用户正在说话）
-        session.last_active_time = time.time()
-        
-        # 5. 检查是否需要提醒用户整合（每 20 个对话，但不打断执行）
-        if len(session.messages) > 0 and len(session.messages) % 20 == 0:
-            logger.info(f"Session {session.key}: {len(session.messages)} messages, user may want to consolidate")
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id,
+                content=i18n_msg("help_text"),
+            )
+        if cmd == "/tasks":
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id,
+                content=self._format_tasks_list(),
+            )
+        if cmd == "/reload":
+            self._register_dynamic_tools()
+            if self._dynamic_tool_names:
+                tools_list = ", ".join(self._dynamic_tool_names)
+                content = f"🔄 Plugins reloaded. Active dynamic tools: {tools_list}"
+            else:
+                content = "🔄 Plugins reloaded. No dynamic tools found in plugins directory."
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id,
+                content=content,
+            )
+
+        # ── Step 4: Extract Key → Match Knowledge Base ──
+        try:
+            task_key = await kw.extract_key(msg.content)
+            match = kw.match_knowledge(task_key)
+        except Exception as e:
+            logger.error(f"Knowledge workflow error (non-fatal): {e}")
+            task_key = None
+            match = None
+
+        if match:
+            # Found a match — ask user if they want to use or re-execute
+            session.pending_knowledge = {
+                **match,
+                "_original_request": msg.content,
+                "_extracted_key": task_key,
+            }
+            self.sessions.save(session)
+
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content=self._format_match_with_stats(kw, match),
+                metadata=msg.metadata or {},
+            )
+
+        # ── Step 5: No match → LLM execution ──
+        return await self._execute_with_llm(session, msg, extracted_key=task_key)
+
+    async def _execute_with_llm(
+        self,
+        session,
+        msg: InboundMessage,
+        original_request: str | None = None,
+        extracted_key: str | None = None,
+        few_shot_context: str = "",
+    ) -> OutboundMessage:
+        """Execute a user request via the LLM agent loop.
+
+        Args:
+            session: Current session.
+            msg: The inbound message (used for channel/chat_id routing).
+            original_request: If re-executing, the original request text.
+            extracted_key: Pre-extracted task key (from knowledge workflow).
+            few_shot_context: Optional few-shot reference prompt to inject.
+
+        Returns:
+            OutboundMessage with the agent's response.
+        """
+        from nanobot.agent.i18n import msg as i18n_msg
+
+        request_text = original_request or msg.content
 
         self._set_tool_context(msg.channel, msg.chat_id)
         initial_messages = self.context.build_messages(
             history=session.get_history(max_messages=self.memory_window),
-            current_message=msg.content,
+            current_message=request_text,
             media=msg.media if msg.media else None,
             channel=msg.channel,
             chat_id=msg.chat_id,
         )
-        final_content, tools_used = await self._run_agent_loop(initial_messages)
+
+        # Inject few-shot reference into system prompt if available
+        if few_shot_context and initial_messages and initial_messages[0].get("role") == "system":
+            initial_messages[0]["content"] += f"\n\n{few_shot_context}"
+
+        final_content, tools_used, tool_calls_with_args = await self._run_agent_loop(
+            initial_messages, channel=msg.channel, chat_id=msg.chat_id
+        )
 
         if final_content is None:
-            final_content = "I've completed processing but have no response to give."
-        
+            final_content = i18n_msg("no_response")
+
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info(f"Response to {msg.channel}:{msg.sender_id}: {preview}")
-        
-        session.add_message("user", msg.content)
-        session.add_message("assistant", final_content,
-                            tools_used=tools_used if tools_used else None)
-        
-        # 检查是否需要询问用户是否整合记忆（每 20 个对话）
-        total_messages = len(session.messages)
-        if total_messages > 0 and total_messages % 20 == 0:
-            # 在回复末尾添加整合记忆的询问
-            consolidation_prompt = "\n\n💡 已经进行了很多对话。要我帮你整合记忆吗？（输入是或好确认）"
-            final_content = final_content + consolidation_prompt
-        
+
+        session.add_message("user", request_text)
+        session.add_message(
+            "assistant", final_content,
+            tools_used=tools_used if tools_used else None,
+        )
+        session.message_count_since_consolidation += 2  # user + assistant
+
+        # P1-B: Auto-consolidation every 20 messages (only when no pending states)
+        if (session.message_count_since_consolidation >= 20
+                and not session.pending_knowledge
+                and not session.pending_save
+                and not session.pending_upgrade):
+            logger.info(f"Auto-consolidation triggered (count={session.message_count_since_consolidation})")
+            session.message_count_since_consolidation = 0
+            asyncio.create_task(self._consolidate_memory(session))
+
+        # After LLM execution with tool calls → prompt user to save
+        # But ONLY if the workflow appears to have succeeded
+        save_prompt = ""
+        if tool_calls_with_args:
+            _fail_indicators = [
+                "找不到", "没有找到", "未找到", "没找到",
+                "无法找到", "无法获取", "无法访问",
+                "error:", "not found", "no emails found",
+                "no results", "无法", "失败", "出错",
+                "sorry", "抱歉",
+            ]
+            _content_lower = (final_content or "").lower()
+            _workflow_succeeded = not any(
+                ind in _content_lower for ind in _fail_indicators
+            )
+
+            if _workflow_succeeded:
+                task_key = extracted_key or request_text[:50]
+                session.last_task_key = task_key
+                session.pending_save = {
+                    "key": task_key,
+                    "steps": tool_calls_with_args,
+                    "tools_used": tools_used,
+                    "user_request": request_text,
+                    "result_summary": final_content[:500],
+                }
+                save_prompt = self.knowledge_workflow.format_save_prompt()
+            else:
+                logger.info("Skipping save prompt: workflow appears to have failed")
+
         self.sessions.save(session)
-        
+
         return OutboundMessage(
             channel=msg.channel,
             chat_id=msg.chat_id,
-            content=final_content,
-            metadata=msg.metadata or {},  # Pass through for channel-specific needs (e.g. Slack thread_ts)
+            content=final_content + save_prompt,
+            metadata=msg.metadata or {},
         )
     
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
@@ -473,7 +796,9 @@ class AgentLoop:
             channel=origin_channel,
             chat_id=origin_chat_id,
         )
-        final_content, _ = await self._run_agent_loop(initial_messages)
+        final_content, _, _ = await self._run_agent_loop(
+            initial_messages, channel=origin_channel, chat_id=origin_chat_id
+        )
 
         if final_content is None:
             final_content = "Background task completed."
@@ -526,11 +851,13 @@ class AgentLoop:
         conversation = "\n".join(lines)
         current_memory = memory.read_long_term()
 
-        prompt = f"""You are a memory consolidation agent. Process this conversation and return a JSON object with exactly two keys:
+        prompt = f"""You are a memory consolidation agent. Process this conversation and return a JSON object with exactly three keys:
 
 1. "history_entry": A paragraph (2-5 sentences) summarizing the key events/decisions/topics. Start with a timestamp like [YYYY-MM-DD HH:MM]. Include enough detail to be useful when found by grep search later.
 
-2. "memory_update": The updated long-term memory content. Add any new facts: user location, preferences, personal info, habits, project context, technical decisions, tools/services used. If nothing new, return the existing content unchanged.
+2. "memory_update": The updated long-term memory content. ONLY add durable FACTS: user preferences, personal info, project context, technical decisions, tools/services used. Do NOT add one-time events or task results. If nothing new is a durable fact, return the existing content unchanged.
+
+3. "daily_log": A brief summary of notable one-time events from the conversation (tasks completed, errors encountered, emails analyzed, etc.). One line per event. Return empty string if nothing notable.
 
 ## Current Long-term Memory
 {current_memory or "(empty)"}
@@ -549,6 +876,8 @@ Respond with ONLY valid JSON, no markdown fences."""
                 model=self.model,
             )
             text = (response.content or "").strip()
+            # Strip <think> tags before parsing JSON, as reasoning models will leak them
+            text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
             if not text:
                 logger.warning("Memory consolidation: LLM returned empty response, skipping")
                 return
@@ -561,18 +890,177 @@ Respond with ONLY valid JSON, no markdown fences."""
 
             if entry := result.get("history_entry"):
                 memory.append_history(entry)
+                # Auto-ingest new history entry into vector store
+                if hasattr(self.context, 'vector_memory') and self.context.vector_memory:
+                    self.context.vector_memory.ingest_text(entry, source="history")
+
             if update := result.get("memory_update"):
+                if isinstance(update, dict):
+                    update = __import__("json").dumps(update, ensure_ascii=False, indent=2)
+                elif not isinstance(update, str):
+                    update = str(update)
                 if update != current_memory:
                     memory.write_long_term(update)
+
+            if daily := result.get("daily_log"):
+                if daily.strip():
+                    memory.append_daily_log(daily.strip())
+                    # Auto-ingest new daily log entry into vector store
+                    today_str = time.strftime("%Y-%m-%d")
+                    if hasattr(self.context, 'vector_memory') and self.context.vector_memory:
+                        self.context.vector_memory.ingest_text(
+                            daily.strip(),
+                            source=f"daily_log:{today_str}",
+                            metadata={"date": today_str}
+                        )
 
             if archive_all:
                 session.last_consolidated = 0
             else:
                 session.last_consolidated = len(session.messages) - keep_count
             logger.info(f"Memory consolidation done: {len(session.messages)} messages, last_consolidated={session.last_consolidated}")
+            
+            # Fire an asynchronous distillation to extract L1 core preferences
+            # Only distill if the L2 memory actually changed 
+            if update := result.get("memory_update"):
+                if update != current_memory:
+                    distiller = MemoryDistiller(memory, self.provider, self.model)
+                    asyncio.create_task(distiller.distill_preferences())
+                    
         except Exception as e:
             logger.error(f"Memory consolidation failed: {e}")
 
+    async def _execute_from_knowledge(
+        self,
+        msg: InboundMessage,
+        knowledge_entry: dict,
+        channel: str,
+        chat_id: str,
+    ) -> str:
+        """
+        从知识库条目执行任务步骤（不调用 LLM）。
+        
+        注意：知识库只保存了步骤名称，没有保存参数。
+        如果参数缺失，需要让用户选择重新执行。
+        
+        Args:
+            msg: 原始消息
+            knowledge_entry: 知识库条目，包含 steps 和 tools_used
+            channel: 频道
+            chat_id: 聊天 ID
+        
+        Returns:
+            执行结果
+        """
+        logger.info(f"Executing from knowledge: key={knowledge_entry.get('key')}")
+        
+        steps = knowledge_entry.get("steps", [])
+        if not steps:
+            return "知识库中没有执行步骤。"
+        
+        # 检查是否有参数
+        has_params = any(step.get("args") for step in steps)
+        
+        if not has_params:
+            # 知识库没有保存参数，无法正确执行
+            logger.warning(f"Knowledge base has no parameters saved, cannot execute")
+            return """⚠️ 知识库只保存了步骤，没有保存参数，无法正确执行。
+
+建议选择「重新执行」，让 AI 根据当前情况重新处理。"""
+        
+        # 设置工具上下文
+        self._set_tool_context(channel, chat_id)
+        
+        results = []
+        for i, step in enumerate(steps):
+            tool_name = step.get("tool")
+            tool_args = step.get("args", {})
+            
+            if not tool_name:
+                continue
+            
+            logger.info(f"Executing step {i+1}/{len(steps)}: {tool_name}")
+            
+            try:
+                result = await self.tools.execute(tool_name, tool_args)
+                results.append(f"[{i+1}] {tool_name}: {result[:200]}")
+            except Exception as e:
+                results.append(f"[{i+1}] {tool_name}: 错误 - {str(e)}")
+        
+        # 构造最终回复
+        final_content = "从知识库执行任务：\n\n" + "\n\n".join(results)
+        
+        return final_content
+    
+    def _extract_tool_args_from_history(self, messages: list[dict]) -> dict[str, dict]:
+        """
+        从 session history 中提取工具调用的参数。
+        
+        Returns:
+            Dict mapping tool_name -> {args}
+        """
+        tool_args_map: dict[str, dict] = {}
+        
+        for msg in messages:
+            # 检查是否是 assistant 消息且包含 tool_calls
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    if isinstance(tc, dict):
+                        func = tc.get("function", {})
+                        tool_name = func.get("name", "")
+                        if tool_name:
+                            # 解析 arguments（可能是 JSON 字符串）
+                            args = func.get("arguments", {})
+                            if isinstance(args, str):
+                                try:
+                                    args = json.loads(args)
+                                except:
+                                    args = {}
+                            tool_args_map[tool_name] = args
+        
+        return tool_args_map
+    
+    def _format_tasks_list(self) -> str:
+        """Format recent tasks for the /tasks command."""
+        from nanobot.agent.i18n import msg as i18n_msg
+
+        tasks = self.task_tracker.list_tasks(limit=10)
+        if not tasks:
+            return i18n_msg("tasks_empty")
+
+        status_icons = {
+            "completed": "✅",
+            "failed": "❌",
+            "running": "⏳",
+            "created": "📝",
+            "planning": "📝",
+            "pending_review": "🔍",
+            "cancelled": "⛔",
+        }
+        lines = [i18n_msg("tasks_header")]
+        for t in tasks:
+            status = t.status.value if hasattr(t.status, 'value') else str(t.status)
+            icon = status_icons.get(status, "❓")
+            time_str = t.created_at.strftime("%m-%d %H:%M") if t.created_at else ""
+            key_display = t.key[:30] + ("..." if len(t.key) > 30 else "")
+            lines.append(f"{icon} `{key_display}` — {status} ({time_str})")
+        return "\n".join(lines)
+
+    def _format_match_with_stats(self, kw: KnowledgeWorkflow, match: dict) -> str:
+        """Format knowledge match prompt with success rate stats if available."""
+        from nanobot.agent.i18n import msg as i18n_msg
+
+        stats = kw.get_match_stats(match)
+        use_count = stats.get("use_count", 0)
+        if use_count > 0:
+            return i18n_msg(
+                "knowledge_match_with_stats",
+                key=match.get("key", ""),
+                rate=str(stats["rate"]),
+                count=str(use_count),
+            )
+        return kw.format_match_prompt(match)
+    
     async def process_direct(
         self,
         content: str,

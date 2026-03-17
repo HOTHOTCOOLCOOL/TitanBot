@@ -145,6 +145,8 @@ write_file(
 ## Adding Custom Tools
 
 To add custom tools:
-1. Create a class that extends `Tool` in `nanobot/agent/tools/`
+1. Create a Python script containing a class that extends `Tool`
 2. Implement `name`, `description`, `parameters`, and `execute`
-3. Register it in `AgentLoop._register_default_tools()`
+3. Drop the `.py` file into the `nanobot/plugins/` directory
+
+The system will auto-discover your tool at startup. You can also reload tools at runtime using the `/reload` chat command. You no longer need to edit `nanobot/agent/tool_setup.py` directly.

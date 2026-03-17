@@ -187,6 +187,7 @@ class AgentDefaults(Base):
     temperature: float = 0.7
     max_tool_iterations: int = 20
     memory_window: int = 50
+    session_expiry_hours: int = 24  # Sessions older than this many hours will be expired
     language: str = "en"  # User-facing language: "en" or "zh"
     embedding_model: str = ""  # Local path to sentence-transformers model. Empty = auto-detect.
 

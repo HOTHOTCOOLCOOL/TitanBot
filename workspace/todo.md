@@ -1,7 +1,7 @@
 # Nanobot 演进 TODO
 
 > 本文件是项目持续演进的唯一入口。新对话时先阅读此文件，无需重读已完成的代码。
-> 最后更新: 2026-03-15 (Phase 12-14 计划新增)
+> 最后更新: 2026-03-17
 
 ---
 
@@ -62,10 +62,6 @@ Nanobot 是一个轻量级 AI Agent 框架，当前架构核心：
 **测试总计: 351 passed, 2 failed (pre-existing) (34.89s)**
 
 ### Phase 9: 知识持续进化（Skill Evolution） — 受 AutoSkill 论文启发
-
-核心理念：将 AutoSkill (ECNU/上海AI Lab, 2026) 的"版本化技能迭代 + 智能合并"融入 Nanobot。
-参考分析详见 `autoskill_analysis.md`。
-
 - [x] **P0: 知识条目版本化 + 自动合并** — `version` 字段，`merge_task()`, `find_similar_task()`, `tokenize_key()` 共享分词, 保存时自动合并
 - [x] **P1: 静默步骤更新** — 成功时自动更新 `steps_detail`，`session.last_tool_calls` 传递工具调用数据
 - [x] **P2: `/kb` 知识库管理命令** — `/kb list`, `/kb cleanup` (去重合并), `/kb delete`
@@ -92,58 +88,101 @@ Nanobot 是一个轻量级 AI Agent 框架，当前架构核心：
 - [x] **P1: Token 用量追踪** — `metrics.py` 新增 `record_tokens()`/`get_tokens()`，`/stats` 展示 token 汇总
 - [x] **P2: LLM 调用重试** — `litellm_provider.py` 指数退避重试（最多 2 次），仅对超时/5xx/连接错误重试
 - [x] **P3: 新增测试** — `test_loop_cleanup.py` (7), `test_metrics_tokens.py` (10), `test_provider_retry.py` (12)
-## 🔲 待完成
 
 ### Phase 12: 知识系统升级 — 受 AutoSkill (ECNU) & XSKILL (HKUST) 论文启发
-
-核心理念：
-- **AutoSkill**: 结构化 SKILL.md 表示(triggers/tags/description) + Dense+BM25 混合检索 + add/merge/discard 管理判定 + 版本合并
-- **XSKILL**: Skill(任务级工作流) + Experience(动作级战术提示) 双流设计 + 检索后适配
-
-- [ ] **P0: 结构化知识表示增强** — task_knowledge.py 扩展 TaskEntry 新增 triggers, tags, description, nti_patterns, confidence 字段；knowledge_workflow.py 适配新字段
-- [ ] **P1: 混合检索 (Dense + BM25)** — knowledge_workflow.py 新增 hybrid_match()，复用现有 ChromaDB 做 dense matching + jieba+Jaccard 做 BM25 近似，λ=0.6 加权，阈值过滤
-- [ ] **P2: Experience 层引入** — 新建 experience_bank.py，实现轻量 Experience CRUD (condition→action 对)，与 LLM 执行后的工具调用序列集成，失败路径自动提取 Experience
-- [ ] **P3: Knowledge Management Judge** — knowledge_workflow.py 新增 _judge_management() add/merge/discard 三分决策（先规则驱动，可选 LLM 增强）
-- [ ] **新增测试** — test_hybrid_retrieval.py (~12), test_experience_bank.py (~10), test_knowledge_judge.py (~8), test_knowledge_schema.py (~6)
+- [x] **P0: 结构化知识表示增强** — TaskEntry 新增 triggers, tags, description, anti_patterns, confidence 字段
+- [x] **P1: 混合检索 (Dense + BM25)** — hybrid_match() 复用 ChromaDB + jieba+Jaccard, λ=0.6 加权
+- [x] **P2: Experience 层引入** — experience_bank.py，轻量 Experience CRUD (condition→action)
+- [x] **P3: Knowledge Management Judge** — add/merge/discard 三分决策（规则驱动）
+- [x] 新增测试 — `test_hybrid_retrieval.py`, `test_experience_bank.py`, `test_knowledge_judge.py`
 
 ### Phase 13: 检索增强
-
-- [x] **P0: Query Rewriting** — 增强 knowledge_workflow.py 的 extract_key()，复杂/多轮对话时生成检索友好的独立查询（指代消解）
-- [x] **P1: 检索后适配 (Retrieval-time Adaptation)** — knowledge_workflow.py 新增 _adapt_knowledge()，检索到知识后根据当前上下文裁剪/改写再注入
+- [x] **P0: Query Rewriting** — 多轮对话指代消解
+- [x] **P1: 检索后适配 (Retrieval-time Adaptation)** — 检索到知识后根据当前上下文裁剪/改写再注入
 
 ### Phase 14: 工程卫生
+- [x] **P0: 根目录清理** — 归档 90+ 个 llm_payload_*.json，散落 test_*.py 统一移入 tests/
+- [x] **P1: loop.py 进一步模块化** — 提取工具注册到 `tool_setup.py`，提取状态机到 `state_handler.py`，提取命令到 `commands.py`，loop.py 降至 671 行
+- [x] **P2: 类型提示完善** — 核心模块添加完整 type hints
 
-- [ ] **P0: 根目录清理** — 移除/归档 90+ 个 llm_payload_*.json，散落的 test_*.py 统一移入 tests/，旧分析报告归档到 docs/
-- [ ] **P1: loop.py 进一步模块化** — 提取知识库交互逻辑到 knowledge_handler.py，提取 pending 状态机处理到独立方法，目标降至 700 行以下
-- [ ] **P2: 类型提示完善** — 核心模块 (loop.py, knowledge_workflow.py, context.py) 添加完整 type hints，配置 mypy 基础检查
+### Phase 15: Web Dashboard & Unified Identity
+- [x] **Web Dashboard** — FastAPI + HTML/JS，实时 WebSocket 日志，知识库/记忆编辑，系统指标
+- [x] **Unified Master Identity** — 跨渠道身份映射，严格 `allowFrom` 白名单
 
-### 未来方向（讨论过但未规划）
-- [ ] **多用户系统**: 会话隔离、权限模型
-- [ ] **Web Dashboard**: Agent 活动可视化
+### Phase 16: Bug Fixes & Modularization
+- [x] **P0:** `match_experience()` 未定义变量崩溃修复、`context.py` `asyncio.run()` 修复
+- [x] **P1:** `hybrid_retriever.py` 提取、`mochat_utils.py` 提取、embedding model 配置化、i18n 中文 prompt
+
+### Phase 17: Root Cleanup & Architecture Enhancement
+- [x] 根目录文件归档 (23 files)
+- [x] `get_metrics()` Dashboard API 修复
+- [x] 错误恢复 metrics 计数器
+- [x] Experience Bank 边界测试扩展
+
+### Phase 18: 安全审计修复
+- [x] **Phase 18A (P0 Critical):** API Key 泄露、Dashboard 认证、Shell 加固、路径遍历修复、Gateway 默认 127.0.0.1
+- [x] **Phase 18B (P1 Medium):** 空 allowFrom 警告、master_identities 缓存、错误消息清理、SSRF 防护
+- [x] **Phase 18C (P2 Code Quality):** `/reload` 命令修复、内存意图检测常量提升、`__all__` 导出、import 修复
+- [x] **Phase 18D (P3 Architecture):** Channel Manager DRY 重构、duck-typed Tool Context、Uptime 指标
+
+**回归基线: 613 passed, 0 failed**
 
 ---
+
+## 🔲 待完成
+
+### Phase 19: 文档修复 + 残余问题清理
+- [x] `SECURITY.md` 更新 Last Updated 日期，反映 Phase 18 安全修复
+- [x] `SECURITY.md` Known Limitations 更新
+- [x] `TOOLS.md` 修复 "Adding Custom Tools" 引用旧方法
+- [x] `PROJECT_STATUS.md` 第 112 行行数更新
+- [x] `test_word_similarity_match` 持续失败修复
+- [x] `test_memory_daily.py` 2 个间歇性失败修复
+- [x] `_get_config()` 缓存不失效修复
+- [x] Session Expiry 机制
+- [x] Rate Limiting
+
+### Phase 19+: Performance & Optimization
+- [x] Async parallel tool execution
+- [x] Context window optimization
+- [x] Dashboard v2 Mobile UI
+- [x] Cron notifications
+
+**Phase 19+ (待完成的最后一步)**
+- [ ] `knowledge_workflow.py` 进一步分解 (目前 695 行，需精简)
+
+### Phase 20: AI Memory Architecture Enhancement (Next)
+- [ ] 20A: Evicted Context Buffer (MemGPT-style Virtual Paging)
+- [ ] 20B: CLS Slow-Path Memory Consolidation
+- [ ] 20C: Time-Decay Retrieval Scoring
+- [ ] 20D: Metacognitive Reflection Memory
+- [ ] 20E: Lightweight Entity-Relation Graph
+- [ ] 20F-20H: (Low Priority Memory Enhancements)
+
+### Phase 21+: 未来方向 Backlog
+- [ ] Streaming response delivery
+- [ ] Embedding model upgrade
+- [ ] Vision-Language feedback loop
+- [ ] Unified speech-to-text pipeline
+- [ ] Image generation tool
+- [ ] Plugin marketplace / dependency management
+- [ ] PWA Dashboard
+- [ ] Playwright Browser Automation (Legacy ERP automation)
+
+---
+
 
 ## 📝 关键知识点（供新对话参考）
 
 ### 架构决策
 - **不做 Router/Expert 分离** — 单 Agent 够用，LLM 自选 tool，省 token
-- **知识匹配策略演进** — Phase 9 前用 jieba+Jaccard 精确匹配（零 LLM cost）；Phase 12 将引入 Dense+BM25 混合检索作为增强路径，保留 jieba+trigger 快速匹配为默认
+- **知识匹配策略演进** — Phase 12 引入 Dense+BM25 混合检索 + jieba+trigger 快速匹配双路径
 - **不做 incremental checkpointing** — 任务短小，SubagentManager 足够
-- **双流知识设计 (Phase 12)** — Skill = 宏观工作流(steps)；Experience = 微观战术提示(condition→action)。受 XSKILL 论文启发
+- **双流知识设计 (Phase 12)** — Skill = 宏观工作流(steps)；Experience = 微观战术提示(condition→action)
 
 ### 论文参考
 - **AutoSkill** (ECNU/上海AI Lab, 2026): `2603.01145v2.pdf` — 显式 SKILL.md 工件、版本化技能迭代、混合检索、Management Judge
 - **XSKILL** (HKUST/浙大/华科, 2026): `2603.12056v1.pdf` — Skill+Experience 双流、跨路径对比、层次化合并、检索后适配
-
-### OpenClaw 记忆系统（参考 d:\python\openclaw）
-- 核心理念：**Markdown 文件是唯一真相**
-- `MEMORY.md` = 持久事实（偏好、配置、决策），始终注入 prompt
-- `memory/YYYY-MM-DD.md` = 每日日志，只读最近 2 天
-- Compaction = LLM 把旧对话压缩成摘要
-- Pre-compaction flush = 压缩前静默让 LLM 先保存重要信息
-- Retain/Recall/Reflect 循环（来自 Letta/MemGPT + Hindsight 研究）
-- 混合搜索：BM25 + vector + temporal decay + MMR diversity
-- 详见 `d:\python\openclaw\docs\concepts\memory.md` 和 `experiments\research\memory.md`
 
 ### 本地模型策略
 - 知识库 `success_count/fail_count` 追踪最佳实践

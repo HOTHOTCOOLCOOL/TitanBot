@@ -226,7 +226,7 @@ $env:NO_PROXY="*"; $env:HTTP_PROXY=""; $env:HTTPS_PROXY=""
 
 ## 📋 回归测试基线
 
-**上次全量测试结果:** 599 passed, 3 failed (pre-existing: 2x test_memory_daily intermittent, 1x test_knowledge_workflow word_similarity)
+**上次全量测试结果:** 613 passed, 0 failed
 **测试日期:** 2026-03-17
 **Python 环境:** `.venv311` (Python 3.11)
 

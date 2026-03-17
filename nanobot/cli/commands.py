@@ -395,6 +395,30 @@ def gateway(
             ))
         return response
     cron.on_job = on_cron_job
+
+    # Wire proactive cron failure notification
+    async def _on_cron_failure(job_name: str, error_msg: str) -> None:
+        """Send an alert to the user when a cron job fails."""
+        alert = f"⚠️ Scheduled task **{job_name}** failed:\n{error_msg}"
+        # Try dashboard WebSocket broadcast
+        try:
+            from nanobot.dashboard.app import broadcast_ws_message
+            await broadcast_ws_message("notification", {"message": alert})
+        except Exception:
+            pass
+        # Also push to the first enabled channel with a configured target
+        # (the job's own channel/to fields are most relevant)
+        from nanobot.bus.events import OutboundMessage as _OM
+        for job in cron.list_jobs():
+            if job.name == job_name and job.payload.channel and job.payload.to:
+                await bus.publish_outbound(_OM(
+                    channel=job.payload.channel,
+                    chat_id=job.payload.to,
+                    content=alert
+                ))
+                break
+
+    cron.notification_callback = _on_cron_failure
     
     # Create heartbeat service
     async def on_heartbeat(prompt: str) -> str:

@@ -63,6 +63,7 @@ class CommandHandler:
                 content=self.format_tasks_list(),
             )
         if cmd == "/reload":
+            agent._config = None
             from nanobot.agent.tool_setup import _register_dynamic_tools
             _register_dynamic_tools(agent)
             if agent._dynamic_tool_names:

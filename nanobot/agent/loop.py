@@ -273,23 +273,35 @@ class AgentLoop:
                     reasoning_content=response.reasoning_content,
                 )
 
+                # Log and record all tool calls
                 for tool_call in response.tool_calls:
                     tools_used.append(tool_call.name)
-                    # 保存工具名称和参数
                     tool_calls_with_args.append({
                         "tool": tool_call.name,
                         "args": tool_call.arguments
                     })
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
-                    
-                    _tool_start = time.monotonic()
-                    with metrics.timer("tool_execution"):
-                        result = await self.tools.execute(tool_call.name, tool_call.arguments)
-                    metrics.increment("tool_executions_count")
-                    _tool_elapsed = time.monotonic() - _tool_start
-                    logger.debug(f"Tool {tool_call.name} completed in {_tool_elapsed:.1f}s")
 
+                # Execute tool calls concurrently via asyncio.gather
+                async def _exec_tool(tc):
+                    _start = time.monotonic()
+                    with metrics.timer("tool_execution"):
+                        res = await self.tools.execute(tc.name, tc.arguments)
+                    metrics.increment("tool_executions_count")
+                    logger.debug(f"Tool {tc.name} completed in {time.monotonic() - _start:.1f}s")
+                    return res
+
+                results = await asyncio.gather(
+                    *[_exec_tool(tc) for tc in response.tool_calls],
+                    return_exceptions=True,
+                )
+
+                # Add results to messages in original order
+                for tool_call, result in zip(response.tool_calls, results):
+                    if isinstance(result, BaseException):
+                        logger.error(f"Tool {tool_call.name} raised: {result}")
+                        result = f"Error: {result}"
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )

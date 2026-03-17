@@ -82,15 +82,34 @@ To realize the enterprise-level Ultimate Goal, maintain momentum on these core f
 - [x] **P1 Medium Security Fixes (Phase 18B):** Fixed 4 medium-priority security issues: (S7) one-time startup warning when `allowFrom` is empty, (S8) cached `master_identities` at class level to eliminate per-call `load_config()` I/O, (S9) sanitized error messages (generic user-facing message, full traceback to logs only), (S10) SSRF protection blocking RFC1918/loopback/link-local/metadata IPs in `web_fetch`. New tests: `test_ssrf_protection.py` (12 tests), `test_channel_security.py` (7 tests). Regression: 549 passed.
 - [x] **P2 Code Quality & Bug Fixes (Phase 18C):** Fixed critical `/reload` command bug (`commands.py` called non-existent `agent._register_dynamic_tools()` → now imports module function from `tool_setup.py`). Hoisted per-call `_MEMORY_TRIGGERS` to module constant, fixed shadowed walrus variable in `memory_manager.py`, moved late `import re` to module top in `personalization.py`, removed redundant assignment in `state_handler.py`, added `__all__` exports to `tool_setup.py` and `hybrid_retriever.py`. New tests: `test_code_quality.py` (17 tests). Regression: 566 passed.
 - [x] **P3 Architecture Improvements (Phase 18D):** Refactored `ChannelManager._init_channels()` from 9 repetitive if/try/except blocks into a data-driven `_CHANNEL_REGISTRY` list with single loop (-80 lines). Replaced brittle `isinstance` checks in `_set_tool_context()` with duck-typed dispatch over `_CONTEXTUAL_TOOLS` tuple. Added `__all__` exports to 6 public modules (`context.py`, `commands.py`, `state_handler.py`, `session/manager.py`, `channels/manager.py`, `metrics.py`). Added `uptime_seconds()` metric to `MetricsCollector`, included in `report()`/`get_metrics()` output. New tests: `test_architecture.py` (33 tests). Regression: 599 passed.
+- [x] **Performance & Experience Optimization (Phase 19+):** Async parallel tool execution via `asyncio.gather` in `loop.py` (multi-tool turns now run concurrently). Context window optimization with character-budget history trimming in `context.py` (120K char default, keeps ≥4 recent messages). Dashboard v2 mobile-responsive UI with hamburger sidebar, stat cards, toast notifications, and XSS-safe rendering. Proactive cron failure notification system — `CronService.notification_callback` pushes alerts to dashboard WebSocket and the job's configured channel on failure. New tests: `test_phase19_optimizations.py` (10 tests). Regression: 602 passed.
+- [ ] **Knowledge Workflow Refactoring (Phase 19+ Remaining):** Extract user command recognition, prompt formatting, KB management commands, and outcome tracking out of `knowledge_workflow.py` into separate modules to slim it down from ~695 lines.
 
-## 6. Future Directions (Phase 19+)
+## 6. Phase 20: AI Memory Architecture Enhancement (Next)
 
-The following areas have been identified during the post-Phase 18 feature audit for future development:
+Inspired by *"Survey on AI Memory: Theories, Taxonomies, Evaluations, and Emerging Trends"* (Ting Bai et al., 2026). The paper's 4W taxonomy validates Nanobot's lifecycle/content-type coverage; the following 7 improvements target identified gaps.
 
-### A. Performance Optimization
+### P0 — High Priority (Low effort, high ROI)
+
+- [ ] **20A: Evicted Context Buffer (MemGPT-style Virtual Paging)** — When `_trim_history()` drops old messages, auto-summarize them into an "evicted context" buffer instead of discarding. Re-inject the summary as an extra context block on the next LLM call. Forms a Working Memory ↔ Evicted Buffer dual-tier. Files: `context.py`, `memory_manager.py`.
+- [ ] **20B: CLS Slow-Path Memory Consolidation** — Add a Cron job (e.g., daily 02:00) that runs deep consolidation on `HISTORY.md` + `MEMORY.md`: dedup repeated patterns, generalize into higher-level abstractions, demote/archive stale entries, and re-distill L1 preferences. Complements the existing fast-path session-end consolidation. Files: `memory_manager.py`, `cron/service.py`.
+- [ ] **20C: Time-Decay Retrieval Scoring** — Add a configurable time-decay factor (`0.99^days`) to `vector_store.py` search results. Prevents stale memories from dominating retrieval. Files: `vector_store.py`.
+
+### P1 — Medium Priority (Moderate effort, significant value)
+
+- [ ] **20D: Metacognitive Reflection Memory** — When tools fail or user gives negative feedback, auto-generate a structured reflection entry `{trigger, failure_reason, corrective_action, timestamp}`. Inject matching reflections as negative few-shot examples on subsequent similar tasks. Enhances the current `record_outcome()` which only increments a counter. Files: `knowledge_workflow.py`, new `reflection.py`.
+- [ ] **20E: Lightweight Entity-Relation Graph** — Extract `(subject, predicate, object)` triples during slow-path consolidation via LLM. Store as JSON. On query, do entity lookup + 1-hop traversal before vector search. No external graph DB needed. Files: new `knowledge_graph.py`, `memory_manager.py`.
+
+### P2 — Low Priority (Future direction)
+
+- [ ] **20F: Multi-Agent Shared Memory** — If subagent parallelism expands, share context via EventBus whiteboard pattern. Currently N/A for single-agent architecture.
+- [ ] **20G: Visual Memory Text Persistence** — After VLM analyzes a screenshot, persist the image description (not the image) into HISTORY + vector index. Enables "visual memory" recall via text search. Files: `context.py`.
+- [ ] **20H: web_fetch PDF Support** — Enhance `WebFetchTool` to detect `Content-Type: application/pdf` responses, download the binary stream, and pipe it through the existing `attachment_analyzer` PDF text extraction pipeline. Enables the agent to read PDFs directly from URLs without a browser. Files: `tools/web.py`, `tools/attachment_analyzer.py`.
+
+## 7. Future Directions (Phase 21+)
+
+### A. Performance & Retrieval
 - **Streaming response delivery** — forward LLM tokens to user in real-time instead of waiting for full completion
-- **Async parallel tool execution** — execute independent tools concurrently when LLM requests multiple in one turn
-- **Context window optimization** — smarter history truncation with token counting before LLM calls
 - **Embedding model upgrade** — evaluate larger/multilingual models for improved Chinese semantic retrieval
 
 ### B. Multi-Modal Enhancement
@@ -104,15 +123,17 @@ The following areas have been identified during the post-Phase 18 feature audit 
 - **Plugin-level configuration** — per-plugin `config.json` merged into the main configuration hierarchy
 
 ### D. User Experience
-- **Dashboard v2** — richer UI with conversation viewer, knowledge graph visualization, and cron job editor
-- **Mobile-friendly dashboard** — responsive design, Progressive Web App (PWA) support
-- **Proactive notification system** — alerts when cron jobs fail or require user attention
+- **Mobile-friendly dashboard enhancements** — Progressive Web App (PWA) install support, offline caching
 
-### E. Architecture Considerations *(to be discussed in future sessions)*
-- `knowledge_workflow.py` at 805 lines — candidate for further decomposition
+### E. Architecture Considerations
 - Evaluate event-driven architecture for better decoupling between agent and channels
 - Review session persistence strategy (currently in-memory + JSON serialization)
 - Consider async generator pattern for streaming LLM responses end-to-end
+
+### F. Playwright Browser Automation *(⚠️ Heavy — discuss after urgent items complete)*
+- **Headless browser agent** — integrate Playwright (Chromium) as a plugin-level tool for full browser automation: JS-rendered page scraping, form filling, session-based login, PDF online preview extraction
+- **Primary use case:** Legacy ERP system automation — the company's ERP is browser-based and outdated; Playwright can navigate, extract data, and submit forms programmatically, complementing the existing UIAutomation + OCR RPA stack
+- **Considerations:** ~150MB Chromium download, 200-500MB per instance memory, potential overlap with existing RPA tools — evaluate as a standalone Plugin to avoid core architecture bloat
 
 > **Note:** Tool extensions (SqlQueryTool, CreateExcelTool, etc.) have been deprioritized — the existing `ExecTool` + Knowledge Workflow pipeline already covers these use cases via `exec` + Python libraries with automatic skill learning.
 

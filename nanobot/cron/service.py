@@ -51,10 +51,12 @@ class CronService:
     def __init__(
         self,
         store_path: Path,
-        on_job: Callable[[CronJob], Coroutine[Any, Any, str | None]] | None = None
+        on_job: Callable[[CronJob], Coroutine[Any, Any, str | None]] | None = None,
+        notification_callback: Callable[[str, str], Coroutine[Any, Any, None]] | None = None,
     ):
         self.store_path = store_path
         self.on_job = on_job  # Callback to execute job, returns response text
+        self.notification_callback = notification_callback  # async (job_name, error_msg) -> None
         self._store: CronStore | None = None
         self._timer_task: asyncio.Task | None = None
         self._running = False
@@ -282,6 +284,8 @@ class CronService:
                 if job.schedule.kind != "at" and job.state.next_run_at_ms and retry_ms < job.state.next_run_at_ms:
                     job.state.next_run_at_ms = retry_ms
                     logger.info(f"Cron: scheduled retry for '{job.name}' in 15 minutes")
+                # Proactive notification
+                await self._notify_failure(job.name, response[:200])
             else:
                 job.state.last_status = "ok"
                 job.state.last_error = None
@@ -290,12 +294,22 @@ class CronService:
         except Exception as e:
             job.state.last_status = "error"
             job.state.last_error = str(e)
+            await self._notify_failure(job.name, str(e))
             logger.error(f"Cron: job '{job.name}' failed: {e}")
         
         job.state.last_run_at_ms = start_ms
         job.updated_at_ms = _now_ms()
         self._save_store()
     
+    async def _notify_failure(self, job_name: str, error_msg: str) -> None:
+        """Send a proactive notification for a failed cron job."""
+        if not self.notification_callback:
+            return
+        try:
+            await self.notification_callback(job_name, error_msg)
+        except Exception as e:
+            logger.debug(f"Cron notification callback error: {e}")
+
     # ========== Public API ==========
     
     def list_jobs(self, include_disabled: bool = False) -> list[CronJob]:

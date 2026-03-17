@@ -113,24 +113,32 @@ class SessionManager:
             oldest_key = next(iter(self._cache))
             self._cache.pop(oldest_key, None)
 
-    def get_or_create(self, key: str) -> Session:
+    def get_or_create(self, key: str, expiry_hours: int = 24) -> Session:
         """
         Get an existing session or create a new one.
-        
+
         Args:
             key: Session key (usually channel:chat_id).
-        
+            expiry_hours: Number of hours before an inactive session expires.
+
         Returns:
             The session.
         """
         key = self.resolve_key(key)
         if key in self._cache:
-            return self._cache[key]
-        
-        session = self._load(key)
+            session = self._cache[key]
+        else:
+            session = self._load(key)
+
         if session is None:
             session = Session(key=key)
-        
+        else:
+            # Check for session expiration
+            from datetime import datetime, timedelta
+            if datetime.now() - session.updated_at > timedelta(hours=expiry_hours):
+                logger.info(f"Session {key} expired (inactive for > {expiry_hours}h). Starting fresh.")
+                session.clear()
+
         self._cache[key] = session
         self._evict_lru()
         return session
@@ -152,6 +160,7 @@ class SessionManager:
             messages = []
             metadata = {}
             created_at = None
+            updated_at = None
             last_consolidated = 0
             # Store full data line to extract top-level fields
             pending_knowledge = None
@@ -172,6 +181,7 @@ class SessionManager:
                     if data.get("_type") == "metadata":
                         metadata = data.get("metadata", {})
                         created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
+                        updated_at = datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else None
                         last_consolidated = data.get("last_consolidated", 0)
                         pending_knowledge = data.get("pending_knowledge")
                         pending_save = data.get("pending_save")
@@ -186,6 +196,7 @@ class SessionManager:
                 key=key,
                 messages=messages,
                 created_at=created_at or datetime.now(),
+                updated_at=updated_at or datetime.now(),
                 metadata=metadata,
                 last_consolidated=last_consolidated,
                 pending_knowledge=pending_knowledge,

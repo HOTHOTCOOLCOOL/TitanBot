@@ -183,6 +183,7 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         channel: str | None = None,
         chat_id: str | None = None,
         search_query: str | None = None,
+        context_limit: int = 120_000,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call.
@@ -196,11 +197,13 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
             chat_id: Current chat/user ID.
             search_query: Optional pre-rewritten search query for RAG retrieval.
                 If None, uses current_message directly.
+            context_limit: Max estimated character budget for all messages
+                (default 120K chars ≈ 30K tokens).  History is trimmed to fit.
 
         Returns:
             List of messages including system prompt.
         """
-        messages = []
+        messages: list[dict[str, Any]] = []
 
         # System prompt
         system_prompt = self.build_system_prompt(skill_names)
@@ -221,14 +224,68 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
         messages.append({"role": "system", "content": system_prompt})
 
+        # Trim history so total context stays within budget
+        trimmed_history = self._trim_history(
+            history, system_prompt, current_message, context_limit
+        )
+
         # History
-        messages.extend(history)
+        messages.extend(trimmed_history)
 
         # Current message (with optional image attachments)
         user_content = self._build_user_content(current_message, media)
         messages.append({"role": "user", "content": user_content})
 
         return messages
+
+    # ── Context window management ──────────────────────────────────────
+
+    @staticmethod
+    def _estimate_chars(messages: list[dict[str, Any]]) -> int:
+        """Estimate total character count of a message list."""
+        total = 0
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, str):
+                total += len(content)
+            elif isinstance(content, list):
+                for block in content:
+                    total += len(str(block.get("text", "")))
+        return total
+
+    def _trim_history(
+        self,
+        history: list[dict[str, Any]],
+        system_prompt: str,
+        current_message: str,
+        context_limit: int,
+    ) -> list[dict[str, Any]]:
+        """Drop oldest history messages until total fits within *context_limit* chars.
+
+        Keeps at least the last 4 messages so the LLM has immediate conversation
+        continuity.
+        """
+        overhead = len(system_prompt) + len(current_message)
+        history_chars = self._estimate_chars(history)
+
+        if overhead + history_chars <= context_limit:
+            return history  # fits — no trimming needed
+
+        from loguru import logger
+        target = int(context_limit * 0.80) - overhead
+        min_keep = 4  # always keep at least the last N messages
+
+        trimmed = list(history)
+        while len(trimmed) > min_keep and self._estimate_chars(trimmed) > target:
+            trimmed.pop(0)
+
+        dropped = len(history) - len(trimmed)
+        if dropped:
+            logger.info(
+                f"Context window optimization: dropped {dropped} oldest history "
+                f"messages ({history_chars} → {self._estimate_chars(trimmed)} chars)"
+            )
+        return trimmed
 
     def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
         """Build user message content with optional base64-encoded images."""

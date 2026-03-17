@@ -207,34 +207,43 @@ If you suspect a security breach:
 ### Built-in Security Controls
 
 ✅ **Input Validation**
-- Path traversal protection on file operations
-- Dangerous command pattern detection
+- Path traversal protection on file operations (`is_relative_to()` enforcement — Phase 18A)
+- 14+ dangerous command deny patterns (network exfiltration, encoded PowerShell, reverse shells — Phase 18A)
 - Input length limits on HTTP requests
+- SSRF protection blocking RFC1918/loopback/link-local/metadata IPs in `web_fetch` (Phase 18B)
 
 ✅ **Authentication**
-- Allow-list based access control
+- Allow-list based access control per channel
+- Dashboard API + WebSocket Bearer Token authentication (Phase 18A)
 - Failed authentication attempt logging
-- Open by default (configure allowFrom for production use)
+- Startup warning when `allowFrom` is empty (Phase 18B)
+- Master identity caching for cross-channel session linking (Phase 18B)
+
+✅ **Error Handling**
+- Sanitized error messages — generic user-facing message, full traceback to logs only (Phase 18B)
+- Error recovery metrics counters in critical code paths (Phase 17)
 
 ✅ **Resource Protection**
 - Command execution timeouts (60s default)
 - Output truncation (10KB limit)
 - HTTP request timeouts (10-30s)
+- Default `restrictToWorkspace=False` (set `true` for sandboxed operation)
 
 ✅ **Secure Communication**
 - HTTPS for all external API calls
 - TLS for Telegram API
 - WhatsApp bridge: localhost-only binding + optional token auth
+- Gateway binds to `127.0.0.1` by default (Phase 18A)
 
 ## Known Limitations
 
 ⚠️ **Current Security Limitations:**
 
-1. **No Rate Limiting** - Users can send unlimited messages (add your own if needed)
+1. **No Session Management** - Optional session expiry implemented in Phase 19 (`session_expiry_hours`), however, long-running sessions are still permitted.
 2. **Plain Text Config** - API keys stored in plain text (use keyring for production)
-3. **No Session Management** - No automatic session expiry
-4. **Limited Command Filtering** - Only blocks obvious dangerous patterns
-5. **No Audit Trail** - Limited security event logging (enhance as needed)
+3. ~~**No Rate Limiting**~~ — ✅ **Resolved in Phase 19**: Token Bucket Rate Limiting added to Dashboard API.
+4. ~~**Limited Command Filtering**~~ — ✅ **Resolved in Phase 18A**: 14+ deny patterns block network exfiltration, encoded PowerShell, pipe-to-shell, and reverse shells
+5. ~~**No Audit Trail**~~ — ✅ **Resolved in Phase 18B**: Error messages sanitized (generic user-facing, full traceback to logs), failed auth attempts logged
 
 ## Security Checklist
 
@@ -253,7 +262,7 @@ Before deploying nanobot:
 
 ## Updates
 
-**Last Updated**: 2026-02-03
+**Last Updated**: 2026-03-17
 
 For the latest security updates and announcements, check:
 - GitHub Security Advisories: https://github.com/HKUDS/nanobot/security/advisories

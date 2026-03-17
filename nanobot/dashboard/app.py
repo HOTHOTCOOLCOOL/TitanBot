@@ -65,6 +65,45 @@ def init_dashboard(bus: MessageBus, workspace: Path, token: str = ""):
 
 
 # ====================================================================
+# Rate Limiting
+# ====================================================================
+import time
+
+class RateLimiter:
+    """Token bucket rate limiter for the dashboard API."""
+    def __init__(self, capacity: int = 100, refill_rate: float = 10.0):
+        self.capacity = capacity
+        self.refill_rate = refill_rate
+        self.tokens = capacity
+        self.last_refill = time.time()
+        self._lock = asyncio.Lock()
+
+    async def consume(self, tokens: int = 1) -> bool:
+        async with self._lock:
+            now = time.time()
+            elapsed = now - self.last_refill
+            
+            # Refill tokens
+            new_tokens = int(elapsed * self.refill_rate)
+            if new_tokens > 0:
+                self.tokens = min(self.capacity, self.tokens + new_tokens)
+                self.last_refill = now
+                
+            if self.tokens >= tokens:
+                self.tokens -= tokens
+                return True
+            return False
+
+_rate_limiter = RateLimiter(capacity=50, refill_rate=5.0)
+
+async def check_rate_limit():
+    """FastAPI dependency for rate limiting."""
+    if not await _rate_limiter.consume(1):
+        raise HTTPException(status_code=429, detail="Too Many Requests")
+
+
+
+# ====================================================================
 # Authentication
 # ====================================================================
 
@@ -140,12 +179,12 @@ async def broadcast_ws_message(msg_type: str, data: Any):
 # API Endpoints for Knowledge & Memory
 # ====================================================================
 
-@app.get("/api/status")
+@app.get("/api/status", dependencies=[Depends(check_rate_limit)])
 async def get_status():
     """Get high-level agent status. No auth required (health check)."""
     return {"status": "online"}
 
-@app.get("/api/memory", dependencies=[Depends(verify_token)])
+@app.get("/api/memory", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
 async def get_memory():
     """Read MEMORY.md."""
     if not _workspace:
@@ -155,7 +194,7 @@ async def get_memory():
     content = mem_file.read_text(encoding="utf-8") if mem_file.exists() else ""
     return {"content": content}
 
-@app.post("/api/memory", dependencies=[Depends(verify_token)])
+@app.post("/api/memory", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
 async def update_memory(request: Request):
     """Update MEMORY.md."""
     if not _workspace:
@@ -168,7 +207,7 @@ async def update_memory(request: Request):
     mem_file.write_text(content, encoding="utf-8")
     return {"success": True}
 
-@app.get("/api/tasks", dependencies=[Depends(verify_token)])
+@app.get("/api/tasks", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
 async def get_tasks():
     """Read tasks.json."""
     if not _workspace:
@@ -182,7 +221,7 @@ async def get_tasks():
             pass
     return {"tasks": {}}
 
-@app.post("/api/tasks", dependencies=[Depends(verify_token)])
+@app.post("/api/tasks", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
 async def update_tasks(request: Request):
     """Save tasks.json entirely."""
     if not _workspace:
@@ -195,7 +234,7 @@ async def update_tasks(request: Request):
     tasks_file.write_text(json.dumps(tasks_dict, indent=2, ensure_ascii=False), encoding="utf-8")
     return {"success": True}
 
-@app.get("/api/preferences", dependencies=[Depends(verify_token)])
+@app.get("/api/preferences", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
 async def get_preferences():
     """Read preferences.json."""
     if not _workspace:
@@ -209,7 +248,7 @@ async def get_preferences():
             pass
     return {"preferences": {}}
 
-@app.get("/api/stats", dependencies=[Depends(verify_token)])
+@app.get("/api/stats", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
 async def get_stats():
     """Get system stats and metrics."""
     return get_metrics()

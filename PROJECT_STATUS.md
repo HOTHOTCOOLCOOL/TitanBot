@@ -83,6 +83,37 @@ To realize the enterprise-level Ultimate Goal, maintain momentum on these core f
 - [x] **P2 Code Quality & Bug Fixes (Phase 18C):** Fixed critical `/reload` command bug (`commands.py` called non-existent `agent._register_dynamic_tools()` → now imports module function from `tool_setup.py`). Hoisted per-call `_MEMORY_TRIGGERS` to module constant, fixed shadowed walrus variable in `memory_manager.py`, moved late `import re` to module top in `personalization.py`, removed redundant assignment in `state_handler.py`, added `__all__` exports to `tool_setup.py` and `hybrid_retriever.py`. New tests: `test_code_quality.py` (17 tests). Regression: 566 passed.
 - [x] **P3 Architecture Improvements (Phase 18D):** Refactored `ChannelManager._init_channels()` from 9 repetitive if/try/except blocks into a data-driven `_CHANNEL_REGISTRY` list with single loop (-80 lines). Replaced brittle `isinstance` checks in `_set_tool_context()` with duck-typed dispatch over `_CONTEXTUAL_TOOLS` tuple. Added `__all__` exports to 6 public modules (`context.py`, `commands.py`, `state_handler.py`, `session/manager.py`, `channels/manager.py`, `metrics.py`). Added `uptime_seconds()` metric to `MetricsCollector`, included in `report()`/`get_metrics()` output. New tests: `test_architecture.py` (33 tests). Regression: 599 passed.
 
+## 6. Future Directions (Phase 19+)
+
+The following areas have been identified during the post-Phase 18 feature audit for future development:
+
+### A. Performance Optimization
+- **Streaming response delivery** — forward LLM tokens to user in real-time instead of waiting for full completion
+- **Async parallel tool execution** — execute independent tools concurrently when LLM requests multiple in one turn
+- **Context window optimization** — smarter history truncation with token counting before LLM calls
+- **Embedding model upgrade** — evaluate larger/multilingual models for improved Chinese semantic retrieval
+
+### B. Multi-Modal Enhancement
+- **Vision-Language feedback loop** — tighter VLM ↔ RPA integration for self-correcting UI automation sequences
+- **Unified speech-to-text pipeline** — extend voice input beyond Telegram to all channels
+- **Image generation tool** — integrate DALL-E / Stable Diffusion as a built-in creative tool
+
+### C. Plugin Ecosystem
+- **Plugin marketplace** — browsable registry of community-contributed skills
+- **Plugin dependency management** — auto-install pip dependencies declared in plugin metadata
+- **Plugin-level configuration** — per-plugin `config.json` merged into the main configuration hierarchy
+
+### D. User Experience
+- **Dashboard v2** — richer UI with conversation viewer, knowledge graph visualization, and cron job editor
+- **Mobile-friendly dashboard** — responsive design, Progressive Web App (PWA) support
+- **Proactive notification system** — alerts when cron jobs fail or require user attention
+
+### E. Architecture Considerations *(to be discussed in future sessions)*
+- `knowledge_workflow.py` at 805 lines — candidate for further decomposition
+- Evaluate event-driven architecture for better decoupling between agent and channels
+- Review session persistence strategy (currently in-memory + JSON serialization)
+- Consider async generator pattern for streaming LLM responses end-to-end
+
 > **Note:** Tool extensions (SqlQueryTool, CreateExcelTool, etc.) have been deprioritized — the existing `ExecTool` + Knowledge Workflow pipeline already covers these use cases via `exec` + Python libraries with automatic skill learning.
 
 > **Note:** **Data Pipeline & Complex Contract Parsing** has been moved out of the core Nanobot backlog as an independent project requiring separate refinement and integration testing.

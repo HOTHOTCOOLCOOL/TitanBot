@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nanobot Command Center</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --text-color: #f8fafc;
+            --card-bg: #1e293b;
+            --border-color: #334155;
+            --accent-color: #3b82f6;
+            --accent-hover: #2563eb;
+            --success: #10b981;
+            --danger: #ef4444;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 250px;
+            background-color: var(--card-bg);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            padding: 20px 0;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            padding: 0 20px 20px;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 20px;
+            color: var(--accent-color);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .nav-item {
+            padding: 12px 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #94a3b8;
+        }
+
+        .nav-item:hover, .nav-item.active {
+            background-color: #0f172a;
+            color: var(--accent-color);
+            border-right: 3px solid var(--accent-color);
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .header {
+            height: 60px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            background-color: var(--card-bg);
+        }
+
+        h2 {
+            margin: 0;
+            font-size: 1.25rem;
+            font-weight: 500;
+        }
+
+        .tab-content {
+            display: none;
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Logs Console */
+        .logs-container {
+            flex: 1;
+            background-color: #000;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            padding: 15px;
+            overflow-y: auto;
+            font-family: "Fira Code", monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            color: #d1d5db;
+        }
+
+        .log-entry { margin-bottom: 5px; }
+        .log-time { color: #6b7280; margin-right: 10px; }
+        .log-agent { color: var(--accent-color); font-weight: bold; }
+        .log-user { color: var(--success); font-weight: bold; }
+
+        /* Edtiors */
+        .editor-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        textarea {
+            flex: 1;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 15px;
+            font-family: inherit;
+            font-size: 0.95rem;
+            resize: none;
+            outline: none;
+        }
+
+        textarea:focus { border-color: var(--accent-color); }
+
+        .btn {
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            align-self: flex-end;
+            transition: background 0.2s;
+        }
+
+        .btn:hover { background-color: var(--accent-hover); }
+
+        /* Chat Input for Dashboard */
+        .chat-input-wrapper {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .chat-input {
+            flex: 1;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            color: white;
+            padding: 12px 15px;
+            border-radius: 6px;
+            outline: none;
+        }
+        .chat-input:focus { border-color: var(--accent-color); }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <div class="logo">🐈 Nanobot</div>
+        <div class="nav-item active" onclick="switchTab('activity')">Activity Log</div>
+        <div class="nav-item" onclick="switchTab('memory')">L1/L2 Memory</div>
+        <div class="nav-item" onclick="switchTab('knowledge')">Knowledge Base</div>
+        <div class="nav-item" onclick="switchTab('system')">System & Stats</div>
+    </div>
+
+    <div class="main-content">
+        <div class="header">
+            <h2 id="page-title">Activity Log</h2>
+        </div>
+
+        <!-- Activity Tab -->
+        <div id="tab-activity" class="tab-content active">
+            <div class="logs-container" id="logs">
+                <div class="log-entry"><span class="log-time">System</span> <span class="log-agent">Nanobot Dashboard Online.</span></div>
+            </div>
+            <div class="chat-input-wrapper">
+                <input type="text" id="chat-input" class="chat-input" placeholder="Message Nanobot directly here..." onkeypress="handleChatEnter(event)">
+                <button class="btn" onclick="sendChatMessage()">Send</button>
+            </div>
+        </div>
+
+        <!-- Memory Tab -->
+        <div id="tab-memory" class="tab-content">
+            <div class="editor-container">
+                <label>MEMORY.md (Long-term Context)</label>
+                <textarea id="memory-editor"></textarea>
+                <button class="btn" onclick="saveMemory()">Save Changes</button>
+            </div>
+        </div>
+
+        <!-- Knowledge Tab -->
+        <div id="tab-knowledge" class="tab-content">
+            <div class="editor-container">
+                <label>tasks.json (Raw Internal Representation)</label>
+                <textarea id="knowledge-editor" style="font-family: monospace;"></textarea>
+                <button class="btn" onclick="saveKnowledge()">Save Config</button>
+            </div>
+        </div>
+
+        <!-- System Tab -->
+        <div id="tab-system" class="tab-content">
+            <div class="logs-container" id="stats-container" style="white-space: pre-wrap;">
+                Loading system metrics...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // WebSocket Setup
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        let ws;
+
+        function connectWS() {
+            ws = new WebSocket(wsUrl);
+            ws.onmessage = function(event) {
+                const payload = JSON.parse(event.data);
+                if (payload.type === 'log') {
+                    appendLog(payload.data.sender, payload.data.message);
+                }
+            };
+            ws.onclose = function() {
+                setTimeout(connectWS, 2000);
+            };
+        }
+        connectWS();
+
+        function appendLog(sender, message) {
+            const logs = document.getElementById('logs');
+            const time = new Date().toLocaleTimeString();
+            const cssClass = sender.toLowerCase() === 'user' ? 'log-user' : 'log-agent';
+            const html = `<div class="log-entry"><span class="log-time">[${time}]</span> <span class="${cssClass}">${sender}:</span> ${message.replace(/\n/g, '<br>')}</div>`;
+            logs.insertAdjacentHTML('beforeend', html);
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        // Send Chat
+        function handleChatEnter(e) {
+            if (e.key === 'Enter') sendChatMessage();
+        }
+
+        function sendChatMessage() {
+            const input = document.getElementById('chat-input');
+            const text = input.value.trim();
+            if (!text || !ws) return;
+            
+            appendLog('User', text);
+            ws.send(JSON.stringify({message: text}));
+            input.value = '';
+        }
+
+        // UI Tabs
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            
+            document.getElementById(`tab-${tabId}`).classList.add('active');
+            event.currentTarget.classList.add('active');
+            
+            const titles = {
+                'activity': 'Activity Log',
+                'memory': 'L1/L2 Memory Management',
+                'knowledge': 'Knowledge Base (Tasks)',
+                'system': 'System & Metrics Dashboard'
+            };
+            document.getElementById('page-title').textContent = titles[tabId];
+
+            if (tabId === 'memory') fetchMemory();
+            if (tabId === 'knowledge') fetchKnowledge();
+            if (tabId === 'system') fetchStats();
+        }
+
+        // Stats Polling
+        let statsInterval = null;
+        async function fetchStats() {
+            try {
+                const res = await fetch('/api/stats');
+                const data = await res.json();
+                document.getElementById('stats-container').textContent = JSON.stringify(data, null, 2);
+            } catch (e) {
+                document.getElementById('stats-container').textContent = 'Error fetching stats.';
+            }
+        }
+        
+        // Setup initial poll
+        setInterval(() => {
+            if (document.getElementById('tab-system').classList.contains('active')) {
+                fetchStats();
+            }
+        }, 5000);
+
+        // API Calls
+        async function fetchMemory() {
+            const res = await fetch('/api/memory');
+            const data = await res.json();
+            document.getElementById('memory-editor').value = data.content || '';
+        }
+
+        async function saveMemory() {
+            const content = document.getElementById('memory-editor').value;
+            await fetch('/api/memory', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({content})
+            });
+            alert('Memory saved successfully!');
+        }
+
+        async function fetchKnowledge() {
+            const res = await fetch('/api/tasks');
+            const data = await res.json();
+            document.getElementById('knowledge-editor').value = JSON.stringify(data.tasks, null, 2);
+        }
+
+        async function saveKnowledge() {
+            try {
+                const content = document.getElementById('knowledge-editor').value;
+                const tasks = JSON.parse(content);
+                await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({tasks})
+                });
+                alert('Knowledge base saved successfully!');
+            } catch (e) {
+                alert('Invalid JSON formatting!');
+            }
+        }
+    </script>
+</body>
+</html>

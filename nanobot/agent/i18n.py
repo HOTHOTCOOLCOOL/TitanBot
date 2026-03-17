@@ -69,8 +69,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "New session started. Memory consolidation in progress.",
     },
     "help_text": {
-        "zh": "🐈 nanobot 命令：\n/new — 开始新对话\n/tasks — 查看最近任务\n/help — 显示帮助",
-        "en": "🐈 nanobot commands:\n/new — Start a new conversation\n/tasks — Show recent tasks\n/help — Show available commands",
+        "zh": "🐈 nanobot 命令：\n/new — 开始新对话\n/tasks — 查看最近任务\n/kb — 知识库管理\n/memory — 记忆管理（导入/导出）\n/reload — 重载插件\n/help — 显示帮助",
+        "en": "🐈 nanobot commands:\n/new — Start a new conversation\n/tasks — Show recent tasks\n/kb — Knowledge base management\n/memory — Memory management (import/export)\n/reload — Reload plugins\n/help — Show available commands",
     },
     "re_execute_no_previous": {
         "zh": "好的，将重新执行任务。请稍候...",
@@ -129,6 +129,74 @@ MESSAGES: dict[str, dict[str, str]] = {
             "💡 Found similar task '{key}' (success rate: {rate}%, executed {count} times)\n"
             "Reply **use** to reuse the saved result, or **redo** to re-execute."
         ),
+    },
+
+    # --- Knowledge Base Management (/kb) ---
+    "kb_list_header": {
+        "zh": "📚 知识库条目列表：\n",
+        "en": "📚 Knowledge base entries:\n",
+    },
+    "kb_list_empty": {
+        "zh": "📚 知识库为空，还没有保存过任务。",
+        "en": "📚 Knowledge base is empty. No tasks saved yet.",
+    },
+    "kb_cleanup_result": {
+        "zh": "🧹 知识库清理完成：合并了 {merged} 组重复条目，删除了 {deleted} 条。",
+        "en": "🧹 Knowledge base cleanup done: merged {merged} duplicate groups, removed {deleted} entries.",
+    },
+    "kb_delete_success": {
+        "zh": "🗑️ 已删除知识库条目「{key}」。",
+        "en": "🗑️ Deleted knowledge base entry '{key}'.",
+    },
+    "kb_delete_not_found": {
+        "zh": "⚠️ 未找到知识库条目「{key}」。",
+        "en": "⚠️ Knowledge base entry '{key}' not found.",
+    },
+    "kb_help": {
+        "zh": (
+            "📚 知识库管理命令：\n"
+            "  `/kb list` — 列出所有知识条目\n"
+            "  `/kb cleanup` — 自动去重合并相似条目\n"
+            "  `/kb delete <key>` — 删除指定条目\n"
+            "  `/kb` — 显示此帮助"
+        ),
+        "en": (
+            "📚 Knowledge base commands:\n"
+            "  `/kb list` — List all knowledge entries\n"
+            "  `/kb cleanup` — Auto-merge duplicate entries\n"
+            "  `/kb delete <key>` — Delete a specific entry\n"
+            "  `/kb` — Show this help"
+        ),
+    },
+
+    # --- Memory Management (/memory) ---
+    "memory_help": {
+        "zh": (
+            "🧠 记忆管理命令：\n"
+            "  `/memory export` — 导出所有记忆为 JSON 文件\n"
+            "  `/memory import <path>` — 从 JSON 文件导入记忆\n"
+            "  `/memory` — 显示此帮助"
+        ),
+        "en": (
+            "🧠 Memory management commands:\n"
+            "  `/memory export` — Export all memory to a JSON file\n"
+            "  `/memory import <path>` — Import memory from a JSON file\n"
+            "  `/memory` — Show this help"
+        ),
+    },
+
+    # --- Agent Loop Nudges ---
+    "agent_continue_prompt": {
+        "zh": "继续执行！如果需要提取附件、分析内容、发邮件，立即调用工具。不要只返回文字，立即行动！",
+        "en": "Continue executing! If you need to extract attachments, analyze content, or send emails, call the tools immediately. Don't just return text — take action now!",
+    },
+    "agent_wait_nudge": {
+        "zh": "你前一句只回复了确认的文字。这会导致动作中断！请你**立即调用实际工具**（如 exec, read_file 等）往下推进任务进程！！！",
+        "en": "Your previous reply was only an acknowledgement. This will stall the task! You MUST **immediately call actual tools** (e.g., exec, read_file) to push the task forward!!!",
+    },
+    "agent_fake_completion_nudge": {
+        "zh": "你声称已经完成了任务或发送了邮件，但实际上系统检测到你并没有调用任何工具！这是你的幻觉。请立刻调用正确的工具执行实际操作！",
+        "en": "You claimed to have completed the task or sent an email, but the system detected NO tool calls! This is a hallucination. Call the correct tools NOW to execute the actual operation!",
     },
 }
 

@@ -188,6 +188,7 @@ class AgentDefaults(Base):
     max_tool_iterations: int = 20
     memory_window: int = 50
     language: str = "en"  # User-facing language: "en" or "zh"
+    embedding_model: str = ""  # Local path to sentence-transformers model. Empty = auto-detect.
 
 
 class VLMConfig(Base):
@@ -248,8 +249,9 @@ class ProvidersConfig(Base):
 class GatewayConfig(Base):
     """Gateway/server configuration."""
 
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 18790
+    token: str = ""  # Dashboard auth token. Empty = auto-generate at startup.
 
 
 class WebSearchConfig(Base):
@@ -297,6 +299,7 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    master_identities: dict[str, str] = Field(default_factory=dict)
 
     @property
     def workspace_path(self) -> Path:

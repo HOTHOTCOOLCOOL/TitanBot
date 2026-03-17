@@ -18,7 +18,7 @@ class ExecTool(Tool):
         working_dir: str | None = None,
         deny_patterns: list[str] | None = None,
         allow_patterns: list[str] | None = None,
-        restrict_to_workspace: bool = False,
+        restrict_to_workspace: bool = True,
     ):
         self.timeout = timeout
         self.working_dir = working_dir
@@ -31,6 +31,23 @@ class ExecTool(Tool):
             r">\s*/dev/sd",                  # write to disk
             r"\b(shutdown|reboot|poweroff)\b",  # system power
             r":\(\)\s*\{.*\};\s*:",          # fork bomb
+            # --- Phase 18A: network exfiltration ---
+            r"\bcurl\b",                     # curl
+            r"\bwget\b",                     # wget
+            r"\binvoke-webrequest\b",        # PowerShell web request
+            r"\binvoke-restmethod\b",        # PowerShell REST call
+            # --- Phase 18A: encoded / obfuscated execution ---
+            r"\bpowershell\b.*\s-[eE]nc",    # powershell -enc base64
+            r"\bpwsh\b.*\s-[eE]nc",          # pwsh -enc base64
+            # --- Phase 18A: pipe to shell ---
+            r"\|\s*(bash|sh|cmd|powershell|pwsh)\b",  # echo X | bash
+            # --- Phase 18A: destructive PowerShell ---
+            r"\bremove-item\b.*-recurse",    # Remove-Item -Recurse
+            r"\bstop-process\b",             # Stop-Process
+            # --- Phase 18A: reverse shells ---
+            r"\bnc\s+-e\b",                  # nc -e /bin/sh
+            r"\bncat\b",                     # ncat
+            r"/dev/tcp/",                    # bash reverse shell
         ]
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace

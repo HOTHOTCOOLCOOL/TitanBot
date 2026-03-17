@@ -1,5 +1,7 @@
 """Context builder for assembling agent prompts."""
 
+__all__ = ["ContextBuilder"]
+
 import base64
 import mimetypes
 import platform
@@ -21,11 +23,11 @@ class ContextBuilder:
     
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md", "KNOWLEDGE.md"]
     
-    def __init__(self, workspace: Path, language: str = "zh"):
+    def __init__(self, workspace: Path, language: str = "zh", provider=None, model=None):
         self.workspace = workspace
         self.language = language
         self.memory = MemoryStore(workspace)
-        self.vector_memory = VectorMemory(workspace)
+        self.vector_memory = VectorMemory(workspace, provider=provider, model=model)
         self.skills = SkillsLoader(workspace)
     
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
@@ -118,7 +120,7 @@ You have access to tools that allow you to:
 ## Workspace
 Your workspace is at: {workspace_path}
 - Core Preferences (L1 Memory): {workspace_path}/memory/preferences.json
-- Long-term memory (L2 Archive): {workspace_path}/memory/MEMORY.md (Use MemorySearchTool to retrieve details)
+- Long-term memory (L2 Archive): {workspace_path}/memory/MEMORY.md (Use `memory` tool to search/store/delete)
 - History log: {workspace_path}/memory/HISTORY.md (grep-searchable)
 - Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
 
@@ -140,8 +142,13 @@ NEVER say "I have sent the email," "Task completed," or "✅ 已发送" unless y
 NEVER just describe what you would do - actually call the tools and DO it!
 
 Always be helpful, accurate, and concise. When using tools, think step by step: what you know, what you need, and why you chose this tool.
-When remembering something important, write to {workspace_path}/memory/MEMORY.md. Background processes will later distill it into preferences.json.
-To recall past events, rely on the MemorySearchTool or grep {workspace_path}/memory/HISTORY.md.
+When remembering something important, use the `memory` tool with action='store'. Background processes will later distill it into preferences.json.
+To recall past events, use the `memory` tool with action='search', or grep {workspace_path}/memory/HISTORY.md.
+
+## 🧠 Memory Strategy
+**What to remember:** user preferences, profile facts, project context, important decisions, long-term instructions.
+**What NOT to remember:** temporary debugging info, large data blobs, passwords/API keys, one-time task results.
+When the user says "记住"/"remember"/"别忘了"/"don't forget", actively store it using the `memory` tool.
 
 ## ⚠️ 语言要求 / Language
 {self._get_language_instruction()}"""
@@ -175,6 +182,7 @@ To recall past events, rely on the MemorySearchTool or grep {workspace_path}/mem
         media: list[str] | None = None,
         channel: str | None = None,
         chat_id: str | None = None,
+        search_query: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call.
@@ -186,6 +194,8 @@ To recall past events, rely on the MemorySearchTool or grep {workspace_path}/mem
             media: Optional list of local file paths for images/media.
             channel: Current channel (telegram, feishu, etc.).
             chat_id: Current chat/user ID.
+            search_query: Optional pre-rewritten search query for RAG retrieval.
+                If None, uses current_message directly.
 
         Returns:
             List of messages including system prompt.
@@ -197,13 +207,15 @@ To recall past events, rely on the MemorySearchTool or grep {workspace_path}/mem
         
         # Inject VectorMemory RAG context
         try:
-            rag_results = self.vector_memory.search(current_message, top_k=3)
+            rag_query = search_query or current_message
+            rag_results = self.vector_memory.search(rag_query, top_k=3)
             if rag_results:
                 rag_context = self.vector_memory.format_results_for_context(rag_results)
                 if rag_context:
                     system_prompt += f"\n\n{rag_context}"
         except Exception as e:
-            pass  # Fail gracefully if vector search fails
+            from loguru import logger
+            logger.debug(f"Vector search skipped: {e}")
 
         if channel and chat_id:
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"

@@ -8,9 +8,7 @@ from typing import Any
 import litellm
 from litellm import acompletion
 
-import logging
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.providers.registry import find_by_model, find_gateway
@@ -107,6 +105,36 @@ class LiteLLMProvider(LLMProvider):
                     kwargs.update(overrides)
                     return
     
+    # Maximum number of retries for transient errors
+    _MAX_RETRIES = 2
+    _RETRY_BASE_DELAY = 1.0  # seconds
+
+    @staticmethod
+    def _is_retryable(error: Exception) -> bool:
+        """Determine if an error is transient and worth retrying.
+
+        Retries: timeouts, connection errors, 5xx server errors.
+        Does NOT retry: 4xx (auth/bad request), parsing errors.
+        """
+        import httpx
+
+        err_str = str(error).lower()
+        # Timeout / connection errors
+        if isinstance(error, (TimeoutError, ConnectionError, OSError)):
+            return True
+        if isinstance(error, httpx.TimeoutException):
+            return True
+        if isinstance(error, httpx.HTTPStatusError) and error.response.status_code >= 500:
+            return True
+        # LiteLLM wraps HTTP errors with status in the message
+        if "timeout" in err_str or "timed out" in err_str:
+            return True
+        if "connection" in err_str and "refused" in err_str:
+            return True
+        if any(f"{code}" in err_str for code in (500, 502, 503, 504, 529)):
+            return True
+        return False
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -177,25 +205,45 @@ class LiteLLMProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
-            
-        import time
-        with open(f"llm_payload_{int(time.time())}.json", "w", encoding="utf-8") as _f:
-            import json
-            try:
-                json.dump(kwargs, _f, ensure_ascii=False, indent=2)
-            except TypeError:
-                _f.write(str(kwargs))
         
-        try:
-            response = await acompletion(**kwargs)
-            return self._parse_response(response)
-        except Exception as e:
-            logger.error(f"LiteLLM Provider encountered an error calling {model}. Full exception details:", exc_info=True)
-            # Return error as content for graceful handling
-            return LLMResponse(
-                content=f"Error calling LLM: {str(e)}",
-                finish_reason="error",
-            )
+        import asyncio
+        import time as _time
+        last_error: Exception | None = None
+        for attempt in range(1 + self._MAX_RETRIES):
+            _start = _time.monotonic()
+            try:
+                response = await acompletion(**kwargs)
+                _elapsed = _time.monotonic() - _start
+                parsed = self._parse_response(response)
+                _tokens = parsed.usage.get("total_tokens", "?") if parsed.usage else "?"
+                if attempt > 0:
+                    logger.info(f"LLM call succeeded on retry {attempt}: model={model}, duration={_elapsed:.1f}s, tokens={_tokens}")
+                else:
+                    logger.info(f"LLM call: model={model}, duration={_elapsed:.1f}s, tokens={_tokens}")
+                return parsed
+            except Exception as e:
+                _elapsed = _time.monotonic() - _start
+                last_error = e
+                if attempt < self._MAX_RETRIES and self._is_retryable(e):
+                    delay = self._RETRY_BASE_DELAY * (2 ** attempt)
+                    logger.warning(
+                        f"LLM call failed (attempt {attempt+1}/{1+self._MAX_RETRIES}): "
+                        f"model={model}, duration={_elapsed:.1f}s, error={e}. "
+                        f"Retrying in {delay:.0f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                # Non-retryable or max retries exhausted
+                logger.error(f"LLM call failed: model={model}, duration={_elapsed:.1f}s, error={e}")
+                return LLMResponse(
+                    content=f"Error calling LLM: {str(e)}",
+                    finish_reason="error",
+                )
+        # Should not reach here, but just in case
+        return LLMResponse(
+            content=f"Error calling LLM: {str(last_error)}",
+            finish_reason="error",
+        )
     
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""

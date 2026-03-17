@@ -347,6 +347,7 @@ def gateway(
     bus = MessageBus()
     provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)
+    session_manager.set_identity_mapping(config.master_identities)
     
     # Set i18n language from config
     from nanobot.agent.i18n import set_language
@@ -481,6 +482,9 @@ def agent(
     else:
         logger.disable("nanobot")
     
+    session_manager = SessionManager(config.workspace_path)
+    session_manager.set_identity_mapping(config.master_identities)
+
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
@@ -494,6 +498,7 @@ def agent(
         exec_config=config.tools.exec,
         cron_service=cron,
         restrict_to_workspace=config.tools.restrict_to_workspace,
+        session_manager=session_manager,
         mcp_servers=config.tools.mcp_servers,
         language=language,
     )
@@ -1008,6 +1013,53 @@ def _login_github_copilot() -> None:
         console.print(f"[red]Authentication error: {e}[/red]")
         raise typer.Exit(1)
 
+
+@app.command()
+def dashboard(
+    config_file: str = typer.Option("config.json", help="Path to config file"),
+    host: str = typer.Option("127.0.0.1", help="Host to bind the dashboard to"),
+    port: int = typer.Option(8000, help="Port to bind the dashboard to")
+):
+    """
+    Start the Nanobot Command Center Web Dashboard.
+    """
+    from loguru import logger
+    from nanobot.config.loader import load_config, get_config_path
+    
+    # Try user-provided path, fallback to default
+    config_path = Path(config_file)
+    if not config_path.exists():
+        config_path = get_config_path()
+        
+    logger.info(f"Using config from: {config_path}")
+    config = load_config(config_path)
+    
+    # Initialize message bus and start dispatch loop
+    bus = MessageBus()
+    asyncio.run_coroutine_threadsafe(bus.dispatch_outbound(), asyncio.get_event_loop()) \
+        if asyncio.get_event_loop().is_running() else None
+        
+    try:
+        import uvicorn
+        from nanobot.dashboard.app import app as dashboard_app, init_dashboard, broadcast_ws_message
+        
+        # Setup global dashboard dependencies
+        init_dashboard(bus, config.workspace_path)
+        
+        # Hook up bus outbound messages to WS broadcast
+        async def _ws_outbound_logger(msg):
+            await broadcast_ws_message("log", {"sender": msg.channel, "message": msg.content})
+            
+        async def _ws_inbound_logger(msg):
+            await broadcast_ws_message("log", {"sender": "User", "message": msg.content})
+        
+        bus.subscribe_global(_ws_outbound_logger)
+        bus.subscribe_inbound_global(_ws_inbound_logger)
+        
+        logger.info(f"Starting dashboard on http://{host}:{port}")
+        uvicorn.run(dashboard_app, host=host, port=port)
+    except ImportError:
+        console.print("[red]Missing dependencies. Please run `pip install fastapi uvicorn`")
 
 if __name__ == "__main__":
     app()

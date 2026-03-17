@@ -32,12 +32,12 @@ from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
 class _SentenceTransformerEmbedding(EmbeddingFunction):
     """Lazy-loaded sentence-transformers embedding for ChromaDB."""
 
-    # Changed to relative path pointing to the local model downloaded by the user
-    MODEL_NAME = r"..\nanochat\models\sentence-transformers\paraphrase-multilingual-minilm-l12-v2"
+    # Default model path (used when no config override is provided)
+    _DEFAULT_MODEL = r"..\nanochat\models\sentence-transformers\paraphrase-multilingual-minilm-l12-v2"
     _SHARED_MODEL = None
 
-    def __init__(self) -> None:
-        pass
+    def __init__(self, model_path: str | None = None) -> None:
+        self._model_path = model_path or self._DEFAULT_MODEL
 
     def _load(self) -> None:
         if self.__class__._SHARED_MODEL is not None:
@@ -47,14 +47,14 @@ class _SentenceTransformerEmbedding(EmbeddingFunction):
         os.environ["HF_HUB_OFFLINE"] = "1"  # Force offline mode for HuggingFace hub
         
         from sentence_transformers import SentenceTransformer, models
-        logger.info(f"Loading embedding model: {self.MODEL_NAME} (local_files_only=True) …")
+        logger.info(f"Loading embedding model: {self._model_path} (local_files_only=True) …")
         
         try:
             # We explicitly instantiate the two main modules for a standard semantic search model.
             # This avoids the "Pooling missing word_embedding_dimension" error occurring when 
             # the user only downloads the root model folder (pytorch_model.bin) and forgets 
             # the 1_Pooling subdirectory and its config.
-            word_embedding_model = models.Transformer(self.MODEL_NAME, local_files_only=True)
+            word_embedding_model = models.Transformer(self._model_path, local_files_only=True)
             pooling_model = models.Pooling(
                 word_embedding_model.get_word_embedding_dimension(),
                 pooling_mode_mean_tokens=True,
@@ -65,7 +65,7 @@ class _SentenceTransformerEmbedding(EmbeddingFunction):
             logger.info("Embedding model loaded successfully using assembled components.")
         except Exception as e:
             logger.warning(f"Failed to load using assembled components, falling back to standard SentenceTransformer: {e}")
-            self.__class__._SHARED_MODEL = SentenceTransformer(self.MODEL_NAME, local_files_only=True)
+            self.__class__._SHARED_MODEL = SentenceTransformer(self._model_path, local_files_only=True)
 
     def __call__(self, input: Documents) -> Embeddings:
         """ChromaDB EmbeddingFunction protocol."""
@@ -92,13 +92,17 @@ class VectorMemory:
 
     COLLECTION_NAME = "nanobot_memory"
 
-    def __init__(self, workspace: Path | str) -> None:
+    def __init__(self, workspace: Path | str, provider=None, model=None) -> None:
         self.workspace = Path(workspace)
         self.memory_dir = self.workspace / "memory"
         self._db_path = self.memory_dir / "vectordb"
         self._collection = None
         self._embedding_fn = _SentenceTransformerEmbedding()
         self._init_done = False
+        
+        # Provider and model for query rewriting
+        self.provider = provider
+        self.model = model
 
     # -- Lazy initialisation ------------------------------------------------
 
@@ -408,6 +412,58 @@ class VectorMemory:
             return {"count": 0, "status": f"error: {e}"}
 
     # -- Public: format search results for LLM context ----------------------
+    
+    async def rewrite_query(self, query: str, conversation_history: list[dict[str, Any]] | None = None) -> str:
+        """Rewrite the query to resolve coreferences based on conversational history (P13 feature).
+        
+        Uses the configured provider to replace pronouns like 'he', 'she', 'it' with their
+        actual subjects from the preceding few messages.
+        
+        Args:
+            query: The original user search query.
+            conversation_history: List of previous message dictionaries.
+             
+        Returns:
+            The rewritten query, or the original query if no rewriting is needed or an error occurs.
+        """
+        if not self.provider or not self.model or not conversation_history:
+            return query
+            
+        recent_history = conversation_history[-6:]
+        if not recent_history:
+            return query
+            
+        history_text = "\n".join([f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in recent_history])
+        
+        prompt = f"""You are a query rewriting assistant. 
+Given the following conversation history, rewrite the user's latest query so that it is fully self-contained without needing the context. 
+Resolve any pronouns (e.g. 'it', 'he', 'that issue') to their specific names or entities mentioned in the history.
+Do NOT reply with anything other than the rewritten query. If no rewriting is needed, return the original query exactly.
+
+Conversation History:
+{history_text}
+
+Latest Query:
+{query}
+
+Rewritten Query:"""
+
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            response = await self.provider.chat(
+                messages=messages,
+                model=self.model,
+                temperature=0.0,
+                max_tokens=200
+            )
+            rewritten = response.content.strip()
+            if rewritten and rewritten.lower() != query.lower():
+                logger.info(f"VectorMemory: Refined query from '{query}' to '{rewritten}'")
+                return rewritten
+            return query
+        except Exception as e:
+            logger.error(f"VectorMemory query rewriting failed (non-fatal): {e}")
+            return query
 
     @staticmethod
     def format_results_for_context(results: list[dict[str, Any]]) -> str:

@@ -289,6 +289,6 @@ Supported: {ext in ['.pdf', '.xls', '.xlsx', '.doc', '.docx', '.txt', '.csv']}""
             try:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
-            except:
+            except Exception:
                 pass
         self._temp_files.clear()

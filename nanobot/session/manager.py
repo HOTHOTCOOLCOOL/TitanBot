@@ -1,5 +1,7 @@
 """Session management for conversation history."""
 
+__all__ = ["Session", "SessionManager"]
+
 import json
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -33,6 +35,7 @@ class Session:
     pending_save: dict[str, Any] | None = None  # Awaiting user confirmation to save
     pending_upgrade: dict[str, Any] | None = None  # Awaiting user confirmation to upgrade skill
     last_task_key: str | None = None  # Last completed task key (for implicit feedback tracking)
+    last_tool_calls: list[dict[str, Any]] | None = None  # Last tool calls (for silent steps update)
     message_count_since_consolidation: int = 0  # Auto-consolidation trigger counter
     
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
@@ -64,6 +67,7 @@ class Session:
         self.pending_knowledge = None
         self.pending_save = None
         self.pending_upgrade = None
+        self.last_tool_calls = None
         self.message_count_since_consolidation = 0
         self.updated_at = datetime.now()
 
@@ -73,13 +77,25 @@ class SessionManager:
     Manages conversation sessions.
 
     Sessions are stored as JSONL files in the sessions directory.
+    In-memory cache uses LRU eviction (maxsize=128) to prevent unbounded growth.
     """
+
+    CACHE_MAX_SIZE: int = 128
 
     def __init__(self, workspace: Path):
         self.workspace = workspace
         self.sessions_dir = ensure_dir(self.workspace / "sessions")
         self.legacy_sessions_dir = Path.home() / ".nanobot" / "sessions"
         self._cache: dict[str, Session] = {}
+        self.identity_mapping: dict[str, str] = {}
+    
+    def set_identity_mapping(self, mapping: dict[str, str]) -> None:
+        """Set the master identities mapping to resolve raw keys to master keys."""
+        self.identity_mapping = mapping
+        
+    def resolve_key(self, raw_key: str) -> str:
+        """Resolve a raw channel-specific key to a master identity if mapped."""
+        return self.identity_mapping.get(raw_key, raw_key)
     
     def _get_session_path(self, key: str) -> Path:
         """Get the file path for a session."""
@@ -91,6 +107,12 @@ class SessionManager:
         safe_key = safe_filename(key.replace(":", "_"))
         return self.legacy_sessions_dir / f"{safe_key}.jsonl"
     
+    def _evict_lru(self) -> None:
+        """Evict the oldest cached session if cache exceeds max size."""
+        while len(self._cache) > self.CACHE_MAX_SIZE:
+            oldest_key = next(iter(self._cache))
+            self._cache.pop(oldest_key, None)
+
     def get_or_create(self, key: str) -> Session:
         """
         Get an existing session or create a new one.
@@ -101,6 +123,7 @@ class SessionManager:
         Returns:
             The session.
         """
+        key = self.resolve_key(key)
         if key in self._cache:
             return self._cache[key]
         
@@ -109,6 +132,7 @@ class SessionManager:
             session = Session(key=key)
         
         self._cache[key] = session
+        self._evict_lru()
         return session
     
     def _load(self, key: str) -> Session | None:
@@ -135,6 +159,7 @@ class SessionManager:
             pending_upgrade = None
             msg_count_since_consolidation = 0
             last_task_key = None
+            last_tool_calls = None
 
             with open(path) as f:
                 for line in f:
@@ -153,6 +178,7 @@ class SessionManager:
                         pending_upgrade = data.get("pending_upgrade")
                         msg_count_since_consolidation = data.get("message_count_since_consolidation", 0)
                         last_task_key = data.get("last_task_key")
+                        last_tool_calls = data.get("last_tool_calls")
                     else:
                         messages.append(data)
 
@@ -166,6 +192,7 @@ class SessionManager:
                 pending_save=pending_save,
                 pending_upgrade=pending_upgrade,
                 last_task_key=last_task_key,
+                last_tool_calls=last_tool_calls,
                 message_count_since_consolidation=msg_count_since_consolidation,
             )
         except Exception as e:
@@ -174,7 +201,11 @@ class SessionManager:
     
     def save(self, session: Session) -> None:
         """Save a session to disk."""
-        path = self._get_session_path(session.key)
+        resolved_key = self.resolve_key(session.key)
+        
+        # Ensure the session key reflects its resolved identity to avoid mismatches
+        session.key = resolved_key
+        path = self._get_session_path(resolved_key)
 
         with open(path, "w") as f:
             metadata_line = {
@@ -187,6 +218,7 @@ class SessionManager:
                 "pending_save": session.pending_save,
                 "pending_upgrade": session.pending_upgrade,
                 "last_task_key": session.last_task_key,
+                "last_tool_calls": session.last_tool_calls,
                 "message_count_since_consolidation": session.message_count_since_consolidation,
             }
             f.write(json.dumps(metadata_line) + "\n")
@@ -194,9 +226,11 @@ class SessionManager:
                 f.write(json.dumps(msg) + "\n")
 
         self._cache[session.key] = session
+        self._evict_lru()
     
     def invalidate(self, key: str) -> None:
         """Remove a session from the in-memory cache."""
+        key = self.resolve_key(key)
         self._cache.pop(key, None)
     
     def list_sessions(self) -> list[dict[str, Any]]:
@@ -222,7 +256,8 @@ class SessionManager:
                                 "updated_at": data.get("updated_at"),
                                 "path": str(path)
                             })
-            except Exception:
+            except (json.JSONDecodeError, OSError) as e:
+                logger.debug(f"Skipping session {path.name}: {e}")
                 continue
         
         return sorted(sessions, key=lambda x: x.get("updated_at", ""), reverse=True)

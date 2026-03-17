@@ -1,7 +1,7 @@
 # Nanobot 演进 TODO
 
 > 本文件是项目持续演进的唯一入口。新对话时先阅读此文件，无需重读已完成的代码。
-> 最后更新: 2026-03-14
+> 最后更新: 2026-03-15 (Phase 12-14 计划新增)
 
 ---
 
@@ -59,11 +59,18 @@ Nanobot 是一个轻量级 AI Agent 框架，当前架构核心：
 - [x] 任务完成后设置 `session.last_task_key = key`
 - [x] `tests/test_loop_integration.py` — 28 测试全部通过
 
-**测试总计: 204 passed, 0 failures (8.67s)**
+**测试总计: 351 passed, 2 failed (pre-existing) (34.89s)**
 
----
+### Phase 9: 知识持续进化（Skill Evolution） — 受 AutoSkill 论文启发
 
-## 🔲 待完成
+核心理念：将 AutoSkill (ECNU/上海AI Lab, 2026) 的"版本化技能迭代 + 智能合并"融入 Nanobot。
+参考分析详见 `autoskill_analysis.md`。
+
+- [x] **P0: 知识条目版本化 + 自动合并** — `version` 字段，`merge_task()`, `find_similar_task()`, `tokenize_key()` 共享分词, 保存时自动合并
+- [x] **P1: 静默步骤更新** — 成功时自动更新 `steps_detail`，`session.last_tool_calls` 传递工具调用数据
+- [x] **P2: `/kb` 知识库管理命令** — `/kb list`, `/kb cleanup` (去重合并), `/kb delete`
+- [x] **P3: ChromaDB 语义匹配** — 条目>100时启用向量搜索 fallback (cosine ≥ 0.7)
+- [x] `tests/test_knowledge_versioning.py` — 40 测试全部通过
 
 ### RPA 混合架构路线图
 - [x] **短期: 文本匹配** — `ui_name` 参数按名称匹配 `anchors.json`，跳过 VLM（已实施）
@@ -71,10 +78,48 @@ Nanobot 是一个轻量级 AI Agent 框架，当前架构核心：
 - [x] **长期: YOLO UI 检测** — 无 Accessibility API 时用视觉检测 UI 元素（`yolo_detector.py` + GPA-GUI-Detector 模型）
 - [x] **多显示器支持** — 支持跨屏幕 RPA 操作
 
+### 记忆系统增强（mem9 启发）
+- [x] **Session End Hook** — `/new` 时自动保存会话摘要到 daily log
+- [x] **统一 Memory CRUD** — `memory` 工具支持 store/search/delete，替代只读的 MemorySearchTool
+- [x] **记忆意图检测** — 识别"记住"/"remember" 等触发词，自动提示 LLM 保存记忆
+- [x] **标签系统** — 记忆条目支持 tags，搜索时可按 tag 过滤
+- [x] **记忆导入/导出** — `/memory export` 和 `/memory import` 命令
+- [x] **记忆策略注入** — system prompt 中注入存储策略指导
+- [x] `tests/test_memory_tool.py` — 33 测试全部通过
+
+### Phase 11: 深度优化
+- [x] **P0: 死代码清理 + `loop.py` 瘦身** — 删除 2 个未引用方法，提取内联常量到模块级，减少 ~90 行
+- [x] **P1: Token 用量追踪** — `metrics.py` 新增 `record_tokens()`/`get_tokens()`，`/stats` 展示 token 汇总
+- [x] **P2: LLM 调用重试** — `litellm_provider.py` 指数退避重试（最多 2 次），仅对超时/5xx/连接错误重试
+- [x] **P3: 新增测试** — `test_loop_cleanup.py` (7), `test_metrics_tokens.py` (10), `test_provider_retry.py` (12)
+## 🔲 待完成
+
+### Phase 12: 知识系统升级 — 受 AutoSkill (ECNU) & XSKILL (HKUST) 论文启发
+
+核心理念：
+- **AutoSkill**: 结构化 SKILL.md 表示(triggers/tags/description) + Dense+BM25 混合检索 + add/merge/discard 管理判定 + 版本合并
+- **XSKILL**: Skill(任务级工作流) + Experience(动作级战术提示) 双流设计 + 检索后适配
+
+- [ ] **P0: 结构化知识表示增强** — task_knowledge.py 扩展 TaskEntry 新增 triggers, tags, description, nti_patterns, confidence 字段；knowledge_workflow.py 适配新字段
+- [ ] **P1: 混合检索 (Dense + BM25)** — knowledge_workflow.py 新增 hybrid_match()，复用现有 ChromaDB 做 dense matching + jieba+Jaccard 做 BM25 近似，λ=0.6 加权，阈值过滤
+- [ ] **P2: Experience 层引入** — 新建 experience_bank.py，实现轻量 Experience CRUD (condition→action 对)，与 LLM 执行后的工具调用序列集成，失败路径自动提取 Experience
+- [ ] **P3: Knowledge Management Judge** — knowledge_workflow.py 新增 _judge_management() add/merge/discard 三分决策（先规则驱动，可选 LLM 增强）
+- [ ] **新增测试** — test_hybrid_retrieval.py (~12), test_experience_bank.py (~10), test_knowledge_judge.py (~8), test_knowledge_schema.py (~6)
+
+### Phase 13: 检索增强
+
+- [x] **P0: Query Rewriting** — 增强 knowledge_workflow.py 的 extract_key()，复杂/多轮对话时生成检索友好的独立查询（指代消解）
+- [x] **P1: 检索后适配 (Retrieval-time Adaptation)** — knowledge_workflow.py 新增 _adapt_knowledge()，检索到知识后根据当前上下文裁剪/改写再注入
+
+### Phase 14: 工程卫生
+
+- [ ] **P0: 根目录清理** — 移除/归档 90+ 个 llm_payload_*.json，散落的 test_*.py 统一移入 tests/，旧分析报告归档到 docs/
+- [ ] **P1: loop.py 进一步模块化** — 提取知识库交互逻辑到 knowledge_handler.py，提取 pending 状态机处理到独立方法，目标降至 700 行以下
+- [ ] **P2: 类型提示完善** — 核心模块 (loop.py, knowledge_workflow.py, context.py) 添加完整 type hints，配置 mypy 基础检查
+
 ### 未来方向（讨论过但未规划）
-- [ ] **Tool 扩展**: `SqlQueryTool` → `CreateExcelTool` → `CreateDocxTool` → `PbiTool`
 - [ ] **多用户系统**: 会话隔离、权限模型
-- [ ] **向量搜索**: 当知识库条目 > 100 时考虑 embedding + FTS 混合检索
+- [ ] **Web Dashboard**: Agent 活动可视化
 
 ---
 
@@ -82,9 +127,13 @@ Nanobot 是一个轻量级 AI Agent 框架，当前架构核心：
 
 ### 架构决策
 - **不做 Router/Expert 分离** — 单 Agent 够用，LLM 自选 tool，省 token
-- **不做 LLM 相似度匹配** — 用 jieba + Jaccard 代码级匹配，零成本
+- **知识匹配策略演进** — Phase 9 前用 jieba+Jaccard 精确匹配（零 LLM cost）；Phase 12 将引入 Dense+BM25 混合检索作为增强路径，保留 jieba+trigger 快速匹配为默认
 - **不做 incremental checkpointing** — 任务短小，SubagentManager 足够
-- **不做 tagging 记忆** — 参考 OpenClaw，用文件即真相（Markdown 源文件 + 可选索引）
+- **双流知识设计 (Phase 12)** — Skill = 宏观工作流(steps)；Experience = 微观战术提示(condition→action)。受 XSKILL 论文启发
+
+### 论文参考
+- **AutoSkill** (ECNU/上海AI Lab, 2026): `2603.01145v2.pdf` — 显式 SKILL.md 工件、版本化技能迭代、混合检索、Management Judge
+- **XSKILL** (HKUST/浙大/华科, 2026): `2603.12056v1.pdf` — Skill+Experience 双流、跨路径对比、层次化合并、检索后适配
 
 ### OpenClaw 记忆系统（参考 d:\python\openclaw）
 - 核心理念：**Markdown 文件是唯一真相**
@@ -115,8 +164,8 @@ Nanobot 是一个轻量级 AI Agent 框架，当前架构核心：
 
 ### 测试命令
 ```bash
-# 运行所有核心测试（排除需要 API key 的 skill 测试）
+# 运行所有核心测试（排除需要 API key 的 skill 测试和 gemini 测试）
 cd d:\Python\nanobot
 $env:NO_PROXY="*"; $env:HTTP_PROXY=""; $env:HTTPS_PROXY=""
-.venv311\Scripts\python.exe -m pytest tests/ --ignore=tests/skill -q
+.venv311\Scripts\python.exe -m pytest tests/ --ignore=tests/skill --ignore=tests/test_gemini.py -q
 ```

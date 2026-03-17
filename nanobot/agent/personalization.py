@@ -1,6 +1,8 @@
 """Personalization subsystem: Memory Distiller."""
 
 import json
+import re
+
 import json_repair
 from loguru import logger
 
@@ -64,7 +66,6 @@ Respond with ONLY valid JSON, no markdown fences."""
             text = (response.content or "").strip()
             
             # Remove <think> tags if reasoning model leaked them
-            import re
             text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
             
             if text.startswith("```"):

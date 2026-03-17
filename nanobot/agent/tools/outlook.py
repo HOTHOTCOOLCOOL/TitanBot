@@ -248,7 +248,7 @@ Note: Requires Outlook application to be running on Windows."""
                     # Release COM object explicitly
                     try:
                         del att
-                    except:
+                    except Exception:
                         pass
         except Exception as e:
             logger.debug(f"Error getting attachments: {e}")
@@ -284,7 +284,7 @@ Note: Requires Outlook application to be running on Windows."""
         if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
             try:
                 return dt.replace(tzinfo=None)
-            except:
+            except Exception:
                 return dt
         return dt
     
@@ -399,7 +399,7 @@ Note: Requires Outlook application to be running on Windows."""
                         if item:
                             try:
                                 del item
-                            except:
+                            except Exception:
                                 pass
                 
                 return results, folder_name
@@ -575,7 +575,7 @@ Preview: {preview}...""")
                         if attachment:
                             try:
                                 del attachment
-                            except:
+                            except Exception:
                                 pass
                 
                 del item

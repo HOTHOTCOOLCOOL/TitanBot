@@ -18,6 +18,7 @@ class BaseChannel(ABC):
     """
     
     name: str = "base"
+    _master_identities: dict[str, str] | None = None
     
     def __init__(self, config: Any, bus: MessageBus):
         """
@@ -30,6 +31,19 @@ class BaseChannel(ABC):
         self.config = config
         self.bus = bus
         self._running = False
+        self._warned_open_access = False
+        # S8: Cache master_identities once at class level
+        if BaseChannel._master_identities is None:
+            BaseChannel._master_identities = self._load_master_identities()
+    
+    @staticmethod
+    def _load_master_identities() -> dict[str, str]:
+        """Load master identity mapping once (avoids per-call load_config)."""
+        try:
+            from nanobot.config.loader import load_config
+            return dict(load_config().master_identities)
+        except Exception:
+            return {}
     
     @abstractmethod
     async def start(self) -> None:
@@ -70,17 +84,33 @@ class BaseChannel(ABC):
         """
         allow_list = getattr(self.config, "allow_from", [])
         
-        # If no allow list, allow everyone
+        # S7: If no allow list, default to allowing everyone (public mode)
+        # Emit a one-time warning so operators notice the open-access state.
         if not allow_list:
+            if not self._warned_open_access:
+                logger.warning(
+                    f"Channel '{self.name}': allowFrom is empty — ALL senders are allowed. "
+                    "Set allowFrom in config to restrict access."
+                )
+                self._warned_open_access = True
             return True
         
         sender_str = str(sender_id)
+        
         if sender_str in allow_list:
             return True
         if "|" in sender_str:
             for part in sender_str.split("|"):
                 if part and part in allow_list:
                     return True
+        
+        # S8: Use cached master_identities instead of per-call load_config()
+        raw_key = f"{self.name}:{sender_str}"
+        identities = BaseChannel._master_identities or {}
+        master_identity = identities.get(raw_key)
+        if master_identity and master_identity in allow_list:
+            return True
+            
         return False
     
     async def _handle_message(

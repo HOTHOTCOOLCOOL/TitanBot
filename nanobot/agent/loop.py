@@ -1,4 +1,5 @@
 """Agent loop: the core processing engine."""
+from nanobot.agent.i18n import msg as i18n_msg
 
 import asyncio
 from contextlib import AsyncExitStack
@@ -17,26 +18,43 @@ from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
-from nanobot.agent.tools.message import MessageTool
-from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.tools.save_skill import SaveSkillTool
-from nanobot.agent.tools.outlook import OutlookTool
-from nanobot.agent.tools.attachment_analyzer import AttachmentAnalyzerTool
-from nanobot.agent.tools.task_memory import TaskMemoryTool
-from nanobot.agent.tools.memory_search_tool import MemorySearchTool
-from nanobot.agent.tools.screen_capture import ScreenCaptureTool
-from nanobot.agent.tools.rpa_executor import RPAExecutorTool
-from nanobot.agent.memory import MemoryStore
+
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.task_tracker import TaskTracker, TaskStatus
 from nanobot.agent.knowledge_workflow import KnowledgeWorkflow
 from nanobot.agent.personalization import MemoryDistiller
 from nanobot.session.manager import Session, SessionManager
-from nanobot.plugin_loader import scan_plugins, unload_plugins
+from nanobot.agent.commands import CommandHandler
+from nanobot.agent.memory_manager import MemoryManager
+from nanobot.agent.state_handler import StateHandler
+from nanobot.utils.metrics import metrics
+
+
+
+# ── Module-level constants (extracted from inline for readability) ──
+
+# Tool names that warrant a "continue executing" nudge after their completion
+_CONTINUE_TOOLS = {"outlook", "attachment_analyzer", "message"}
+
+# Phrases indicating the LLM is stalling instead of calling tools
+_WAIT_PHRASES = [
+    "稍等", "稍候", "马上", "现在开始", "这就开始", "正在为",
+    "working on it", "wait a", "just a sec", "let me start",
+]
+
+# Phrases indicating the LLM is hallucinating task completion without tool usage
+_FAKE_COMPLETION_PHRASES = [
+    "已发送", "已完成", "发送完毕", "处理完成", "task completed", "have sent the email",
+]
+
+# Keywords in the LLM response that suggest the workflow failed
+_FAIL_INDICATORS = [
+    "找不到", "没有找到", "未找到", "没找到",
+    "无法找到", "无法获取", "无法访问",
+    "error:", "not found", "no emails found",
+    "no results", "无法", "失败", "出错",
+    "sorry", "抱歉",
+]
 
 
 class AgentLoop:
@@ -84,7 +102,7 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
-        self.context = ContextBuilder(workspace, language=language)
+        self.context = ContextBuilder(workspace, language=language, provider=provider, model=model)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -104,8 +122,9 @@ class AgentLoop:
         self._mcp_stack: AsyncExitStack | None = None
         self._mcp_connected = False
         self._dynamic_tool_names: list[str] = []  # Track plugin tools for /reload
-        self._register_default_tools()
-        self._register_dynamic_tools()
+        self._config = None  # Cached Config instance
+        from nanobot.agent.tool_setup import setup_all_tools
+        setup_all_tools(self)
         
         # Task Tracker - 任务状态追踪 (用于 /tasks 命令)
         self.task_tracker = TaskTracker(workspace)
@@ -115,91 +134,30 @@ class AgentLoop:
             provider=provider,
             model=self.model,
             workspace=workspace,
+            vector_memory=getattr(self.context, 'vector_memory', None),
         )
+
+        self.memory_manager = MemoryManager(
+            workspace=workspace,
+            provider=provider,
+            model=self.model,
+            memory_window=self.memory_window,
+            vector_memory=getattr(self.context, 'vector_memory', None)
+        )
+        self.command_handler = CommandHandler(
+            workspace=workspace,
+            task_tracker=self.task_tracker
+        )
+        self.state_handler = StateHandler(self)
     
-    def _register_default_tools(self) -> None:
-        """Register the default set of tools."""
-        # File tools (restrict to workspace if configured)
-        allowed_dir = self.workspace if self.restrict_to_workspace else None
-        self.tools.register(ReadFileTool(allowed_dir=allowed_dir))
-        self.tools.register(WriteFileTool(allowed_dir=allowed_dir))
-        self.tools.register(EditFileTool(allowed_dir=allowed_dir))
-        self.tools.register(ListDirTool(allowed_dir=allowed_dir))
-        
-        # Shell tool
-        self.tools.register(ExecTool(
-            working_dir=str(self.workspace),
-            timeout=self.exec_config.timeout,
-            restrict_to_workspace=self.restrict_to_workspace,
-        ))
-        
-        # Web tools
-        self.tools.register(WebSearchTool(api_key=self.brave_api_key))
-        self.tools.register(WebFetchTool())
-        
-        # Message tool
-        message_tool = MessageTool(send_callback=self.bus.publish_outbound)
-        self.tools.register(message_tool)
-        
-        # Spawn tool (for subagents)
-        spawn_tool = SpawnTool(manager=self.subagents)
-        self.tools.register(spawn_tool)
-        
-        # Cron tool (for scheduling)
-        if self.cron_service:
-            self.tools.register(CronTool(self.cron_service))
-        
-        # Save skill tool (for saving workflows as reusable skills)
-        self.tools.register(SaveSkillTool(self.workspace))
-        
-        # Outlook tools (for email processing)
-        self.tools.register(OutlookTool())
-        self.tools.register(AttachmentAnalyzerTool())
-        
-        # Task knowledge tool
-        self.tools.register(TaskMemoryTool(self.workspace))
-        
-        # Memory search tool (RAG)
-        memory_search_tool = MemorySearchTool()
-        if hasattr(self.context, 'vector_memory'):
-            memory_search_tool.set_vector_memory(self.context.vector_memory)
-        self.tools.register(memory_search_tool)
-        
-        # Vision tools
-        self.tools.register(ScreenCaptureTool(self.workspace))
-        self.tools.register(RPAExecutorTool())
+    def _get_config(self):
+        """Get cached Config instance (avoids re-parsing on every LLM iteration)."""
+        if self._config is None:
+            from nanobot.config.schema import Config
+            self._config = Config()
+        return self._config
     
-    def _register_dynamic_tools(self) -> None:
-        """Scan the plugins directory and register discovered tools.
-        
-        Tools that conflict with already-registered built-in tools are skipped.
-        Previously loaded dynamic tools are unregistered first (for /reload).
-        """
-        # Unload any previously loaded plugins
-        if self._dynamic_tool_names:
-            unload_plugins(self.tools, self._dynamic_tool_names)
-            self._dynamic_tool_names.clear()
-        
-        plugins_dir = self.workspace / "nanobot" / "plugins"
-        if not plugins_dir.exists():
-            # Try relative to the package itself
-            plugins_dir = Path(__file__).parent.parent / "plugins"
-        
-        discovered = scan_plugins(plugins_dir)
-        
-        for tool in discovered:
-            if self.tools.has(tool.name):
-                logger.warning(
-                    f"Plugin '{tool.name}' conflicts with built-in tool, skipping"
-                )
-                continue
-            self.tools.register(tool)
-            self._dynamic_tool_names.append(tool.name)
-        
-        if self._dynamic_tool_names:
-            logger.info(
-                f"Dynamic tools registered: {', '.join(self._dynamic_tool_names)}"
-            )
+
     
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -211,19 +169,15 @@ class AgentLoop:
         await self._mcp_stack.__aenter__()
         await connect_mcp_servers(self._mcp_servers, self.tools, self._mcp_stack)
 
+    # Names of tools that need channel/chat_id routing context set per message
+    _CONTEXTUAL_TOOLS = ("message", "spawn", "cron")
+
     def _set_tool_context(self, channel: str, chat_id: str) -> None:
-        """Update context for all tools that need routing info."""
-        if message_tool := self.tools.get("message"):
-            if isinstance(message_tool, MessageTool):
-                message_tool.set_context(channel, chat_id)
-
-        if spawn_tool := self.tools.get("spawn"):
-            if isinstance(spawn_tool, SpawnTool):
-                spawn_tool.set_context(channel, chat_id)
-
-        if cron_tool := self.tools.get("cron"):
-            if isinstance(cron_tool, CronTool):
-                cron_tool.set_context(channel, chat_id)
+        """Update context for all tools that support routing info (duck-typed)."""
+        for name in self._CONTEXTUAL_TOOLS:
+            tool = self.tools.get(name)
+            if tool and hasattr(tool, "set_context"):
+                tool.set_context(channel, chat_id)
 
     async def _run_agent_loop(
         self,
@@ -253,8 +207,7 @@ class AgentLoop:
 
             # Determine if this turn requires the VLM
             target_model = self.model
-            from nanobot.config.schema import Config
-            config = Config()
+            config = self._get_config()
             
             provider_for_turn = self.provider
 
@@ -286,13 +239,22 @@ class AgentLoop:
                         provider_name=provider_name
                     )
 
-            response = await provider_for_turn.chat(
-                messages=messages,
-                tools=self.tools.get_definitions(),
-                model=target_model,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-            )
+            with metrics.timer("llm_call"):
+                response = await provider_for_turn.chat(
+                    messages=messages,
+                    tools=self.tools.get_definitions(),
+                    model=target_model,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
+
+            # Aggregate token usage
+            if response.usage:
+                metrics.record_tokens(
+                    prompt=response.usage.get("prompt_tokens", 0),
+                    completion=response.usage.get("completion_tokens", 0),
+                    total=response.usage.get("total_tokens", 0),
+                )
 
             if response.has_tool_calls:
                 tool_call_dicts = [
@@ -320,7 +282,14 @@ class AgentLoop:
                     })
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    
+                    _tool_start = time.monotonic()
+                    with metrics.timer("tool_execution"):
+                        result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    metrics.increment("tool_executions_count")
+                    _tool_elapsed = time.monotonic() - _tool_start
+                    logger.debug(f"Tool {tool_call.name} completed in {_tool_elapsed:.1f}s")
+
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
@@ -328,26 +297,16 @@ class AgentLoop:
                 # 根据最后执行的工具决定是否提示继续
                 last_tool = response.tool_calls[-1].name if response.tool_calls else ""
                 
-                # 需要继续的工具：outlook, attachment_analyzer, message
-                continue_tools = {"outlook", "attachment_analyzer", "message"}
-                
-                if last_tool in continue_tools:
-                    messages.append({"role": "user", "content": "继续执行！如果需要提取附件、分析内容、发邮件，立即调用工具。不要只返回文字，立即行动！"})
+                if last_tool in _CONTINUE_TOOLS:
+                    messages.append({"role": "user", "content": i18n_msg("agent_continue_prompt")})
             else:
                 final_content = response.content
                 
                 # Check for premature termination by reasoning models (sending a "wait" message or "fake completion" but no tools)
                 _content_str = (final_content or "").lower()
-                _wait_phrases = [
-                    "稍等", "稍候", "马上", "现在开始", "这就开始", "正在为", 
-                    "working on it", "wait a", "just a sec", "let me start"
-                ]
-                _fake_completion_phrases = [
-                    "已发送", "已完成", "发送完毕", "处理完成", "task completed", "have sent the email"
-                ]
                 
                 # If it contains wait phrases
-                if len(_content_str) < 500 and any(p in _content_str for p in _wait_phrases):
+                if len(_content_str) < 500 and any(p in _content_str for p in _WAIT_PHRASES):
                     logger.warning(f"LLM returned pure wait message, pushing for tool usage: {final_content[:50]}")
                     
                     # Forward this intermediate status to the user
@@ -364,12 +323,12 @@ class AgentLoop:
                     # Force it to call tools
                     messages.append({
                         "role": "user",
-                        "content": "你前一句只回复了确认的文字。这会导致动作中断！请你**立即调用实际工具**（如 exec, read_file 等）往下推进任务进程！！！"
+                        "content": i18n_msg("agent_wait_nudge")
                     })
                     continue
                 
                 # If it contains fake completion phrases
-                if len(_content_str) < 500 and any(p in _content_str for p in _fake_completion_phrases):
+                if len(_content_str) < 500 and any(p in _content_str for p in _FAKE_COMPLETION_PHRASES):
                     logger.warning(f"LLM returned fake completion message without tools, pushing for tool usage: {final_content[:50]}")
                     
                     # Add to context
@@ -380,7 +339,7 @@ class AgentLoop:
                     # Force it to call tools
                     messages.append({
                         "role": "user",
-                        "content": "你声称已经完成了任务或发送了邮件，但实际上系统检测到你并没有调用任何工具！这是你的幻觉。请立刻调用正确的工具执行实际操作！"
+                        "content": i18n_msg("agent_fake_completion_nudge")
                     })
                     continue
                 
@@ -406,15 +365,17 @@ class AgentLoop:
                     timeout=1.0
                 )
                 try:
-                    response = await self._process_message(msg)
+                    with metrics.timer("message_processing"):
+                        response = await self._process_message(msg)
                     if response:
                         await self.bus.publish_outbound(response)
                 except Exception as e:
-                    logger.error(f"Error processing message: {e}")
+                    logger.error(f"Error processing message: {e}", exc_info=True)
+                    metrics.increment("message_error_count")
                     await self.bus.publish_outbound(OutboundMessage(
                         channel=msg.channel,
                         chat_id=msg.chat_id,
-                        content=f"Sorry, I encountered an error: {str(e)}"
+                        content="Sorry, I encountered an internal error. Please try again or contact the administrator."
                     ))
             except asyncio.TimeoutError:
                 continue
@@ -458,7 +419,7 @@ class AgentLoop:
 
         # System messages route back via chat_id ("channel:chat_id")
         if msg.channel == "system":
-            return await self._process_system_message(msg)
+            return await self.state_handler.handle_system_message(msg)
 
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}: {preview}")
@@ -475,175 +436,43 @@ class AgentLoop:
                 logger.info(f"Implicit feedback: negative for '{session.last_task_key}'")
             else:
                 kw.record_outcome(session.last_task_key, success=True)
+                # P1: silently update steps_detail with last tool calls
+                if session.last_tool_calls:
+                    kw.silent_update_steps(session.last_task_key, session.last_tool_calls)
                 logger.info(f"Implicit feedback: positive for '{session.last_task_key}'")
             session.last_task_key = None
+            session.last_tool_calls = None
 
         # ── Step 1: Awaiting user reply to knowledge match ──
         if session.pending_knowledge:
-            if kw.is_use_command(user_input):
-                # User chose to use knowledge base result
-                logger.info(f"Session {session.key}: User chose to use knowledge base")
-                match = session.pending_knowledge
-                session.pending_knowledge = None
-
-                result_content = kw.get_knowledge_result(match)
-
-                session.add_message("user", msg.content)
-                session.add_message("assistant", result_content)
-                self.sessions.save(session)
-
-                return OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id, content=result_content
-                )
-
-            elif kw.is_redo_command(user_input):
-                # User chose to re-execute
-                logger.info(f"Session {session.key}: User chose to re-execute")
-                original_request = session.pending_knowledge.get("_original_request", "")
-                few_shot = kw.format_few_shot_prompt(session.pending_knowledge)
-                extracted_key = session.pending_knowledge.get("_extracted_key")
-                session.pending_knowledge = None
-
-                if original_request:
-                    return await self._execute_with_llm(
-                        session, msg, original_request=original_request,
-                        extracted_key=extracted_key,
-                        few_shot_context=few_shot,
-                    )
-                else:
-                    session.pending_knowledge = None
-                    self.sessions.save(session)
-                    return OutboundMessage(
-                        channel=msg.channel, chat_id=msg.chat_id,
-                        content=i18n_msg("re_execute_no_previous"),
-                    )
-            # else: not a use/redo command → clear pending and treat as new message
-            session.pending_knowledge = None
+            if response := await self.state_handler.handle_pending_knowledge(session, msg, user_input):
+                return response
 
         # ── Step 2: Awaiting user confirmation to save ──
         if session.pending_save:
-            if kw.is_save_confirm(user_input):
-                logger.info(f"Session {session.key}: User confirmed save to knowledge base")
-                pending = session.pending_save
-                session.pending_save = None
-
-                await kw.save_to_knowledge(
-                    key=pending.get("key", "unknown"),
-                    steps=pending.get("steps", []),
-                    user_request=pending.get("user_request", ""),
-                    result_summary=pending.get("result_summary", ""),
-                )
-
-                # Check if this task qualifies for skill upgrade
-                save_key = pending.get("key", "")
-                if save_key and kw.should_suggest_skill_upgrade(save_key):
-                    match = kw.knowledge_store.find_task(save_key) if kw.knowledge_store else None
-                    if match:
-                        session.pending_upgrade = {
-                            "key": save_key,
-                            "match": match,
-                        }
-                        self.sessions.save(session)
-                        stats = kw.get_match_stats(match)
-                        return OutboundMessage(
-                            channel=msg.channel, chat_id=msg.chat_id,
-                            content=kw.format_save_confirmed() + kw.format_skill_upgrade_prompt(
-                                match, lang=None
-                            ),
-                        )
-
-                self.sessions.save(session)
-                return OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id,
-                    content=kw.format_save_confirmed(),
-                )
-            # else: user didn't confirm → clear pending_save, continue
-            session.pending_save = None
+            if response := await self.state_handler.handle_pending_save(session, msg, user_input):
+                return response
 
         # ── Step 2.5: Awaiting user confirmation to upgrade skill ──
         if session.pending_upgrade:
-            if kw.is_upgrade_command(user_input):
-                logger.info(f"Session {session.key}: User confirmed skill upgrade")
-                pending = session.pending_upgrade
-                session.pending_upgrade = None
-                self.sessions.save(session)
-
-                # Auto-create skill via SaveSkillTool
-                try:
-                    match = pending.get("match", {})
-                    skill_tool = self.tools.get("save_skill")
-                    if skill_tool:
-                        steps = match.get("steps", [])
-                        tool_names = []
-                        for s in steps:
-                            if isinstance(s, dict):
-                                tool_names.append(s.get("tool", "unknown"))
-                            else:
-                                tool_names.append(str(s))
-                        await skill_tool.execute(
-                            name=pending.get("key", "auto_skill"),
-                            description=match.get("description", pending.get("key", "")),
-                            steps=json.dumps(steps, ensure_ascii=False),
-                        )
-                        return OutboundMessage(
-                            channel=msg.channel, chat_id=msg.chat_id,
-                            content=i18n_msg("skill_upgrade_confirmed"),
-                        )
-                except Exception as e:
-                    logger.error(f"Skill upgrade failed: {e}")
-                    return OutboundMessage(
-                        channel=msg.channel, chat_id=msg.chat_id,
-                        content=i18n_msg("processing_error", error=str(e)),
-                    )
-            # else: user didn't confirm upgrade → clear and continue
-            session.pending_upgrade = None
+            if response := await self.state_handler.handle_pending_upgrade(session, msg, user_input):
+                return response
 
         # ── Step 3: Slash commands ──
         cmd = msg.content.strip().lower()
-        if cmd == "/new":
-            messages_to_archive = session.messages.copy()
-            session.clear()
-            self.sessions.save(session)
-            self.sessions.invalidate(session.key)
-
-            async def _consolidate_and_cleanup():
-                temp_session = Session(key=session.key)
-                temp_session.messages = messages_to_archive
-                await self._consolidate_memory(temp_session, archive_all=True)
-
-            asyncio.create_task(_consolidate_and_cleanup())
-            return OutboundMessage(
-                channel=msg.channel, chat_id=msg.chat_id,
-                content=i18n_msg("new_session"),
-            )
-        if cmd == "/help":
-            return OutboundMessage(
-                channel=msg.channel, chat_id=msg.chat_id,
-                content=i18n_msg("help_text"),
-            )
-        if cmd == "/tasks":
-            return OutboundMessage(
-                channel=msg.channel, chat_id=msg.chat_id,
-                content=self._format_tasks_list(),
-            )
-        if cmd == "/reload":
-            self._register_dynamic_tools()
-            if self._dynamic_tool_names:
-                tools_list = ", ".join(self._dynamic_tool_names)
-                content = f"🔄 Plugins reloaded. Active dynamic tools: {tools_list}"
-            else:
-                content = "🔄 Plugins reloaded. No dynamic tools found in plugins directory."
-            return OutboundMessage(
-                channel=msg.channel, chat_id=msg.chat_id,
-                content=content,
-            )
+        if cmd.startswith("/"):
+            response = await self.command_handler.dispatch_command(cmd, msg, session, kw, self)
+            if response:
+                return response
 
         # ── Step 4: Extract Key → Match Knowledge Base ──
         try:
-            task_key = await kw.extract_key(msg.content)
+            history = session.get_history(max_messages=10)
+            task_key = await kw.extract_key(msg.content, history=history)
             match = kw.match_knowledge(task_key)
         except Exception as e:
             logger.error(f"Knowledge workflow error (non-fatal): {e}")
+            metrics.increment("knowledge_fallback_count")
             task_key = None
             match = None
 
@@ -668,7 +497,7 @@ class AgentLoop:
 
     async def _execute_with_llm(
         self,
-        session,
+        session: Session,
         msg: InboundMessage,
         original_request: str | None = None,
         extracted_key: str | None = None,
@@ -691,17 +520,42 @@ class AgentLoop:
         request_text = original_request or msg.content
 
         self._set_tool_context(msg.channel, msg.chat_id)
+
+        # P13: Async query rewriting for coreference resolution (moved from context.py)
+        search_query = request_text
+        try:
+            if hasattr(self.context, 'vector_memory') and hasattr(self.context.vector_memory, 'rewrite_query'):
+                history = session.get_history(max_messages=10)
+                search_query = await self.context.vector_memory.rewrite_query(request_text, history)
+        except Exception as e:
+            logger.debug(f"Query rewriting skipped: {e}")
+
         initial_messages = self.context.build_messages(
             history=session.get_history(max_messages=self.memory_window),
             current_message=request_text,
             media=msg.media if msg.media else None,
             channel=msg.channel,
             chat_id=msg.chat_id,
+            search_query=search_query,
         )
 
         # Inject few-shot reference into system prompt if available
         if few_shot_context and initial_messages and initial_messages[0].get("role") == "system":
             initial_messages[0]["content"] += f"\n\n{few_shot_context}"
+
+        # Inject tactical experience hint from Experience Bank (Phase 12)
+        if hasattr(self, "knowledge_workflow"):
+            experience_hint = self.knowledge_workflow.match_experience(request_text)
+            if experience_hint and initial_messages and initial_messages[0].get("role") == "system":
+                initial_messages[0]["content"] += (
+                    f"\n\n## 💡 Helpful Experience / Tactical Hint:\n{experience_hint}\n"
+                    "Consider applying this hint if it's relevant to solving the task."
+                )
+
+        # Memory intent detection: if user wants to remember something, hint the LLM
+        memory_hint = self.command_handler.detect_memory_intent(request_text)
+        if memory_hint and initial_messages and initial_messages[0].get("role") == "system":
+            initial_messages[0]["content"] += f"\n\n{memory_hint}"
 
         final_content, tools_used, tool_calls_with_args = await self._run_agent_loop(
             initial_messages, channel=msg.channel, chat_id=msg.chat_id
@@ -727,22 +581,15 @@ class AgentLoop:
                 and not session.pending_upgrade):
             logger.info(f"Auto-consolidation triggered (count={session.message_count_since_consolidation})")
             session.message_count_since_consolidation = 0
-            asyncio.create_task(self._consolidate_memory(session))
+            asyncio.create_task(self.memory_manager.consolidate_memory(session))
 
         # After LLM execution with tool calls → prompt user to save
         # But ONLY if the workflow appears to have succeeded
         save_prompt = ""
         if tool_calls_with_args:
-            _fail_indicators = [
-                "找不到", "没有找到", "未找到", "没找到",
-                "无法找到", "无法获取", "无法访问",
-                "error:", "not found", "no emails found",
-                "no results", "无法", "失败", "出错",
-                "sorry", "抱歉",
-            ]
             _content_lower = (final_content or "").lower()
             _workflow_succeeded = not any(
-                ind in _content_lower for ind in _fail_indicators
+                ind in _content_lower for ind in _FAIL_INDICATORS
             )
 
             if _workflow_succeeded:
@@ -755,6 +602,8 @@ class AgentLoop:
                     "user_request": request_text,
                     "result_summary": final_content[:500],
                 }
+                # P1: store tool calls for silent steps update on next implicit feedback
+                session.last_tool_calls = tool_calls_with_args
                 save_prompt = self.knowledge_workflow.format_save_prompt()
             else:
                 logger.info("Skipping save prompt: workflow appears to have failed")
@@ -768,283 +617,9 @@ class AgentLoop:
             metadata=msg.metadata or {},
         )
     
-    async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
-        """
-        Process a system message (e.g., subagent announce).
-        
-        The chat_id field contains "original_channel:original_chat_id" to route
-        the response back to the correct destination.
-        """
-        logger.info(f"Processing system message from {msg.sender_id}")
-        
-        # Parse origin from chat_id (format: "channel:chat_id")
-        if ":" in msg.chat_id:
-            parts = msg.chat_id.split(":", 1)
-            origin_channel = parts[0]
-            origin_chat_id = parts[1]
-        else:
-            # Fallback
-            origin_channel = "cli"
-            origin_chat_id = msg.chat_id
-        
-        session_key = f"{origin_channel}:{origin_chat_id}"
-        session = self.sessions.get_or_create(session_key)
-        self._set_tool_context(origin_channel, origin_chat_id)
-        initial_messages = self.context.build_messages(
-            history=session.get_history(max_messages=self.memory_window),
-            current_message=msg.content,
-            channel=origin_channel,
-            chat_id=origin_chat_id,
-        )
-        final_content, _, _ = await self._run_agent_loop(
-            initial_messages, channel=origin_channel, chat_id=origin_chat_id
-        )
-
-        if final_content is None:
-            final_content = "Background task completed."
-        
-        session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
-        session.add_message("assistant", final_content)
-        self.sessions.save(session)
-        
-        return OutboundMessage(
-            channel=origin_channel,
-            chat_id=origin_chat_id,
-            content=final_content
-        )
     
-    async def _consolidate_memory(self, session, archive_all: bool = False) -> None:
-        """Consolidate old messages into MEMORY.md + HISTORY.md.
-
-        Args:
-            archive_all: If True, clear all messages and reset session (for /new command).
-                       If False, only write to files without modifying session.
-        """
-        memory = MemoryStore(self.workspace)
-
-        if archive_all:
-            old_messages = session.messages
-            keep_count = 0
-            logger.info(f"Memory consolidation (archive_all): {len(session.messages)} total messages archived")
-        else:
-            keep_count = self.memory_window // 2
-            if len(session.messages) <= keep_count:
-                logger.debug(f"Session {session.key}: No consolidation needed (messages={len(session.messages)}, keep={keep_count})")
-                return
-
-            messages_to_process = len(session.messages) - session.last_consolidated
-            if messages_to_process <= 0:
-                logger.debug(f"Session {session.key}: No new messages to consolidate (last_consolidated={session.last_consolidated}, total={len(session.messages)})")
-                return
-
-            old_messages = session.messages[session.last_consolidated:-keep_count]
-            if not old_messages:
-                return
-            logger.info(f"Memory consolidation started: {len(session.messages)} total, {len(old_messages)} new to consolidate, {keep_count} keep")
-
-        lines = []
-        for m in old_messages:
-            if not m.get("content"):
-                continue
-            tools = f" [tools: {', '.join(m['tools_used'])}]" if m.get("tools_used") else ""
-            lines.append(f"[{m.get('timestamp', '?')[:16]}] {m['role'].upper()}{tools}: {m['content']}")
-        conversation = "\n".join(lines)
-        current_memory = memory.read_long_term()
-
-        prompt = f"""You are a memory consolidation agent. Process this conversation and return a JSON object with exactly three keys:
-
-1. "history_entry": A paragraph (2-5 sentences) summarizing the key events/decisions/topics. Start with a timestamp like [YYYY-MM-DD HH:MM]. Include enough detail to be useful when found by grep search later.
-
-2. "memory_update": The updated long-term memory content. ONLY add durable FACTS: user preferences, personal info, project context, technical decisions, tools/services used. Do NOT add one-time events or task results. If nothing new is a durable fact, return the existing content unchanged.
-
-3. "daily_log": A brief summary of notable one-time events from the conversation (tasks completed, errors encountered, emails analyzed, etc.). One line per event. Return empty string if nothing notable.
-
-## Current Long-term Memory
-{current_memory or "(empty)"}
-
-## Conversation to Process
-{conversation}
-
-Respond with ONLY valid JSON, no markdown fences."""
-
-        try:
-            response = await self.provider.chat(
-                messages=[
-                    {"role": "system", "content": "You are a memory consolidation agent. Respond only with valid JSON."},
-                    {"role": "user", "content": prompt},
-                ],
-                model=self.model,
-            )
-            text = (response.content or "").strip()
-            # Strip <think> tags before parsing JSON, as reasoning models will leak them
-            text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
-            if not text:
-                logger.warning("Memory consolidation: LLM returned empty response, skipping")
-                return
-            if text.startswith("```"):
-                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-            result = json_repair.loads(text)
-            if not isinstance(result, dict):
-                logger.warning(f"Memory consolidation: unexpected response type, skipping. Response: {text[:200]}")
-                return
-
-            if entry := result.get("history_entry"):
-                memory.append_history(entry)
-                # Auto-ingest new history entry into vector store
-                if hasattr(self.context, 'vector_memory') and self.context.vector_memory:
-                    self.context.vector_memory.ingest_text(entry, source="history")
-
-            if update := result.get("memory_update"):
-                if isinstance(update, dict):
-                    update = __import__("json").dumps(update, ensure_ascii=False, indent=2)
-                elif not isinstance(update, str):
-                    update = str(update)
-                if update != current_memory:
-                    memory.write_long_term(update)
-
-            if daily := result.get("daily_log"):
-                if daily.strip():
-                    memory.append_daily_log(daily.strip())
-                    # Auto-ingest new daily log entry into vector store
-                    today_str = time.strftime("%Y-%m-%d")
-                    if hasattr(self.context, 'vector_memory') and self.context.vector_memory:
-                        self.context.vector_memory.ingest_text(
-                            daily.strip(),
-                            source=f"daily_log:{today_str}",
-                            metadata={"date": today_str}
-                        )
-
-            if archive_all:
-                session.last_consolidated = 0
-            else:
-                session.last_consolidated = len(session.messages) - keep_count
-            logger.info(f"Memory consolidation done: {len(session.messages)} messages, last_consolidated={session.last_consolidated}")
-            
-            # Fire an asynchronous distillation to extract L1 core preferences
-            # Only distill if the L2 memory actually changed 
-            if update := result.get("memory_update"):
-                if update != current_memory:
-                    distiller = MemoryDistiller(memory, self.provider, self.model)
-                    asyncio.create_task(distiller.distill_preferences())
-                    
-        except Exception as e:
-            logger.error(f"Memory consolidation failed: {e}")
-
-    async def _execute_from_knowledge(
-        self,
-        msg: InboundMessage,
-        knowledge_entry: dict,
-        channel: str,
-        chat_id: str,
-    ) -> str:
-        """
-        从知识库条目执行任务步骤（不调用 LLM）。
-        
-        注意：知识库只保存了步骤名称，没有保存参数。
-        如果参数缺失，需要让用户选择重新执行。
-        
-        Args:
-            msg: 原始消息
-            knowledge_entry: 知识库条目，包含 steps 和 tools_used
-            channel: 频道
-            chat_id: 聊天 ID
-        
-        Returns:
-            执行结果
-        """
-        logger.info(f"Executing from knowledge: key={knowledge_entry.get('key')}")
-        
-        steps = knowledge_entry.get("steps", [])
-        if not steps:
-            return "知识库中没有执行步骤。"
-        
-        # 检查是否有参数
-        has_params = any(step.get("args") for step in steps)
-        
-        if not has_params:
-            # 知识库没有保存参数，无法正确执行
-            logger.warning(f"Knowledge base has no parameters saved, cannot execute")
-            return """⚠️ 知识库只保存了步骤，没有保存参数，无法正确执行。
-
-建议选择「重新执行」，让 AI 根据当前情况重新处理。"""
-        
-        # 设置工具上下文
-        self._set_tool_context(channel, chat_id)
-        
-        results = []
-        for i, step in enumerate(steps):
-            tool_name = step.get("tool")
-            tool_args = step.get("args", {})
-            
-            if not tool_name:
-                continue
-            
-            logger.info(f"Executing step {i+1}/{len(steps)}: {tool_name}")
-            
-            try:
-                result = await self.tools.execute(tool_name, tool_args)
-                results.append(f"[{i+1}] {tool_name}: {result[:200]}")
-            except Exception as e:
-                results.append(f"[{i+1}] {tool_name}: 错误 - {str(e)}")
-        
-        # 构造最终回复
-        final_content = "从知识库执行任务：\n\n" + "\n\n".join(results)
-        
-        return final_content
     
-    def _extract_tool_args_from_history(self, messages: list[dict]) -> dict[str, dict]:
-        """
-        从 session history 中提取工具调用的参数。
-        
-        Returns:
-            Dict mapping tool_name -> {args}
-        """
-        tool_args_map: dict[str, dict] = {}
-        
-        for msg in messages:
-            # 检查是否是 assistant 消息且包含 tool_calls
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
-                for tc in msg["tool_calls"]:
-                    if isinstance(tc, dict):
-                        func = tc.get("function", {})
-                        tool_name = func.get("name", "")
-                        if tool_name:
-                            # 解析 arguments（可能是 JSON 字符串）
-                            args = func.get("arguments", {})
-                            if isinstance(args, str):
-                                try:
-                                    args = json.loads(args)
-                                except:
-                                    args = {}
-                            tool_args_map[tool_name] = args
-        
-        return tool_args_map
-    
-    def _format_tasks_list(self) -> str:
-        """Format recent tasks for the /tasks command."""
-        from nanobot.agent.i18n import msg as i18n_msg
 
-        tasks = self.task_tracker.list_tasks(limit=10)
-        if not tasks:
-            return i18n_msg("tasks_empty")
-
-        status_icons = {
-            "completed": "✅",
-            "failed": "❌",
-            "running": "⏳",
-            "created": "📝",
-            "planning": "📝",
-            "pending_review": "🔍",
-            "cancelled": "⛔",
-        }
-        lines = [i18n_msg("tasks_header")]
-        for t in tasks:
-            status = t.status.value if hasattr(t.status, 'value') else str(t.status)
-            icon = status_icons.get(status, "❓")
-            time_str = t.created_at.strftime("%m-%d %H:%M") if t.created_at else ""
-            key_display = t.key[:30] + ("..." if len(t.key) > 30 else "")
-            lines.append(f"{icon} `{key_display}` — {status} ({time_str})")
-        return "\n".join(lines)
 
     def _format_match_with_stats(self, kw: KnowledgeWorkflow, match: dict) -> str:
         """Format knowledge match prompt with success rate stats if available."""
@@ -1060,6 +635,9 @@ Respond with ONLY valid JSON, no markdown fences."""
                 count=str(use_count),
             )
         return kw.format_match_prompt(match)
+
+
+
     
     async def process_direct(
         self,

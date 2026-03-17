@@ -13,7 +13,9 @@ import re
 from loguru import logger
 
 from nanobot.agent.i18n import msg
-from nanobot.agent.task_knowledge import TaskKnowledgeStore
+from nanobot.agent.task_knowledge import TaskKnowledgeStore, tokenize_key
+from nanobot.agent.hybrid_retriever import hybrid_retrieve
+from nanobot.utils.metrics import metrics
 
 
 # --- User command recognition ---
@@ -67,17 +69,19 @@ class KnowledgeWorkflow:
         provider: Any = None,
         model: str | None = None,
         workspace: Any = None,
+        vector_memory: Any = None,
     ):
         self.provider = provider
         self.model = model
         self.workspace = workspace
         self.knowledge_store = TaskKnowledgeStore(workspace) if workspace else None
+        self.vector_memory = vector_memory  # P3: optional ChromaDB semantic fallback
 
     # ----------------------------------------------------------------
     # 1. Key Extraction (lightweight LLM call)
     # ----------------------------------------------------------------
 
-    async def extract_key(self, user_request: str) -> str:
+    async def extract_key(self, user_request: str, history: list[dict] | None = None) -> str:
         """Extract a task key from user request using a lightweight LLM call.
 
         The key should be:
@@ -91,16 +95,32 @@ class KnowledgeWorkflow:
         if not self.provider:
             return self._fallback_key(user_request)
 
-        prompt = (
-            "Extract a concise task description from the user request below. "
-            "Rules:\n"
-            "- If the request is in Chinese, output ≤50 Chinese characters\n"
-            "- If the request is in English, output ≤200 English characters\n"
-            "- Output ONLY the key text, nothing else\n"
-            "- Focus on the core action and target\n\n"
-            f"User request: {user_request}\n\n"
-            "Key:"
-        )
+        prompt_parts = [
+            "Extract a concise task description from the user request below. ",
+            "Rules:\n",
+            "- If the request is in Chinese, output ≤50 Chinese characters\n",
+            "- If the request is in English, output ≤200 English characters\n",
+            "- Output ONLY the key text, nothing else\n",
+            "- Focus on the core action and target\n",
+        ]
+
+        if history:
+            prompt_parts.append("\nRecent conversation history (for context and coreference resolution):\n")
+            # Only include the last 5 turns to save tokens
+            for msg in history[-5:]:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                # Only take text content up to 500 chars per message to avoid bloat
+                if isinstance(content, str):
+                    prompt_parts.append(f"[{role}]: {content[:500]}\n")
+                elif isinstance(content, list):
+                    # Handle multimodal content simply
+                    text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
+                    text_content = " ".join(text_parts)
+                    prompt_parts.append(f"[{role}]: {text_content[:500]}\n")
+
+        prompt_parts.append(f"\nUser request: {user_request}\n\nKey:")
+        prompt = "".join(prompt_parts)
 
         try:
             response = await self.provider.chat(
@@ -180,60 +200,72 @@ class KnowledgeWorkflow:
             )
             return best_substring
 
-        # Pass 3: Common-word similarity
-        key_words = set(self._tokenize(key_lower))
-        if not key_words:
-            return None
+        # Pass 3: True Hybrid Retrieval (Dense + BM25)
+        best_hybrid_match, best_hybrid_score = hybrid_retrieve(
+            query=key,
+            candidates=tasks,
+            text_field="key",
+            extra_text_field="triggers",
+            match_key_field="key",
+            vector_memory=self.vector_memory if self.knowledge_store else None,
+            vector_source_filter="knowledge",
+            threshold=0.6,
+        )
 
-        best_word_match: dict | None = None
-        best_word_score = 0.0
-        for task in tasks:
-            task_key = task.get("key", "").lower().strip()
-            task_words = set(self._tokenize(task_key))
-            if not task_words:
-                continue
-            common = key_words & task_words
-            union = key_words | task_words
-            score = len(common) / len(union) if union else 0
-            if score > best_word_score:
-                best_word_score = score
-                best_word_match = task
-
-        if best_word_match and best_word_score >= 0.5:
+        if best_hybrid_match:
             logger.info(
-                f"KnowledgeWorkflow: word-similarity match found: "
-                f"'{best_word_match.get('key')}' (score={best_word_score:.2f})"
+                f"KnowledgeWorkflow: hybrid match found: "
+                f"'{best_hybrid_match.get('key')}' (score={best_hybrid_score:.2f})"
             )
-            return best_word_match
+            return best_hybrid_match
 
         logger.debug(f"KnowledgeWorkflow: no match found for key '{key}'")
+        return None
+
+    def match_experience(self, action_context: str) -> str | None:
+        """Find action-level tactical prompts from the Experience Bank (P12 feature).
+        
+        Args:
+            action_context: The current context of the agent's action (e.g., tool name, error message).
+             
+        Returns:
+            A tactical prompt string to inject, or None.
+        """
+        if not self.knowledge_store:
+            return None
+            
+        experiences = self.knowledge_store.get_experiences()
+        if not experiences:
+            return None
+
+        # Hybrid Retrieval (Dense + BM25) for Experiences
+        best_match, best_score = hybrid_retrieve(
+            query=action_context,
+            candidates=experiences,
+            text_field="trigger",
+            extra_text_field=None,
+            match_key_field="trigger",
+            vector_memory=self.vector_memory if self.knowledge_store else None,
+            vector_source_filter="knowledge_experience",
+            threshold=0.4,
+            no_dense_penalty=1.0,  # Don't penalize experience matches without dense scores
+        )
+
+        if best_match:
+            logger.info(
+                f"KnowledgeWorkflow: experience match found: "
+                f"'{best_match.get('trigger')}' (score={best_score:.2f})"
+            )
+            return best_match.get("prompt")
+            
         return None
 
     def _tokenize(self, text: str) -> list[str]:
         """Tokenize text for word-similarity matching.
 
-        For Chinese text: uses jieba word segmentation (falls back to char-level).
-        For English text: splits by whitespace, filters short words.
+        Delegates to the shared tokenize_key() function in task_knowledge.
         """
-        # Check if text is predominantly CJK
-        cjk_count = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
-        if cjk_count > len(text) * 0.3:
-            # Chinese: use jieba if available
-            try:
-                import jieba
-                words = jieba.lcut(text)
-                # Filter: keep words ≥2 chars, remove pure whitespace/punctuation
-                return [w.strip() for w in words if len(w.strip()) >= 2]
-            except ImportError:
-                # Fallback: each CJK char as token
-                tokens: list[str] = []
-                for char in text:
-                    if '\u4e00' <= char <= '\u9fff':
-                        tokens.append(char)
-                return tokens
-        else:
-            # English: split by whitespace, filter short words
-            return [w for w in text.split() if len(w) > 1]
+        return tokenize_key(text)
 
     # ----------------------------------------------------------------
     # 3. User Command Recognition
@@ -291,6 +323,11 @@ class KnowledgeWorkflow:
     ) -> bool:
         """Save or update a task in the knowledge base.
 
+        Strategy (P0 — auto-merge):
+        1. Exact key match → merge into existing entry (version++)
+        2. Similar key found → merge into similar entry (avoid duplicates)
+        3. No match → create new entry
+
         Args:
             key: Task key (extracted by extract_key).
             steps: List of tool call dicts [{tool, args}, ...].
@@ -305,26 +342,145 @@ class KnowledgeWorkflow:
             return False
 
         try:
+            # Phase 12: Knowledge Judge evaluation (LLM)
+            judge_result = await self.evaluate_and_structure_knowledge(key, user_request, steps, result_summary)
+            decision = judge_result.get("decision", "ADD")
+            
+            if decision == "DISCARD":
+                logger.info(f"KnowledgeWorkflow Judge: discarded new knowledge for '{key}'")
+                return True
+
+            triggers = judge_result.get("triggers", [])
+            tags = judge_result.get("tags", [])
+            anti_patterns = judge_result.get("anti_patterns", [])
+            confidence = judge_result.get("confidence", 1.0)
+
+            # 1. Exact key match → merge
             existing = self.knowledge_store.find_task(key)
-            if existing:
-                # Update: overwrite steps and result
-                existing["steps"] = steps
-                existing["result_summary"] = result_summary or "Task completed"
-                self.knowledge_store.update_task(key, result_summary or "Task reused")
-                logger.info(f"KnowledgeWorkflow: updated knowledge for key='{key}'")
-            else:
-                self.knowledge_store.add_task(
-                    key=key,
-                    description=user_request[:100],
-                    steps=steps,
-                    params={},
-                    result_summary=result_summary or "Task completed",
+            if existing or decision == "MERGE":
+                target_key = existing.get("key") if existing else key
+                # If decision was MERGE but exact key didn't match, try to find a similar one
+                if not existing and decision == "MERGE":
+                    similar = self.knowledge_store.find_similar_task(key)
+                    if similar:
+                        target_key = similar.get("key", key)
+                        
+                self.knowledge_store.merge_task(
+                    existing_key=target_key,
+                    new_steps=steps,
+                    new_result_summary=result_summary or "Task completed",
+                    new_steps_detail=steps,
+                    new_triggers=triggers,
+                    new_tags=tags,
+                    new_anti_patterns=anti_patterns,
+                    new_confidence=confidence,
                 )
-                logger.info(f"KnowledgeWorkflow: saved new knowledge for key='{key}'")
+                logger.info(f"KnowledgeWorkflow: merged for key='{target_key}'")
+                return True
+
+            # 2. Similar key match → merge (fallback if judge said ADD but there's a very similar one)
+            similar = self.knowledge_store.find_similar_task(key)
+            if similar:
+                similar_key = similar.get("key", "")
+                self.knowledge_store.merge_task(
+                    existing_key=similar_key,
+                    new_steps=steps,
+                    new_result_summary=result_summary or "Task completed",
+                    new_steps_detail=steps,
+                    new_triggers=triggers,
+                    new_tags=tags,
+                    new_anti_patterns=anti_patterns,
+                    new_confidence=confidence,
+                )
+                logger.info(f"KnowledgeWorkflow: merged (similar) '{key}' → '{similar_key}'")
+                return True
+
+            # 3. No match → create new
+            self.knowledge_store.add_task(
+                key=key,
+                description=user_request[:100],
+                steps=steps,
+                params={},
+                result_summary=result_summary or "Task completed",
+                triggers=triggers,
+                tags=tags,
+                anti_patterns=anti_patterns,
+                confidence=confidence,
+            )
+            logger.info(f"KnowledgeWorkflow: saved new knowledge for key='{key}'")
             return True
         except Exception as e:
             logger.error(f"KnowledgeWorkflow: save failed: {e}")
+            metrics.increment("knowledge_save_error_count")
             return False
+
+    async def evaluate_and_structure_knowledge(self, key: str, request: str, steps: list[dict], result: str) -> dict[str, Any]:
+        """Evaluate new knowledge using LLM and structure it into formal fields.
+        
+        Returns a dict:
+            decision: "ADD", "MERGE", or "DISCARD"
+            triggers: list of strings
+            tags: list of strings
+            anti_patterns: list of strings
+            confidence: float (0.0 - 1.0)
+        """
+        default_result = {
+            "decision": "ADD",
+            "triggers": [key],
+            "tags": [],
+            "anti_patterns": [],
+            "confidence": 0.8
+        }
+        
+        if not self.provider:
+            return default_result
+            
+        # Format the task representation
+        task_str = f"Task Key: {key}\nOriginal Request: {request}\nSteps: {steps}\nResult: {result}"
+        
+        prompt = f"""
+You are the Knowledge Management Judge for a personal AI assistant.
+Your job is to evaluate a newly completed workflow and structure it for the Knowledge Base.
+
+Workflow Data:
+{task_str}
+
+Tasks:
+1. DECISION: Decide if this knowledge should be ADDed as new, MERGEd with existing, or DISCARDed entirely (if trivial, completely erroneous, or empty).
+2. TRIGGERS: Extract 2-3 short, distinct trigger phrases the user might say next time to request this.
+3. TAGS: 1-3 broad categorization tags (e.g., 'email', 'system', 'research').
+4. ANTI-PATTERNS: 1-2 warnings or mistakes to avoid when running this workflow in the future (based on the steps or result). If none, empty array.
+5. CONFIDENCE: Give a confidence score (0.0 to 1.0) on how reliable and generalizable this workflow is.
+
+Return your evaluation EXACTLY as a JSON object, with no markdown formatting around it:
+{{
+    "decision": "ADD|MERGE|DISCARD",
+    "triggers": ["trigger1", "trigger2"],
+    "tags": ["tag1", "tag2"],
+    "anti_patterns": ["anti_pattern1"],
+    "confidence": 0.9
+}}
+"""
+        import json
+        try:
+            response = await self.provider.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=self.model,
+                temperature=0.1,
+                max_tokens=300,
+            )
+            content = response.content or ""
+            # Strip markdown and any <think> tags
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+            content = content.replace("```json", "").replace("```", "").strip()
+            parsed = json.loads(content)
+            
+            # Merge with defaults to ensure all keys exist
+            return {**default_result, **parsed}
+        except Exception as e:
+            logger.warning(f"Knowledge Judge failed, using defaults: {e}")
+            metrics.increment("knowledge_judge_fallback_count")
+            return default_result
 
     def get_knowledge_result(self, match: dict, lang: str | None = None) -> str:
         """Format and return the stored result of a matched knowledge entry.
@@ -436,6 +592,70 @@ class KnowledgeWorkflow:
         ])
         return "\n".join(lines)
 
+    async def adapt_knowledge(self, match: dict, current_request: str, history: list[dict] | None = None) -> str:
+        """Adapt a retrieved knowledge entry into a tailored few-shot prompt for the current context.
+
+        This uses a lightweight LLM call to rewrite the generic steps from the knowledge
+        base into a specific, actionable reference for the current request.
+        """
+        if not self.provider:
+            return self.format_few_shot_prompt(match)
+
+        key = match.get("key", "")
+        steps_detail = match.get("last_steps_detail", [])
+        steps = match.get("steps", [])
+
+        if not steps_detail and not steps:
+            return ""
+
+        # Construct generic reference first
+        generic_prompt = self.format_few_shot_prompt(match)
+
+        prompt_parts = [
+            f"You are given a previously successful workflow for the task: '{key}'.\n",
+            "Adapt this generic workflow to fit the NEW current user request.\n",
+            "Rules:\n",
+            "- Extract specific parameters (paths, names, URLs, etc.) from the new request or history.\n",
+            "- Replace the old parameters in the generic workflow with the new ones.\n",
+            "- Keep the output concise, focusing purely on the modified steps.\n",
+            "- Output a markdown formatted reference list of steps.\n\n",
+        ]
+
+        if history:
+            prompt_parts.append("Recent conversation history (for additional context):\n")
+            for msg in history[-5:]:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    prompt_parts.append(f"[{role}]: {content[:500]}\n")
+                elif isinstance(content, list):
+                    text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
+                    text_content = " ".join(text_parts)
+                    prompt_parts.append(f"[{role}]: {text_content[:500]}\n")
+
+        prompt_parts.append(f"\nUser request: {current_request}\n")
+        prompt_parts.append(f"\nGeneric workflow to adapt:\n{generic_prompt}\n\nAdapted workflow:")
+        prompt = "".join(prompt_parts)
+
+        try:
+            response = await self.provider.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=self.model,
+                temperature=0.1,
+                max_tokens=300,
+            )
+            content = response.content or ""
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+            adapted = content.strip()
+            if adapted:
+                logger.info(f"KnowledgeWorkflow: successfully adapted knowledge for '{key}'")
+                return f"## Contextual Reference: Adapted from '{key}'\n\n{adapted}"
+        except Exception as e:
+            logger.warning(f"KnowledgeWorkflow: adaptation failed: {e}")
+
+        # Fallback to the generic prompt if LLM fails or returns empty
+        return generic_prompt
+
     def get_match_stats(self, match: dict) -> dict:
         """Get formatted stats for a knowledge match (for display in prompts)."""
         success = match.get("success_count", 0)
@@ -472,4 +692,113 @@ class KnowledgeWorkflow:
         return msg("skill_upgrade_prompt", lang=lang,
                    key=match.get("key", ""),
                    count=str(match.get("success_count", 0)))
+
+    # ----------------------------------------------------------------
+    # 9. Silent Steps Update (P1)
+    # ----------------------------------------------------------------
+
+    def silent_update_steps(self, key: str, tool_calls: list[dict]) -> bool:
+        """Silently update steps_detail for a task after successful execution.
+
+        Called during implicit feedback (success path) to keep the knowledge
+        base's step details current without prompting the user.
+
+        Args:
+            key: Task key.
+            tool_calls: The tool calls from the latest execution.
+
+        Returns:
+            True if updated, False if key not found or no store.
+        """
+        if not self.knowledge_store or not tool_calls:
+            return False
+        result = self.knowledge_store.update_steps_detail(key, tool_calls)
+        if result:
+            logger.debug(f"KnowledgeWorkflow: silent steps update for '{key}'")
+        return result
+
+    # ----------------------------------------------------------------
+    # 10. Knowledge Base Management Commands (P2)
+    # ----------------------------------------------------------------
+
+    def format_kb_list(self, lang: str | None = None) -> str:
+        """Format a human-readable list of all knowledge base entries."""
+        if not self.knowledge_store:
+            return msg("kb_list_empty", lang=lang)
+
+        tasks = self.knowledge_store.get_all_tasks()
+        if not tasks:
+            return msg("kb_list_empty", lang=lang)
+
+        lines = [msg("kb_list_header", lang=lang)]
+        for i, t in enumerate(tasks, 1):
+            key = t.get("key", "?")
+            version = t.get("version", 1)
+            sc = t.get("success_count", 0)
+            fc = t.get("fail_count", 0)
+            total = sc + fc
+            rate = int(sc / total * 100) if total > 0 else 100
+            use_count = t.get("use_count", 0)
+            lines.append(
+                f"{i}. **{key}** — v{version} | "
+                f"成功率 {rate}% | 使用 {use_count} 次"
+            )
+        return "\n".join(lines)
+
+    def delete_knowledge(self, key: str, lang: str | None = None) -> str:
+        """Delete a knowledge base entry by key. Returns user-facing message."""
+        if not self.knowledge_store:
+            return msg("kb_delete_not_found", lang=lang, key=key)
+        if self.knowledge_store.delete_task(key):
+            logger.info(f"KnowledgeWorkflow: deleted knowledge entry '{key}'")
+            return msg("kb_delete_success", lang=lang, key=key)
+        return msg("kb_delete_not_found", lang=lang, key=key)
+
+    def cleanup_knowledge(self, lang: str | None = None) -> str:
+        """Find and merge duplicate/similar knowledge base entries.
+
+        Returns a user-facing message with cleanup stats.
+        """
+        if not self.knowledge_store:
+            return msg("kb_cleanup_result", lang=lang, merged="0", deleted="0")
+
+        tasks = self.knowledge_store.get_all_tasks()
+        merged_count = 0
+        deleted_keys: set[str] = set()
+
+        # Compare each pair; skip already-deleted entries
+        for i, t1 in enumerate(tasks):
+            k1 = t1.get("key", "")
+            if k1 in deleted_keys:
+                continue
+            for t2 in tasks[i + 1:]:
+                k2 = t2.get("key", "")
+                if k2 in deleted_keys:
+                    continue
+                # Use tokenize similarity
+                w1 = set(tokenize_key(k1))
+                w2 = set(tokenize_key(k2))
+                if not w1 or not w2:
+                    continue
+                score = len(w1 & w2) / len(w1 | w2)
+                if score >= 0.5:
+                    # Merge t2 into t1 (keep the one with more successes)
+                    keep, discard = (t1, t2) if t1.get("success_count", 0) >= t2.get("success_count", 0) else (t2, t1)
+                    self.knowledge_store.merge_task(
+                        keep.get("key", ""),
+                        new_steps=discard.get("steps"),
+                        new_result_summary=discard.get("result_summary"),
+                    )
+                    self.knowledge_store.delete_task(discard.get("key", ""))
+                    deleted_keys.add(discard.get("key", ""))
+                    merged_count += 1
+                    logger.info(
+                        f"KnowledgeWorkflow cleanup: merged '{discard.get('key')}' "
+                        f"into '{keep.get('key')}'"
+                    )
+
+        return msg(
+            "kb_cleanup_result", lang=lang,
+            merged=str(merged_count), deleted=str(len(deleted_keys)),
+        )
 

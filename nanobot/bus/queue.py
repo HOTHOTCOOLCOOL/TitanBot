@@ -20,11 +20,22 @@ class MessageBus:
         self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
         self.outbound: asyncio.Queue[OutboundMessage] = asyncio.Queue()
         self._outbound_subscribers: dict[str, list[Callable[[OutboundMessage], Awaitable[None]]]] = {}
+        self._global_subscribers: list[Callable[[OutboundMessage], Awaitable[None]]] = []
+        self._inbound_subscribers: list[Callable[[InboundMessage], Awaitable[None]]] = []
         self._running = False
     
     async def publish_inbound(self, msg: InboundMessage) -> None:
         """Publish a message from a channel to the agent."""
         await self.inbound.put(msg)
+        for callback in self._inbound_subscribers:
+            try:
+                await callback(msg)
+            except Exception as e:
+                logger.error(f"Error in inbound subscriber: {e}")
+                
+    def subscribe_inbound_global(self, callback: Callable[[InboundMessage], Awaitable[None]]) -> None:
+        """Subscribe to all inbound messages."""
+        self._inbound_subscribers.append(callback)
     
     async def consume_inbound(self) -> InboundMessage:
         """Consume the next inbound message (blocks until available)."""
@@ -47,16 +58,32 @@ class MessageBus:
         if channel not in self._outbound_subscribers:
             self._outbound_subscribers[channel] = []
         self._outbound_subscribers[channel].append(callback)
+        
+    def subscribe_global(
+        self,
+        callback: Callable[[OutboundMessage], Awaitable[None]]
+    ) -> None:
+        """Subscribe to all outbound messages across all channels."""
+        self._global_subscribers.append(callback)
     
     async def dispatch_outbound(self) -> None:
         """
-        Dispatch outbound messages to subscribed channels.
+        Dispatch outbound messages to subscribed channels and global listeners.
         Run this as a background task.
         """
         self._running = True
         while self._running:
             try:
                 msg = await asyncio.wait_for(self.outbound.get(), timeout=1.0)
+                
+                # Dispatch to global subscribers
+                for callback in self._global_subscribers:
+                    try:
+                        await callback(msg)
+                    except Exception as e:
+                        logger.error(f"Error dispatching to global subscriber: {e}")
+                        
+                # Dispatch to specific channel subscribers
                 subscribers = self._outbound_subscribers.get(msg.channel, [])
                 for callback in subscribers:
                     try:

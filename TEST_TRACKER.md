@@ -198,18 +198,42 @@ $env:NO_PROXY="*"; $env:HTTP_PROXY=""; $env:HTTPS_PROXY=""
 | `__all__` 导出声明 (8 模块) | `tests/test_architecture.py` | ✅ 16 pass | ✅ |
 | Uptime 指标 (`uptime_seconds()`) | `tests/test_architecture.py` | ✅ 5 pass | ✅ |
 
+### Phase 19+: Performance & Experience Optimization
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------|
+| Async 并行工具执行 | `tests/test_phase19_optimizations.py` | ✅ 10 pass | ✅ |
+| Context Window 字符预算 | `tests/test_phase19_optimizations.py` | ✅ | ✅ |
+| Dashboard v2 响应式 UI | — | — | ✅ 手动验证 |
+| Cron 失败通知 | `tests/test_phase19_optimizations.py` | ✅ | ✅ |
+| Knowledge Workflow 拆分 | `tests/test_knowledge_workflow.py` | ✅ | ✅ |
+
+### Phase 20: AI Memory Architecture Enhancement
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------|
+| 20A: Evicted Context Buffer | `tests/test_phase19_optimizations.py` | ✅ | ✅ |
+| 20B: CLS 慢路径深度合并 | `tests/test_full_workflow.py` | ✅ | ✅ |
+| 20C: 时间衰减检索评分 | `tests/test_vector_store.py` | ✅ | ✅ |
+| 20D: 元认知反思记忆 | `tests/test_reflection.py` | ✅ | ✅ |
+| 20E: 轻量实体关系图 | `tests/test_knowledge_graph.py` | ✅ | ✅ |
+| 20F+G+H: Shared Memory / Visual Persistence / PDF | 综合集成 | ✅ | ✅ |
+
 ---
 
-## 🔲 待测试 / 待开发功能
+## 🔲 Phase 21 审计修复 (待开发)
 
-| 功能 | 状态 | 测试文件 | 自动测试 | 手动确认 | 备注 |
-|------|-----|---------|---------|---------|------|
-| Tool 扩展: SqlQueryTool | 未开发 | — | — | — | 待规划 |
-| Tool 扩展: CreateExcelTool | 未开发 | — | — | — | 待规划 |
-| Tool 扩展: CreateDocxTool | 未开发 | — | — | — | 待规划 |
-| Tool 扩展: PbiTool | 未开发 | — | — | — | 待规划 |
-| 多用户会话隔离 | 已取消 | — | — | — | 转为 Unified Master Identity |
-| Web Dashboard | 已完成 | `dashboard/app.py` | — | ✅ | 包含在 Phase 15 中 |
+| 功能 | 阶段 | 状态 | 测试文件 | 自动测试 | 手动确认 |
+|------|------|-----|---------|---------|------|
+| S1-S2: Shell 安全加固 | 21A | 待开发 | — | — | — |
+| B1: 并发工具异常处理 | 21A | 待开发 | — | — | — |
+| L1-L2: 隐式反馈与状态机修复 | 21A | 待开发 | — | — | — |
+| D1: Memory 功能开关 | 21A | 待开发 | — | — | — |
+| S3-S4: WS/Memory 输入校验 | 21B | 待开发 | — | — | — |
+| B2-B4: 异步任务/VLM/Config 修复 | 21B | 待开发 | — | — | — |
+| L3-L4: 工作流判断/竞争条件 | 21B | 待开发 | — | — | — |
+| D2-D3/C1: 缓存/上下文限制/写冲突 | 21B | 待开发 | — | — | — |
+| P2 全部 (S5-E4) | 21C | 待开发 | — | — | — |
+| I1-E2: 架构/配置改进 | 21D | 待开发 | — | — | — |
+| 功能增强 (Streaming/Embedding/VLM/PWA) | 21E | 待开发 | — | — | — |
 
 ---
 
@@ -227,9 +251,11 @@ $env:NO_PROXY="*"; $env:HTTP_PROXY=""; $env:HTTPS_PROXY=""
 ## 📋 回归测试基线
 
 **上次全量测试结果:** 613 passed, 0 failed
-**测试日期:** 2026-03-17
+**测试日期:** 2026-03-17 (Phase 20 完成后)
 **Python 环境:** `.venv311` (Python 3.11)
+**下一里程碑:** Phase 21A 完成后目标 650+ passed
 
 > [!TIP]
 > 每次新功能开发完成后，运行全量回归测试并更新此基线数字。
 > 任何 **新增 failure** 都必须在合入前修复。
+> Phase 21 需为每个修复项增加对应测试覆盖。

@@ -245,6 +245,14 @@ If you suspect a security breach:
 4. ~~**Limited Command Filtering**~~ — ✅ **Resolved in Phase 18A**: 14+ deny patterns block network exfiltration, encoded PowerShell, pipe-to-shell, and reverse shells
 5. ~~**No Audit Trail**~~ — ✅ **Resolved in Phase 18B**: Error messages sanitized (generic user-facing, full traceback to logs), failed auth attempts logged
 
+⚠️ **Identified in Phase 21 Audit (pending fix):**
+
+6. **Shell Bypass via Interpreters** — `python -c "import subprocess; ..."` or `node -e` can indirectly invoke blocked commands. **Fix planned: Phase 21A (S2)**
+7. **Shell Path Traversal via `cd ..`** — Current `..` detection misses `cd ..` and env-var based escapes. **Fix planned: Phase 21A (S1)**
+8. **WebSocket Input Validation** — Dashboard WS messages have no size/rate limit. **Fix planned: Phase 21B (S3)**
+9. **Memory Import Path Traversal** — `/memory import` accepts arbitrary file paths. **Fix planned: Phase 21B (S4)**
+10. **JSON File Concurrent Write** — `reflections.json`, `graph.json` lack atomic write protection. **Fix planned: Phase 21C (S5)**
+
 ## Security Checklist
 
 Before deploying nanobot:
@@ -262,7 +270,7 @@ Before deploying nanobot:
 
 ## Updates
 
-**Last Updated**: 2026-03-17
+**Last Updated**: 2026-03-17 (Phase 21 audit additions)
 
 For the latest security updates and announcements, check:
 - GitHub Security Advisories: https://github.com/HKUDS/nanobot/security/advisories

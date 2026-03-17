@@ -83,58 +83,100 @@ To realize the enterprise-level Ultimate Goal, maintain momentum on these core f
 - [x] **P2 Code Quality & Bug Fixes (Phase 18C):** Fixed critical `/reload` command bug (`commands.py` called non-existent `agent._register_dynamic_tools()` → now imports module function from `tool_setup.py`). Hoisted per-call `_MEMORY_TRIGGERS` to module constant, fixed shadowed walrus variable in `memory_manager.py`, moved late `import re` to module top in `personalization.py`, removed redundant assignment in `state_handler.py`, added `__all__` exports to `tool_setup.py` and `hybrid_retriever.py`. New tests: `test_code_quality.py` (17 tests). Regression: 566 passed.
 - [x] **P3 Architecture Improvements (Phase 18D):** Refactored `ChannelManager._init_channels()` from 9 repetitive if/try/except blocks into a data-driven `_CHANNEL_REGISTRY` list with single loop (-80 lines). Replaced brittle `isinstance` checks in `_set_tool_context()` with duck-typed dispatch over `_CONTEXTUAL_TOOLS` tuple. Added `__all__` exports to 6 public modules (`context.py`, `commands.py`, `state_handler.py`, `session/manager.py`, `channels/manager.py`, `metrics.py`). Added `uptime_seconds()` metric to `MetricsCollector`, included in `report()`/`get_metrics()` output. New tests: `test_architecture.py` (33 tests). Regression: 599 passed.
 - [x] **Performance & Experience Optimization (Phase 19+):** Async parallel tool execution via `asyncio.gather` in `loop.py` (multi-tool turns now run concurrently). Context window optimization with character-budget history trimming in `context.py` (120K char default, keeps ≥4 recent messages). Dashboard v2 mobile-responsive UI with hamburger sidebar, stat cards, toast notifications, and XSS-safe rendering. Proactive cron failure notification system — `CronService.notification_callback` pushes alerts to dashboard WebSocket and the job's configured channel on failure. New tests: `test_phase19_optimizations.py` (10 tests). Regression: 602 passed.
-- [ ] **Knowledge Workflow Refactoring (Phase 19+ Remaining):** Extract user command recognition, prompt formatting, KB management commands, and outcome tracking out of `knowledge_workflow.py` into separate modules to slim it down from ~695 lines.
+- [x] **Knowledge Workflow Refactoring (Phase 19+ Remaining) (Completed):** Extracted user command recognition, prompt formatting, KB management commands, and outcome tracking out of `knowledge_workflow.py` into separate modules (`command_recognition.py`, `prompt_formatter.py`, `kb_commands.py`, `outcome_tracker.py`), significantly slimming it down from ~805 lines to improve maintainability and strictly enforce single-responsibility, all while maintaining 100% backward API compatibility.
 
-## 6. Phase 20: AI Memory Architecture Enhancement (Next)
+## 6. Phase 20: AI Memory Architecture Enhancement ✅
 
-Inspired by *"Survey on AI Memory: Theories, Taxonomies, Evaluations, and Emerging Trends"* (Ting Bai et al., 2026). The paper's 4W taxonomy validates Nanobot's lifecycle/content-type coverage; the following 7 improvements target identified gaps.
+Inspired by *"Survey on AI Memory: Theories, Taxonomies, Evaluations, and Emerging Trends"* (Ting Bai et al., 2026). All 7 items completed. Post-Phase 20 comprehensive code audit identified 32 issues (6 P0, 13 P1, 13 P2) — see Phase 21 for remediation plan.
 
-### P0 — High Priority (Low effort, high ROI)
+- [x] **20A: Evicted Context Buffer** | **20B: CLS Slow-Path Consolidation** | **20C: Time-Decay Retrieval**
+- [x] **20D: Metacognitive Reflection Memory** | **20E: Entity-Relation Graph**
+- [x] **20F: Multi-Agent Shared Memory** | **20G: Visual Memory Persistence** | **20H: web_fetch PDF Support**
 
-- [ ] **20A: Evicted Context Buffer (MemGPT-style Virtual Paging)** — When `_trim_history()` drops old messages, auto-summarize them into an "evicted context" buffer instead of discarding. Re-inject the summary as an extra context block on the next LLM call. Forms a Working Memory ↔ Evicted Buffer dual-tier. Files: `context.py`, `memory_manager.py`.
-- [ ] **20B: CLS Slow-Path Memory Consolidation** — Add a Cron job (e.g., daily 02:00) that runs deep consolidation on `HISTORY.md` + `MEMORY.md`: dedup repeated patterns, generalize into higher-level abstractions, demote/archive stale entries, and re-distill L1 preferences. Complements the existing fast-path session-end consolidation. Files: `memory_manager.py`, `cron/service.py`.
-- [ ] **20C: Time-Decay Retrieval Scoring** — Add a configurable time-decay factor (`0.99^days`) to `vector_store.py` search results. Prevents stale memories from dominating retrieval. Files: `vector_store.py`.
+## 7. Phase 21: Post-Audit Hardening & System Robustness (Next)
 
-### P1 — Medium Priority (Moderate effort, significant value)
+Comprehensive code audit (post Phase 20) identified **32 issues** across 7 dimensions. Phase 21 consolidates all audit fixes + existing backlog items into 5 sub-phases.
 
-- [ ] **20D: Metacognitive Reflection Memory** — When tools fail or user gives negative feedback, auto-generate a structured reflection entry `{trigger, failure_reason, corrective_action, timestamp}`. Inject matching reflections as negative few-shot examples on subsequent similar tasks. Enhances the current `record_outcome()` which only increments a counter. Files: `knowledge_workflow.py`, new `reflection.py`.
-- [ ] **20E: Lightweight Entity-Relation Graph** — Extract `(subject, predicate, object)` triples during slow-path consolidation via LLM. Store as JSON. On query, do entity lookup + 1-hop traversal before vector search. No external graph DB needed. Files: new `knowledge_graph.py`, `memory_manager.py`.
+### Phase 21A — P0 Security & Critical Fixes *(Must-do, blocks all else)*
 
-### P2 — Low Priority (Future direction)
+| ID | Issue | File(s) | Description |
+|----|-------|---------|-------------|
+| S1 | Shell `..` bypass | `shell.py` | `cd ..`, env vars, URL-encoded `..` bypass workspace restriction |
+| S2 | Shell deny-list bypass via interpreters | `shell.py` | `python -c`, `node -e` can invoke blocked commands indirectly |
+| B1 | Concurrent tool exception loop | `loop.py` | `gather(return_exceptions=True)` converts exceptions to strings but no loop-break guard |
+| L1 | Implicit feedback false positives | `loop.py` | Overly broad negative-feedback keyword matching causes spurious reflections |
+| L2 | Pending state edge cases | `loop.py` | `pending_save`/`pending_knowledge` not mutually exclusive, mid-conversation state leaks |
+| D1 | Memory features lack on/off switches | `config/schema.py`, `loop.py` | Reflection, KG, Visual Memory, Experience — no per-feature disable flag |
 
-- [ ] **20F: Multi-Agent Shared Memory** — If subagent parallelism expands, share context via EventBus whiteboard pattern. Currently N/A for single-agent architecture.
-- [ ] **20G: Visual Memory Text Persistence** — After VLM analyzes a screenshot, persist the image description (not the image) into HISTORY + vector index. Enables "visual memory" recall via text search. Files: `context.py`.
-- [ ] **20H: web_fetch PDF Support** — Enhance `WebFetchTool` to detect `Content-Type: application/pdf` responses, download the binary stream, and pipe it through the existing `attachment_analyzer` PDF text extraction pipeline. Enables the agent to read PDFs directly from URLs without a browser. Files: `tools/web.py`, `tools/attachment_analyzer.py`.
+### Phase 21B — P1 Security & Bug Fixes
 
-## 7. Future Directions (Phase 21+)
+| ID | Issue | File(s) | Description |
+|----|-------|---------|-------------|
+| S3 | WebSocket input validation | `dashboard/app.py` | No length/rate limit on WS messages; potential DoS via oversized payloads |
+| S4 | Memory import path traversal | `commands.py` | `import_memory()` accepts arbitrary file paths without workspace check |
+| B2 | Fire-and-forget task error swallowing | `commands.py`, `loop.py` | `asyncio.create_task` without done-callback silently drops errors |
+| B3 | SubagentManager `Config()` per-iteration | `subagent.py` | Redundant config reload inside tight loop |
+| B4 | VLM routing no fallback | `loop.py` | If VLM provider config missing, call fails with no graceful degradation |
+| L3 | `_workflow_succeeded` keyword false negative | `loop.py` | "No results" in successful response triggers false failure detection |
+| L4 | Consolidation async race condition | `loop.py` | Concurrent consolidation tasks may corrupt `session.last_consolidated` |
+| D2 | ReflectionStore/KG re-instantiated per call | `loop.py`, `context.py` | Disk I/O on every message; should cache at AgentLoop level |
+| D3 | System prompt unbounded injection | `loop.py`, `context.py` | RAG + KG + reflections + experience + few-shot can overflow context |
+| C1 | Memory store vs. consolidation race | `memory_search_tool.py`, `memory_manager.py` | Concurrent write to `MEMORY.md` from store and consolidation |
 
-### A. Performance & Retrieval
-- **Streaming response delivery** — forward LLM tokens to user in real-time instead of waiting for full completion
-- **Embedding model upgrade** — evaluate larger/multilingual models for improved Chinese semantic retrieval
+### Phase 21C — P2 Quality & Robustness
 
-### B. Multi-Modal Enhancement
-- **Vision-Language feedback loop** — tighter VLM ↔ RPA integration for self-correcting UI automation sequences
-- **Unified speech-to-text pipeline** — extend voice input beyond Telegram to all channels
-- **Image generation tool** — integrate DALL-E / Stable Diffusion as a built-in creative tool
+| ID | Issue | File(s) | Description |
+|----|-------|---------|-------------|
+| S5 | JSON file no atomic write/lock | `reflection.py`, `knowledge_graph.py` | Concurrent async writes can corrupt JSON |
+| S6 | `<think>` tag strip unreliable | Multiple | Unmatched tags leak raw reasoning to user |
+| B5 | Consolidation empty-slice API waste | `memory_manager.py` | Edge case sends empty list to LLM |
+| B6 | Session JSONL no UTF-8 encoding | `session/manager.py` | Windows GBK default breaks Chinese content |
+| L5 | KB substring match threshold too low | `knowledge_workflow.py` | `ratio >= 0.5` causes false matches in Chinese |
+| C2 | Deep consolidation vs regular consolidation race | `memory_manager.py` | Both write `MEMORY.md` without coordination |
+| C3 | Visual Memory duplicate persistence | `context.py` | Same image analysis persisted multiple times in tool loops |
+| I3 | Tool output no global size limit | `tools/registry.py` | Large `read_file` results inflate context unboundedly |
+| I4 | Session JSONL full-rewrite I/O | `session/manager.py` | O(n) write on every save for long sessions |
+| E3 | Query rewrite always calls LLM | `vector_store.py` | No short-circuit for simple queries without pronouns |
+| E4 | Error messages i18n incomplete | Multiple | Mixed zh/en hardcoded error strings |
 
-### C. Plugin Ecosystem
+### Phase 21D — Architecture & Config Improvements
+
+| ID | Issue | File(s) | Description |
+|----|-------|---------|-------------|
+| I1 | Config singleton inconsistency | `subagent.py`, multiple | Multiple `Config()` instantiations instead of shared singleton |
+| I2 | Dashboard missing KB/Reflection/Graph APIs | `dashboard/app.py` | No visibility into intelligent memory subsystems via dashboard |
+| D4 | No unified async task manager | `loop.py`, `memory_manager.py` | Fire-and-forget tasks have no cancel/error/concurrency control |
+| E1 | Knowledge matching precision | `knowledge_workflow.py` | Needs semantic cache, adaptive thresholds, feedback loop |
+| E2 | Memory capacity management | Multiple | No prune/expire mechanism for reflections, graph, vector store |
+
+### Phase 21E — Feature Enhancements *(From existing backlog)*
+
+- [ ] **Streaming Response Delivery** — Forward LLM tokens in real-time via SSE/WebSocket
+- [ ] **Embedding Model Upgrade** — Evaluate multilingual models for improved Chinese retrieval
+- [ ] **Vision-Language Feedback Loop** — Tighter VLM ↔ RPA integration for self-correcting UI automation
+- [ ] **Dashboard PWA** — Progressive Web App install support, offline caching
+
+## 8. Future Directions (Phase 22+)
+
+### A. Plugin Ecosystem
 - **Plugin marketplace** — browsable registry of community-contributed skills
 - **Plugin dependency management** — auto-install pip dependencies declared in plugin metadata
 - **Plugin-level configuration** — per-plugin `config.json` merged into the main configuration hierarchy
 
-### D. User Experience
-- **Mobile-friendly dashboard enhancements** — Progressive Web App (PWA) install support, offline caching
+### B. Multi-Modal & Voice
+- **Unified speech-to-text pipeline** — extend voice input beyond Telegram to all channels
+- **Image generation tool** — integrate DALL-E / Stable Diffusion as a built-in creative tool
 
-### E. Architecture Considerations
+### C. Architecture Evolution
 - Evaluate event-driven architecture for better decoupling between agent and channels
-- Review session persistence strategy (currently in-memory + JSON serialization)
 - Consider async generator pattern for streaming LLM responses end-to-end
+- Review session persistence strategy (WAL-mode SQLite vs. current JSONL)
 
-### F. Playwright Browser Automation *(⚠️ Heavy — discuss after urgent items complete)*
-- **Headless browser agent** — integrate Playwright (Chromium) as a plugin-level tool for full browser automation: JS-rendered page scraping, form filling, session-based login, PDF online preview extraction
-- **Primary use case:** Legacy ERP system automation — the company's ERP is browser-based and outdated; Playwright can navigate, extract data, and submit forms programmatically, complementing the existing UIAutomation + OCR RPA stack
-- **Considerations:** ~150MB Chromium download, 200-500MB per instance memory, potential overlap with existing RPA tools — evaluate as a standalone Plugin to avoid core architecture bloat
+### D. Playwright Browser Automation *(⚠️ Heavy — separate discussion)*
+- **Headless browser agent** — Playwright (Chromium) as plugin for JS-rendered pages, form filling, session login
+- **Primary use case:** Legacy ERP browser automation
+- **Considerations:** ~150MB Chromium, 200-500MB per instance — evaluate as standalone Plugin
 
-> **Note:** Tool extensions (SqlQueryTool, CreateExcelTool, etc.) have been deprioritized — the existing `ExecTool` + Knowledge Workflow pipeline already covers these use cases via `exec` + Python libraries with automatic skill learning.
+> **Note:** Tool extensions (SqlQueryTool, CreateExcelTool, etc.) remain deprioritized — `ExecTool` + Knowledge Workflow covers these via Python libraries with automatic skill learning.
 
-> **Note:** **Data Pipeline & Complex Contract Parsing** has been moved out of the core Nanobot backlog as an independent project requiring separate refinement and integration testing.
+> **Note:** **Data Pipeline & Complex Contract Parsing** is an independent project with separate planning.

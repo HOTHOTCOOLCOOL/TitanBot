@@ -37,6 +37,7 @@ class Session:
     last_task_key: str | None = None  # Last completed task key (for implicit feedback tracking)
     last_tool_calls: list[dict[str, Any]] | None = None  # Last tool calls (for silent steps update)
     message_count_since_consolidation: int = 0  # Auto-consolidation trigger counter
+    evicted_context: str | None = None  # Virtual paging summary of dropped messages
     
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         """Add a message to the session."""
@@ -69,6 +70,7 @@ class Session:
         self.pending_upgrade = None
         self.last_tool_calls = None
         self.message_count_since_consolidation = 0
+        self.evicted_context = None
         self.updated_at = datetime.now()
 
 
@@ -169,6 +171,7 @@ class SessionManager:
             msg_count_since_consolidation = 0
             last_task_key = None
             last_tool_calls = None
+            evicted_context = None
 
             with open(path) as f:
                 for line in f:
@@ -189,6 +192,7 @@ class SessionManager:
                         msg_count_since_consolidation = data.get("message_count_since_consolidation", 0)
                         last_task_key = data.get("last_task_key")
                         last_tool_calls = data.get("last_tool_calls")
+                        evicted_context = data.get("evicted_context")
                     else:
                         messages.append(data)
 
@@ -205,6 +209,7 @@ class SessionManager:
                 last_task_key=last_task_key,
                 last_tool_calls=last_tool_calls,
                 message_count_since_consolidation=msg_count_since_consolidation,
+                evicted_context=evicted_context,
             )
         except Exception as e:
             logger.warning(f"Failed to load session {key}: {e}")
@@ -231,6 +236,7 @@ class SessionManager:
                 "last_task_key": session.last_task_key,
                 "last_tool_calls": session.last_tool_calls,
                 "message_count_since_consolidation": session.message_count_since_consolidation,
+                "evicted_context": session.evicted_context,
             }
             f.write(json.dumps(metadata_line) + "\n")
             for msg in session.messages:

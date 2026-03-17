@@ -152,12 +152,14 @@ Nanobot 是一个轻量级 AI Agent 框架，当前架构核心：
 - [ ] `knowledge_workflow.py` 进一步分解 (目前 695 行，需精简)
 
 ### Phase 20: AI Memory Architecture Enhancement (Next)
-- [ ] 20A: Evicted Context Buffer (MemGPT-style Virtual Paging)
-- [ ] 20B: CLS Slow-Path Memory Consolidation
-- [ ] 20C: Time-Decay Retrieval Scoring
-- [ ] 20D: Metacognitive Reflection Memory
-- [ ] 20E: Lightweight Entity-Relation Graph
-- [ ] 20F-20H: (Low Priority Memory Enhancements)
+- [x] 20A: Evicted Context Buffer (MemGPT-style Virtual Paging)
+- [x] 20B: CLS Slow-Path Memory Consolidation
+- [x] 20C: Time-Decay Retrieval Scoring
+- [x] 20D: Metacognitive Reflection Memory
+- [x] 20E: Lightweight Entity-Relation Graph
+- [x] 20F: Multi-Agent Shared Memory (Architecture placeholder ready)
+- [x] 20G: Visual Memory Text Persistence
+- [x] 20H: web_fetch PDF Support
 
 ### Phase 21+: 未来方向 Backlog
 - [ ] Streaming response delivery

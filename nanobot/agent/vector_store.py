@@ -374,17 +374,43 @@ class VectorMemory:
                 # ChromaDB cosine distance → similarity score (0-1, higher=better)
                 score = max(0.0, 1.0 - dist)
 
+                # Time-decay penalty (Phase 20C): 0.99 ^ days_since_creation
+                date_str = meta.get("date", "") if meta else ""
+                if not date_str and source == "history":
+                    # Try to extract from text, e.g. [2026-03-01 14:00]
+                    date_match = re.search(r"\[(\d{4}-\d{2}-\d{2})", doc)
+                    if date_match:
+                        date_str = date_match.group(1)
+                
+                if date_str:
+                    try:
+                        from datetime import datetime
+                        entry_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                        today = datetime.now().date()
+                        days_diff = (today - entry_date).days
+                        if days_diff > 0:
+                            decay_factor = 0.99 ** days_diff
+                            score = score * decay_factor
+                    except Exception:
+                        pass
+
                 output.append({
                     "text": doc,
                     "source": source,
-                    "score": round(score, 4),
+                    "score": score,  # keep full precision for sorting
                     "metadata": meta or {},
                 })
 
-                if len(output) >= top_k:
-                    break
+            # Re-sort by time-decayed score descending
+            output.sort(key=lambda x: x["score"], reverse=True)
+            
+            # Format scores and take top_k
+            final_output = []
+            for item in output[:top_k]:
+                item["score"] = round(item["score"], 4)
+                final_output.append(item)
 
-            return output
+            return final_output
 
         except Exception as e:
             logger.error(f"VectorMemory search failed (non-fatal): {e}")

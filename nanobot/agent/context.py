@@ -30,7 +30,7 @@ class ContextBuilder:
         self.vector_memory = VectorMemory(workspace, provider=provider, model=model)
         self.skills = SkillsLoader(workspace)
     
-    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+    def build_system_prompt(self, skill_names: list[str] | None = None, evicted_context: str | None = None) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
         
@@ -49,6 +49,10 @@ class ContextBuilder:
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
             parts.append(bootstrap)
+            
+        # Evicted Context Buffer
+        if evicted_context:
+            parts.append(f"## Evicted Context Buffer\n(Summary of older messages dropped from immediate history)\n{evicted_context}")
         
         # Memory context
         memory = self.memory.get_memory_context()
@@ -184,6 +188,7 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         chat_id: str | None = None,
         search_query: str | None = None,
         context_limit: int = 120_000,
+        evicted_context: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call.
@@ -206,7 +211,7 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         messages: list[dict[str, Any]] = []
 
         # System prompt
-        system_prompt = self.build_system_prompt(skill_names)
+        system_prompt = self.build_system_prompt(skill_names, evicted_context=evicted_context)
         
         # Inject VectorMemory RAG context
         try:
@@ -219,6 +224,18 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         except Exception as e:
             from loguru import logger
             logger.debug(f"Vector search skipped: {e}")
+
+        # P1: Inject Knowledge Graph 1-hop Entity Context
+        try:
+            from nanobot.agent.knowledge_graph import KnowledgeGraph
+            kg = KnowledgeGraph(self.workspace)
+            kq_query = search_query or current_message
+            kg_context = kg.get_1hop_context(kq_query)
+            if kg_context:
+                system_prompt += f"\n\n{kg_context}"
+        except Exception as e:
+            from loguru import logger
+            logger.debug(f"Knowledge Graph lookup skipped: {e}")
 
         if channel and chat_id:
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
@@ -394,6 +411,31 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         # We set it to None if empty so Litellm/OpenAI serializes it as null.
         if content:
             msg["content"] = content
+            
+            # --- 20G: Visual Memory Text Persistence ---
+            if len(messages) > 0 and messages[-1].get("role") == "user":
+                prev_content = messages[-1].get("content")
+                if isinstance(prev_content, list):
+                    has_image = any(isinstance(c, dict) and c.get("type", "") == "image_url" for c in prev_content)
+                    if has_image:
+                        try:
+                            from datetime import datetime
+                            today_str = datetime.now().strftime("%Y-%m-%d")
+                            mem_text = f"Visual Memory ([Screenshot/Image Analysis]): {content}"
+                            if hasattr(self, 'memory') and self.memory:
+                                self.memory.append_daily_log(mem_text)
+                            if hasattr(self, 'vector_memory') and self.vector_memory:
+                                self.vector_memory.ingest_text(
+                                    content,
+                                    source=f"daily_log:{today_str}",
+                                    metadata={"date": today_str, "type": "visual_memory"}
+                                )
+                            from loguru import logger
+                            logger.info("Visual memory persisted to HISTORY and vector index.")
+                        except Exception as e:
+                            from loguru import logger
+                            logger.error(f"Failed to persist visual memory: {e}")
+            # ------------------------------------------
         else:
             msg["content"] = None
 

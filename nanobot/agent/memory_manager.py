@@ -110,6 +110,20 @@ Respond with ONLY valid JSON, no markdown fences."""
                 if self.vector_memory:
                     self.vector_memory.ingest_text(entry, source="history")
 
+                # Append to evicted context buffer for Virtual Paging (keep last ~2000 chars)
+                try:
+                    current_evicted = session.evicted_context or ""
+                    now_str = time.strftime("%Y-%m-%d %H:%M")
+                    new_evicted = f"[{now_str}] {entry}\n"
+                    combined = (current_evicted + new_evicted).strip()
+                    if len(combined) > 2000:
+                        combined = combined[-2000:]
+                        if "\n" in combined:
+                            combined = combined.split("\n", 1)[1]
+                    session.evicted_context = combined
+                except Exception as e:
+                    logger.warning(f"Failed to update evicted context: {e}")
+
             if update := result.get("memory_update"):
                 if isinstance(update, dict):
                     update = __import__("json").dumps(update, ensure_ascii=False, indent=2)
@@ -145,6 +159,76 @@ Respond with ONLY valid JSON, no markdown fences."""
                     
         except Exception as e:
             logger.error(f"Memory consolidation failed: {e}")
+
+    async def deep_consolidate(self) -> None:
+        """Deep consolidation of HISTORY.md and MEMORY.md: dedup, generalize, and demote stale entries."""
+        logger.info("Starting deep memory consolidation...")
+        # read existing memory and history
+        memory = MemoryStore(self.workspace)
+        current_memory = memory.read_long_term()
+        
+        history_file = self.workspace / "memory" / "HISTORY.md"
+        if not history_file.exists():
+            current_history = ""
+        else:
+            current_history = history_file.read_text(encoding="utf-8")
+
+        # To avoid blowing up context, only take the last ~50000 chars of history
+        if len(current_history) > 50000:
+            current_history = "..." + current_history[-50000:]
+
+        prompt = f"""You are a Memory Optimization Assistant. Perform a slow-path deep consolidation of the following memory systems:
+
+1. Reorganize and deduplicate information.
+2. Form higher-level abstractions from repeated patterns.
+3. Demote or remove stale or obsolete entries.
+
+## Current Long-term Memory (MEMORY.md)
+{current_memory or '(empty)'}
+
+## Recent History (HISTORY.md)
+{current_history or '(empty)'}
+
+Return ONLY a valid JSON object with a single key "memory_update" containing the optimized and rewritten long-term memory content (which will completely REPLACE the old MEMORY.md). Format the content using clear markdown headers. Maintain all critical facts and preferences, but make it concise and well-structured."""
+        try:
+            response = await self.provider.chat(
+                messages=[
+                    {"role": "system", "content": "You are a memory consolidation assistant. Return only valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                model=self.model,
+                temperature=0.2, # Low temp for consistency
+            )
+            text = (response.content or "").strip()
+            text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            result = json_repair.loads(text)
+            
+            if isinstance(result, dict) and "memory_update" in result:
+                new_memory = result["memory_update"]
+                if isinstance(new_memory, dict):
+                    new_memory = __import__("json").dumps(new_memory, ensure_ascii=False, indent=2)
+                elif not isinstance(new_memory, str):
+                    new_memory = str(new_memory)
+                
+                if new_memory and new_memory != current_memory:
+                    memory.write_long_term(new_memory)
+                    logger.info("Deep memory consolidation completed successfully.")
+                    
+                    # Fire asynchronous distillation to keep L1 preferences in sync
+                    distiller = MemoryDistiller(memory, self.provider, self.model)
+                    asyncio.create_task(distiller.distill_preferences())
+                    
+                    # P1: Extract Knowledge Graph Entity-Relation Triples
+                    try:
+                        from nanobot.agent.knowledge_graph import KnowledgeGraph
+                        kg = KnowledgeGraph(self.workspace)
+                        asyncio.create_task(kg.extract_triples(self.provider, self.model, str(new_memory)))
+                    except Exception as e:
+                        logger.error(f"Failed to start Knowledge Graph extraction: {e}")
+        except Exception as e:
+            logger.error(f"Deep memory consolidation failed: {e}")
 
     async def save_session_summary(self, session: Session) -> None:
         """Session-end hook: save a brief summary of the session to daily log.

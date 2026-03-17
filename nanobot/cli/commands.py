@@ -441,6 +441,18 @@ def gateway(
         console.print("[yellow]Warning: No channels enabled[/yellow]")
     
     cron_status = cron.status()
+    has_deep_consolidation = any(j.name == "System Deep Memory Consolidation" for j in cron.list_jobs(include_disabled=True))
+    if not has_deep_consolidation:
+        from nanobot.cron.types import CronSchedule
+        cron.add_job(
+            name="System Deep Memory Consolidation",
+            schedule=CronSchedule(kind="cron", expr="0 2 * * *"),
+            message="/deep_consolidate",
+            channel="system",
+            to="system"
+        )
+        cron_status = cron.status()
+
     if cron_status["jobs"] > 0:
         console.print(f"[green]✓[/green] Cron: {cron_status['jobs']} scheduled jobs")
     

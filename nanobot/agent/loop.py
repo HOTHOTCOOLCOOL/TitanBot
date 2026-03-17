@@ -446,6 +446,17 @@ class AgentLoop:
             if kw.is_negative_feedback(user_input):
                 kw.record_outcome(session.last_task_key, success=False)
                 logger.info(f"Implicit feedback: negative for '{session.last_task_key}'")
+                
+                # P1: Auto-generate metacognitive reflection memory on failure
+                try:
+                    from nanobot.agent.reflection import ReflectionStore
+                    reflection_store = ReflectionStore(self.workspace)
+                    asyncio.create_task(
+                        reflection_store.generate_reflection(self.provider, self.model, session, user_input)
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to trigger reflection generation: {e}")
+
             else:
                 kw.record_outcome(session.last_task_key, success=True)
                 # P1: silently update steps_detail with last tool calls
@@ -549,6 +560,7 @@ class AgentLoop:
             channel=msg.channel,
             chat_id=msg.chat_id,
             search_query=search_query,
+            evicted_context=session.evicted_context,
         )
 
         # Inject few-shot reference into system prompt if available
@@ -568,6 +580,21 @@ class AgentLoop:
         memory_hint = self.command_handler.detect_memory_intent(request_text)
         if memory_hint and initial_messages and initial_messages[0].get("role") == "system":
             initial_messages[0]["content"] += f"\n\n{memory_hint}"
+            
+        # P1: Inject Metacognitive Reflection Memory (Negative Examples)
+        try:
+            from nanobot.agent.reflection import ReflectionStore
+            reflection_store = ReflectionStore(self.workspace)
+            reflections = reflection_store.search_reflections(request_text)
+            if reflections and initial_messages and initial_messages[0].get("role") == "system":
+                reflection_text = "## ⚠️ Avoid Past Mistakes (Negative Examples)\n"
+                for r in reflections:
+                    reflection_text += f"- **When**: {r.get('trigger', '')}\n"
+                    reflection_text += f"  - **Mistake**: {r.get('failure_reason', '')}\n"
+                    reflection_text += f"  - **Correction**: {r.get('corrective_action', '')}\n"
+                initial_messages[0]["content"] += f"\n\n{reflection_text}"
+        except Exception as e:
+            logger.error(f"Failed to inject reflection memory: {e}")
 
         final_content, tools_used, tool_calls_with_args = await self._run_agent_loop(
             initial_messages, channel=msg.channel, chat_id=msg.chat_id

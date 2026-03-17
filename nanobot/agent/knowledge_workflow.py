@@ -17,39 +17,10 @@ from nanobot.agent.task_knowledge import TaskKnowledgeStore, tokenize_key
 from nanobot.agent.hybrid_retriever import hybrid_retrieve
 from nanobot.utils.metrics import metrics
 
-
-# --- User command recognition ---
-# All recognized forms of "use knowledge base" commands
-_USE_COMMANDS = {
-    # Chinese
-    "直接用", "用知识库", "用", "使用知识库", "使用", "直接使用",
-    # English
-    "use", "reuse", "yes",
-}
-
-# All recognized forms of "re-execute" commands
-_REDO_COMMANDS = {
-    # Chinese
-    "重新执行", "重新", "重新处理", "重做",
-    # English
-    "redo", "re-execute", "rerun", "again",
-}
-
-# All recognized forms of "save confirmation" commands
-_SAVE_COMMANDS = {
-    # Chinese
-    "是", "好", "是的", "好的", "保存", "存",
-    # English
-    "yes", "ok", "save", "y",
-}
-
-# All recognized forms of "upgrade to skill" commands
-_UPGRADE_COMMANDS = {
-    # Chinese
-    "升级", "升级skill", "升",
-    # English
-    "upgrade", "upgrade skill",
-}
+from nanobot.agent import command_recognition as cmd_rec
+from nanobot.agent import prompt_formatter as prompt_fmt
+from nanobot.agent import outcome_tracker as out_trk
+from nanobot.agent import kb_commands as kb_cmd
 
 
 class KnowledgeWorkflow:
@@ -274,22 +245,22 @@ class KnowledgeWorkflow:
     @staticmethod
     def is_use_command(text: str) -> bool:
         """Check if user input means 'use knowledge base result'."""
-        return text.strip().lower() in _USE_COMMANDS
+        return cmd_rec.is_use_command(text)
 
     @staticmethod
     def is_redo_command(text: str) -> bool:
         """Check if user input means 're-execute the task'."""
-        return text.strip().lower() in _REDO_COMMANDS
+        return cmd_rec.is_redo_command(text)
 
     @staticmethod
     def is_save_confirm(text: str) -> bool:
         """Check if user input means 'confirm save to knowledge base'."""
-        return text.strip().lower() in _SAVE_COMMANDS
+        return cmd_rec.is_save_confirm(text)
 
     @staticmethod
     def is_upgrade_command(text: str) -> bool:
         """Check if user input means 'confirm skill upgrade'."""
-        return text.strip().lower() in _UPGRADE_COMMANDS
+        return cmd_rec.is_upgrade_command(text)
     # ----------------------------------------------------------------
     # 4. Prompt Formatting
     # ----------------------------------------------------------------
@@ -297,18 +268,17 @@ class KnowledgeWorkflow:
     @staticmethod
     def format_match_prompt(match: dict, lang: str | None = None) -> str:
         """Format the knowledge-match prompt for the user."""
-        key = match.get("key", "unknown")
-        return msg("knowledge_match_prompt", lang=lang, key=key)
+        return prompt_fmt.format_match_prompt(match, lang)
 
     @staticmethod
     def format_save_prompt(lang: str | None = None) -> str:
         """Format the save-to-knowledge-base prompt."""
-        return msg("save_prompt", lang=lang)
+        return prompt_fmt.format_save_prompt(lang)
 
     @staticmethod
     def format_save_confirmed(lang: str | None = None) -> str:
         """Format the save-confirmed message."""
-        return msg("save_confirmed", lang=lang)
+        return prompt_fmt.format_save_confirmed(lang)
 
     # ----------------------------------------------------------------
     # 5. Knowledge Base Save / Update
@@ -483,114 +453,29 @@ Return your evaluation EXACTLY as a JSON object, with no markdown formatting aro
             return default_result
 
     def get_knowledge_result(self, match: dict, lang: str | None = None) -> str:
-        """Format and return the stored result of a matched knowledge entry.
-
-        If the match has a result_summary, returns that.
-        Otherwise returns step names.
-        """
-        result_summary = match.get("result_summary", "")
-        if result_summary:
-            return msg("knowledge_result_header", lang=lang, result=result_summary)
-
-        # Fallback: list the steps
-        steps = match.get("steps", [])
-        if steps:
-            step_names = []
-            for s in steps:
-                if isinstance(s, dict):
-                    step_names.append(s.get("tool", str(s)))
-                else:
-                    step_names.append(str(s))
-            steps_text = "\n".join(f"  {i+1}. {name}" for i, name in enumerate(step_names))
-            return msg("knowledge_result_header", lang=lang, result=steps_text)
-
-        return msg("knowledge_no_params", lang=lang)
+        """Format and return the stored result of a matched knowledge entry."""
+        return prompt_fmt.get_knowledge_result(match, lang)
 
     # ----------------------------------------------------------------
     # 6. Outcome Tracking (implicit feedback)
     # ----------------------------------------------------------------
 
-    # Negative feedback patterns — if user's next message matches,
-    # the previous task is recorded as a failure.
-    _NEGATIVE_FEEDBACK = {
-        # Chinese
-        "不对", "错了", "重来", "重做", "不行", "有问题", "再试",
-        # English
-        "wrong", "incorrect", "redo", "try again", "not right", "fix it",
-    }
-
     @classmethod
     def is_negative_feedback(cls, text: str) -> bool:
         """Check if user message implies the previous task failed."""
-        t = text.strip().lower()
-        return any(neg in t for neg in cls._NEGATIVE_FEEDBACK)
+        return out_trk.is_negative_feedback(text)
 
     def record_outcome(self, key: str, success: bool) -> None:
         """Record task outcome (success or failure) in knowledge base."""
-        if not self.knowledge_store:
-            return
-        if success:
-            self.knowledge_store.record_success(key)
-            logger.info(f"KnowledgeWorkflow: recorded success for '{key}'")
-        else:
-            self.knowledge_store.record_failure(key)
-            logger.info(f"KnowledgeWorkflow: recorded failure for '{key}'")
+        out_trk.record_outcome(self.knowledge_store, key, success)
 
     # ----------------------------------------------------------------
     # 7. Few-shot Prompt Generation (for local model accuracy)
     # ----------------------------------------------------------------
 
     def format_few_shot_prompt(self, match: dict) -> str:
-        """Generate a few-shot reference prompt from a high-success knowledge entry.
-
-        This is injected into the system message when a user chooses "redo" on a
-        matched task, giving the local LLM a reference path to follow.
-
-        Returns:
-            A formatted prompt string, or empty string if no useful detail available.
-        """
-        key = match.get("key", "")
-        steps_detail = match.get("last_steps_detail", [])
-        steps = match.get("steps", [])
-        result_summary = match.get("result_summary", "")
-        success_count = match.get("success_count", 0)
-        use_count = match.get("use_count", 0)
-
-        if not steps_detail and not steps:
-            return ""
-
-        lines = [
-            f"## Reference: Previously successful execution of '{key}'",
-            f"(Success: {success_count}/{use_count} executions)",
-            "",
-        ]
-
-        if steps_detail:
-            lines.append("### Steps taken:")
-            for i, step in enumerate(steps_detail, 1):
-                tool = step.get("tool", "unknown")
-                args = step.get("args", {})
-                result = step.get("result", "")
-                args_str = ", ".join(f"{k}={v!r}" for k, v in args.items()) if isinstance(args, dict) else str(args)
-                lines.append(f"{i}. `{tool}({args_str})`")
-                if result:
-                    lines.append(f"   → {result[:200]}")
-        elif steps:
-            lines.append("### Tools used:")
-            for i, step in enumerate(steps, 1):
-                if isinstance(step, dict):
-                    lines.append(f"{i}. `{step.get('tool', str(step))}`")
-                else:
-                    lines.append(f"{i}. `{step}`")
-
-        if result_summary:
-            lines.extend(["", f"### Final result: {result_summary}"])
-
-        lines.extend([
-            "",
-            "Use this as a reference. Adapt parameters to the current request.",
-        ])
-        return "\n".join(lines)
+        """Generate a few-shot reference prompt from a high-success knowledge entry."""
+        return prompt_fmt.format_few_shot_prompt(match)
 
     async def adapt_knowledge(self, match: dict, current_request: str, history: list[dict] | None = None) -> str:
         """Adapt a retrieved knowledge entry into a tailored few-shot prompt for the current context.
@@ -658,17 +543,7 @@ Return your evaluation EXACTLY as a JSON object, with no markdown formatting aro
 
     def get_match_stats(self, match: dict) -> dict:
         """Get formatted stats for a knowledge match (for display in prompts)."""
-        success = match.get("success_count", 0)
-        fail = match.get("fail_count", 0)
-        total = success + fail
-        rate = (success / total * 100) if total > 0 else 100
-        return {
-            "success_count": success,
-            "fail_count": fail,
-            "total": total,
-            "rate": rate,
-            "use_count": match.get("use_count", 0),
-        }
+        return prompt_fmt.get_match_stats(match)
 
     # ----------------------------------------------------------------
     # 8. Skill Upgrade Suggestion
@@ -689,33 +564,15 @@ Return your evaluation EXACTLY as a JSON object, with no markdown formatting aro
     @staticmethod
     def format_skill_upgrade_prompt(match: dict, lang: str | None = None) -> str:
         """Format the skill upgrade suggestion prompt."""
-        return msg("skill_upgrade_prompt", lang=lang,
-                   key=match.get("key", ""),
-                   count=str(match.get("success_count", 0)))
+        return prompt_fmt.format_skill_upgrade_prompt(match, lang)
 
     # ----------------------------------------------------------------
     # 9. Silent Steps Update (P1)
     # ----------------------------------------------------------------
 
     def silent_update_steps(self, key: str, tool_calls: list[dict]) -> bool:
-        """Silently update steps_detail for a task after successful execution.
-
-        Called during implicit feedback (success path) to keep the knowledge
-        base's step details current without prompting the user.
-
-        Args:
-            key: Task key.
-            tool_calls: The tool calls from the latest execution.
-
-        Returns:
-            True if updated, False if key not found or no store.
-        """
-        if not self.knowledge_store or not tool_calls:
-            return False
-        result = self.knowledge_store.update_steps_detail(key, tool_calls)
-        if result:
-            logger.debug(f"KnowledgeWorkflow: silent steps update for '{key}'")
-        return result
+        """Silently update steps_detail for a task after successful execution."""
+        return out_trk.silent_update_steps(self.knowledge_store, key, tool_calls)
 
     # ----------------------------------------------------------------
     # 10. Knowledge Base Management Commands (P2)
@@ -723,82 +580,13 @@ Return your evaluation EXACTLY as a JSON object, with no markdown formatting aro
 
     def format_kb_list(self, lang: str | None = None) -> str:
         """Format a human-readable list of all knowledge base entries."""
-        if not self.knowledge_store:
-            return msg("kb_list_empty", lang=lang)
-
-        tasks = self.knowledge_store.get_all_tasks()
-        if not tasks:
-            return msg("kb_list_empty", lang=lang)
-
-        lines = [msg("kb_list_header", lang=lang)]
-        for i, t in enumerate(tasks, 1):
-            key = t.get("key", "?")
-            version = t.get("version", 1)
-            sc = t.get("success_count", 0)
-            fc = t.get("fail_count", 0)
-            total = sc + fc
-            rate = int(sc / total * 100) if total > 0 else 100
-            use_count = t.get("use_count", 0)
-            lines.append(
-                f"{i}. **{key}** — v{version} | "
-                f"成功率 {rate}% | 使用 {use_count} 次"
-            )
-        return "\n".join(lines)
+        return kb_cmd.format_kb_list(self.knowledge_store, lang)
 
     def delete_knowledge(self, key: str, lang: str | None = None) -> str:
         """Delete a knowledge base entry by key. Returns user-facing message."""
-        if not self.knowledge_store:
-            return msg("kb_delete_not_found", lang=lang, key=key)
-        if self.knowledge_store.delete_task(key):
-            logger.info(f"KnowledgeWorkflow: deleted knowledge entry '{key}'")
-            return msg("kb_delete_success", lang=lang, key=key)
-        return msg("kb_delete_not_found", lang=lang, key=key)
+        return kb_cmd.delete_knowledge(self.knowledge_store, key, lang)
 
     def cleanup_knowledge(self, lang: str | None = None) -> str:
-        """Find and merge duplicate/similar knowledge base entries.
-
-        Returns a user-facing message with cleanup stats.
-        """
-        if not self.knowledge_store:
-            return msg("kb_cleanup_result", lang=lang, merged="0", deleted="0")
-
-        tasks = self.knowledge_store.get_all_tasks()
-        merged_count = 0
-        deleted_keys: set[str] = set()
-
-        # Compare each pair; skip already-deleted entries
-        for i, t1 in enumerate(tasks):
-            k1 = t1.get("key", "")
-            if k1 in deleted_keys:
-                continue
-            for t2 in tasks[i + 1:]:
-                k2 = t2.get("key", "")
-                if k2 in deleted_keys:
-                    continue
-                # Use tokenize similarity
-                w1 = set(tokenize_key(k1))
-                w2 = set(tokenize_key(k2))
-                if not w1 or not w2:
-                    continue
-                score = len(w1 & w2) / len(w1 | w2)
-                if score >= 0.5:
-                    # Merge t2 into t1 (keep the one with more successes)
-                    keep, discard = (t1, t2) if t1.get("success_count", 0) >= t2.get("success_count", 0) else (t2, t1)
-                    self.knowledge_store.merge_task(
-                        keep.get("key", ""),
-                        new_steps=discard.get("steps"),
-                        new_result_summary=discard.get("result_summary"),
-                    )
-                    self.knowledge_store.delete_task(discard.get("key", ""))
-                    deleted_keys.add(discard.get("key", ""))
-                    merged_count += 1
-                    logger.info(
-                        f"KnowledgeWorkflow cleanup: merged '{discard.get('key')}' "
-                        f"into '{keep.get('key')}'"
-                    )
-
-        return msg(
-            "kb_cleanup_result", lang=lang,
-            merged=str(merged_count), deleted=str(len(deleted_keys)),
-        )
+        """Find and merge duplicate/similar knowledge base entries."""
+        return kb_cmd.cleanup_knowledge(self.knowledge_store, lang)
 

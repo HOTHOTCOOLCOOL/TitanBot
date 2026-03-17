@@ -79,6 +79,15 @@ class CommandHandler:
             return self.handle_kb_command(cmd, msg, kw)
         if cmd.startswith("/memory"):
             return self.handle_memory_command(cmd, msg)
+        if cmd == "/deep_consolidate":
+            async def _run_deep_consolidate():
+                if hasattr(agent.memory_manager, "deep_consolidate"):
+                    await agent.memory_manager.deep_consolidate()
+            asyncio.create_task(_run_deep_consolidate())
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id,
+                content="⏳ System Deep Memory Consolidation started. This may take a while.",
+            )
         if cmd == "/stats":
             return OutboundMessage(
                 channel=msg.channel, chat_id=msg.chat_id,

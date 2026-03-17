@@ -169,6 +169,21 @@ class WebFetchTool(Tool):
                 content = self._to_markdown(doc.summary()) if extractMode == "markdown" else _strip_tags(doc.summary())
                 text = f"# {doc.title()}\n\n{content}" if doc.title() else content
                 extractor = "readability"
+            # PDF
+            elif "application/pdf" in ctype:
+                import tempfile
+                import os
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    tmp.write(r.content)
+                    tmp_path = tmp.name
+                try:
+                    from nanobot.agent.tools.attachment_analyzer import AttachmentAnalyzerTool
+                    analyzer = AttachmentAnalyzerTool()
+                    text = await analyzer._parse_pdf(tmp_path, max_chars)
+                    extractor = "pdf_analyzer"
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
             else:
                 text, extractor = r.text, "raw"
             

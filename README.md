@@ -20,6 +20,7 @@
 
 ## 📢 News
 
+- **2026-03-17** 🛠️ Completed Phase 19+ Knowledge Workflow Refactoring, significantly slimming down core modules and preparing for Phase 20 AI Memory Enhancements.
 - **2026-02-16** 🦞 nanobot now integrates a [ClawHub](https://clawhub.ai) skill — search and install public agent skills.
 - **2026-02-15** 🔑 nanobot now supports OpenAI Codex provider with OAuth login support.
 - **2026-02-14** 🔌 nanobot now supports MCP! See [MCP section](#mcp-model-context-protocol) for details.

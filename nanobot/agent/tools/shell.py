@@ -48,6 +48,15 @@ class ExecTool(Tool):
             r"\bnc\s+-e\b",                  # nc -e /bin/sh
             r"\bncat\b",                     # ncat
             r"/dev/tcp/",                    # bash reverse shell
+            # --- Phase 21A (S1): cd traversal ---
+            r"\bcd\s+\.\.",                  # cd .. (with or without trailing slash)
+            r"\bcd\.\.",                     # cd.. (no space, Windows CMD)
+            r"%2e",                          # URL-encoded dot (percent-encoded traversal)
+            # --- Phase 21A (S2): interpreter bypass ---
+            r"\bpython3?\s+-c\b",            # python -c / python3 -c
+            r"\bnode\s+-e\b",               # node -e (eval JS)
+            r"\bruby\s+-e\b",               # ruby -e (eval Ruby)
+            r"\bperl\s+-e\b",               # perl -e (eval Perl)
         ]
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace

@@ -1,7 +1,7 @@
 # Nanobot 演进 TODO
 
 > 本文件是项目持续演进的唯一入口。新对话时先阅读此文件，无需重读已完成的代码。
-> 最后更新: 2026-03-17
+> 最后更新: 2026-03-18
 
 ---
 
@@ -161,15 +161,57 @@ Nanobot 是一个轻量级 AI Agent 框架，当前架构核心：
 - [x] 20G: Visual Memory Text Persistence
 - [x] 20H: web_fetch PDF Support
 
-### Phase 21+: 未来方向 Backlog
+### Phase 21A: P0 Security & Critical Fixes
+- [x] S1: Shell `cd ..` / `%2e` traversal bypass — deny patterns + workspace guard hardening
+- [x] S2: Shell interpreter bypass (`python -c`, `node -e`, `ruby -e`, `perl -e`) — deny patterns
+- [x] B1: Concurrent tool exception circuit breaker — break after 3 consecutive all-fail turns
+- [x] L1: Implicit feedback false-positive fix — regex word boundaries + negated-positive phrases
+- [x] L2: Pending state mutual exclusion — `Session.clear_pending()` + pre-set clearing
+- [x] D1: Memory feature on/off switches — `MemoryFeaturesConfig` with 4 flags
+
+**回归基线: 647 passed, 0 failed**
+
+### Phase 21B: P1 Security & Bug Fixes
+- [x] S3: WebSocket input validation — 10KB message limit + 30 msgs/min per-connection rate limit
+- [x] S4: Memory import path traversal — workspace `is_relative_to()` check
+- [x] B2: Fire-and-forget task error logging — `_safe_create_task()` with error callback
+- [x] B3: SubagentManager `Config()` per-iteration — cached before loop
+- [x] B4: VLM routing fallback — graceful fall-through to default model on missing provider
+- [x] L3: `_workflow_succeeded` false negative — removed overly generic `"no results"` from fail indicators
+- [x] L4: Consolidation async race condition — `asyncio.Lock` on MemoryManager
+- [x] D2: ReflectionStore / KG re-instantiated per call — lazy-cached at AgentLoop level
+- [x] D3: System prompt unbounded injection — 8000-char injection budget cap
+- [x] C1: Memory store vs consolidation race — shared lock between regular and deep consolidation
+
+**回归基线: 666 passed, 0 failed**
+
+### Phase 21C: P2 Quality & Robustness
+- [x] S5: 原子 JSON 写入 — temp file + `os.replace()` (`reflection.py`, `knowledge_graph.py`)
+- [x] S6: `<think>` 标签剥离统一 — 新建 `think_strip.py` 工具 + 替换 7 处内联正则
+- [x] B5: 空对话合并拦截 — 对话内容为空时跳过 LLM 调用
+- [x] B6: Session JSONL UTF-8 编码 — 所有文件 I/O 显式声明 `encoding="utf-8"`
+- [x] L5: KB 子串匹配阈值 — 从 0.50→0.65，最短 4 字符
+- [x] C2: 深度合并竞态 — C1 共享锁已覆盖，已验证
+- [x] C3: 视觉记忆去重 — 内容哈希去重 (`_persisted_visual_hashes`)
+- [x] I3: 工具输出全局限制 — `MAX_TOOL_OUTPUT = 50,000` 字符
+- [x] I4: Session JSONL 重构 — `_full_rewrite()` + UTF-8
+- [x] E3: 查询改写短路 — 无代词时跳过 LLM 调用
+- [x] E4: 错误消息 i18n — 8 个新 key + 7 处 commands.py 硬编码替换
+
+**回归基线: 687 passed, 0 failed**
+
+### Phase 21D+: 未来方向 Backlog
+- [ ] Config singleton 统一
+- [ ] Dashboard 新增 KB/Reflection/Graph API
+- [ ] 统一 async task manager
+- [ ] Knowledge matching 精度提升（语义缓存、自适应阈值）
+- [ ] Memory 容量管理（prune/expire）
 - [ ] Streaming response delivery
 - [ ] Embedding model upgrade
 - [ ] Vision-Language feedback loop
-- [ ] Unified speech-to-text pipeline
-- [ ] Image generation tool
 - [ ] Plugin marketplace / dependency management
 - [ ] PWA Dashboard
-- [ ] Playwright Browser Automation (Legacy ERP automation)
+- [ ] Playwright Browser Automation
 
 ---
 

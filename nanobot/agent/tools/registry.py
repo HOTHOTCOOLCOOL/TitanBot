@@ -12,6 +12,9 @@ class ToolRegistry:
     Allows dynamic registration and execution of tools.
     """
     
+    # I3: Global cap on tool output to prevent context inflation
+    MAX_TOOL_OUTPUT = 50_000  # chars
+
     def __init__(self):
         self._tools: dict[str, Tool] = {}
     
@@ -44,7 +47,7 @@ class ToolRegistry:
             params: Tool parameters.
         
         Returns:
-            Tool execution result as string.
+            Tool execution result as string (truncated to MAX_TOOL_OUTPUT).
         
         Raises:
             KeyError: If tool not found.
@@ -57,7 +60,11 @@ class ToolRegistry:
             errors = tool.validate_params(params)
             if errors:
                 return f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors)
-            return await tool.execute(**params)
+            result = await tool.execute(**params)
+            # I3: Truncate oversized output to prevent context explosion
+            if isinstance(result, str) and len(result) > self.MAX_TOOL_OUTPUT:
+                result = result[:self.MAX_TOOL_OUTPUT] + "\n\n[OUTPUT TRUNCATED — original length: {:,} chars]".format(len(result))
+            return result
         except Exception as e:
             return f"Error executing {name}: {str(e)}"
     

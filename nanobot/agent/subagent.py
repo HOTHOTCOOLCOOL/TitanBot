@@ -127,13 +127,15 @@ class SubagentManager:
             iteration = 0
             final_result: str | None = None
             
+            # B3: Cache Config() once before the loop (was re-instantiated per iteration)
+            from nanobot.config.schema import Config
+            config = Config()
+
             while iteration < max_iterations:
                 iteration += 1
                 
                 # Determine if this turn requires the VLM
                 target_model = self.model
-                from nanobot.config.schema import Config
-                config = Config()
                 
                 if config.agents.vlm.enabled and config.agents.vlm.model:
                     has_image = False

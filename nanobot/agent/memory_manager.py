@@ -4,7 +4,6 @@ import asyncio
 import json
 import json_repair
 import time
-import re
 
 from pathlib import Path
 from loguru import logger
@@ -28,6 +27,8 @@ class MemoryManager:
         self.model = model
         self.memory_window = memory_window
         self.vector_memory = vector_memory
+        # L4/C1: Prevents concurrent consolidation tasks from corrupting session state / MEMORY.md
+        self._consolidation_lock = asyncio.Lock()
 
     async def consolidate_memory(self, session: Session, archive_all: bool = False) -> None:
         """Consolidate old messages into MEMORY.md + HISTORY.md.
@@ -36,6 +37,11 @@ class MemoryManager:
             archive_all: If True, clear all messages and reset session (for /new command).
                        If False, only write to files without modifying session.
         """
+        async with self._consolidation_lock:  # L4/C1: serialize consolidation
+            await self._consolidate_memory_inner(session, archive_all)
+
+    async def _consolidate_memory_inner(self, session: Session, archive_all: bool = False) -> None:
+        """Inner consolidation implementation (called under lock)."""
         memory = MemoryStore(self.workspace)
 
         if archive_all:
@@ -65,6 +71,12 @@ class MemoryManager:
             tools = f" [tools: {', '.join(m['tools_used'])}]" if m.get("tools_used") else ""
             lines.append(f"[{m.get('timestamp', '?')[:16]}] {m['role'].upper()}{tools}: {m['content']}")
         conversation = "\n".join(lines)
+
+        # B5: Skip LLM call if conversation is empty (all messages had no content)
+        if not conversation.strip():
+            logger.debug("Memory consolidation: no content in messages, skipping LLM call")
+            return
+
         current_memory = memory.read_long_term()
 
         prompt = f"""You are a memory consolidation agent. Process this conversation and return a JSON object with exactly three keys:
@@ -92,8 +104,9 @@ Respond with ONLY valid JSON, no markdown fences."""
                 model=self.model,
             )
             text = (response.content or "").strip()
-            # Strip <think> tags before parsing JSON, as reasoning models will leak them
-            text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+            # S6: Strip <think> tags reliably before parsing JSON
+            from nanobot.utils.think_strip import strip_think_tags
+            text = strip_think_tags(text)
             if not text:
                 logger.warning("Memory consolidation: LLM returned empty response, skipping")
                 return
@@ -155,13 +168,19 @@ Respond with ONLY valid JSON, no markdown fences."""
             if memory_changed := result.get("memory_update"):
                 if memory_changed != current_memory:
                     distiller = MemoryDistiller(memory, self.provider, self.model)
-                    asyncio.create_task(distiller.distill_preferences())
+                    from nanobot.agent.commands import _safe_create_task
+                    _safe_create_task(distiller.distill_preferences(), name="distill_preferences")
                     
         except Exception as e:
             logger.error(f"Memory consolidation failed: {e}")
 
     async def deep_consolidate(self) -> None:
         """Deep consolidation of HISTORY.md and MEMORY.md: dedup, generalize, and demote stale entries."""
+        async with self._consolidation_lock:  # C1: share lock with regular consolidation
+            await self._deep_consolidate_inner()
+
+    async def _deep_consolidate_inner(self) -> None:
+        """Inner deep consolidation implementation (called under lock)."""
         logger.info("Starting deep memory consolidation...")
         # read existing memory and history
         memory = MemoryStore(self.workspace)
@@ -200,7 +219,9 @@ Return ONLY a valid JSON object with a single key "memory_update" containing the
                 temperature=0.2, # Low temp for consistency
             )
             text = (response.content or "").strip()
-            text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+            # S6: Strip <think> tags reliably
+            from nanobot.utils.think_strip import strip_think_tags
+            text = strip_think_tags(text)
             if text.startswith("```"):
                 text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
             result = json_repair.loads(text)
@@ -218,13 +239,14 @@ Return ONLY a valid JSON object with a single key "memory_update" containing the
                     
                     # Fire asynchronous distillation to keep L1 preferences in sync
                     distiller = MemoryDistiller(memory, self.provider, self.model)
-                    asyncio.create_task(distiller.distill_preferences())
+                    from nanobot.agent.commands import _safe_create_task
+                    _safe_create_task(distiller.distill_preferences(), name="deep_distill_preferences")
                     
                     # P1: Extract Knowledge Graph Entity-Relation Triples
                     try:
                         from nanobot.agent.knowledge_graph import KnowledgeGraph
                         kg = KnowledgeGraph(self.workspace)
-                        asyncio.create_task(kg.extract_triples(self.provider, self.model, str(new_memory)))
+                        _safe_create_task(kg.extract_triples(self.provider, self.model, str(new_memory)), name="kg_extraction")
                     except Exception as e:
                         logger.error(f"Failed to start Knowledge Graph extraction: {e}")
         except Exception as e:

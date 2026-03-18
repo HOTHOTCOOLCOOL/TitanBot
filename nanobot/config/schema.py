@@ -210,12 +210,22 @@ class VisionConfig(Base):
     yolo_confidence: float = 0.3       # Minimum YOLO detection confidence (0-1)
 
 
+class MemoryFeaturesConfig(Base):
+    """Per-feature on/off switches for memory subsystems (Phase 21A D1)."""
+
+    reflection_enabled: bool = True       # Metacognitive Reflection Memory (20D)
+    knowledge_graph_enabled: bool = True  # Lightweight Entity-Relation Graph (20E)
+    visual_memory_enabled: bool = True    # Visual Memory Text Persistence (20G)
+    experience_enabled: bool = True       # Experience Bank tactical hints (Phase 12)
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
     vlm: VLMConfig = Field(default_factory=VLMConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
+    memory_features: MemoryFeaturesConfig = Field(default_factory=MemoryFeaturesConfig)
 
 
 class ProviderConfig(Base):

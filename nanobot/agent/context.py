@@ -29,6 +29,8 @@ class ContextBuilder:
         self.memory = MemoryStore(workspace)
         self.vector_memory = VectorMemory(workspace, provider=provider, model=model)
         self.skills = SkillsLoader(workspace)
+        # C3: Track persisted visual memory hashes to avoid duplicates in tool loops
+        self._persisted_visual_hashes: set[str] = set()
     
     def build_system_prompt(self, skill_names: list[str] | None = None, evicted_context: str | None = None) -> str:
         """
@@ -189,6 +191,7 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         search_query: str | None = None,
         context_limit: int = 120_000,
         evicted_context: str | None = None,
+        knowledge_graph: "KnowledgeGraph | None" = None,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call.
@@ -226,13 +229,20 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
             logger.debug(f"Vector search skipped: {e}")
 
         # P1: Inject Knowledge Graph 1-hop Entity Context
+        # D1: gated behind memory_features.knowledge_graph_enabled
+        # D2: Accept pre-cached KnowledgeGraph instance to avoid per-message disk I/O
         try:
-            from nanobot.agent.knowledge_graph import KnowledgeGraph
-            kg = KnowledgeGraph(self.workspace)
-            kq_query = search_query or current_message
-            kg_context = kg.get_1hop_context(kq_query)
-            if kg_context:
-                system_prompt += f"\n\n{kg_context}"
+            from nanobot.config.schema import Config as _Cfg
+            _mem_feat = _Cfg().agents.memory_features
+            if _mem_feat.knowledge_graph_enabled:
+                kg = knowledge_graph  # D2: prefer cached instance
+                if kg is None:
+                    from nanobot.agent.knowledge_graph import KnowledgeGraph
+                    kg = KnowledgeGraph(self.workspace)
+                kq_query = search_query or current_message
+                kg_context = kg.get_1hop_context(kq_query)
+                if kg_context:
+                    system_prompt += f"\n\n{kg_context}"
         except Exception as e:
             from loguru import logger
             logger.debug(f"Knowledge Graph lookup skipped: {e}")
@@ -413,25 +423,40 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
             msg["content"] = content
             
             # --- 20G: Visual Memory Text Persistence ---
-            if len(messages) > 0 and messages[-1].get("role") == "user":
+            # D1: gated behind memory_features.visual_memory_enabled
+            _visual_enabled = True
+            try:
+                from nanobot.config.schema import Config as _CfgV
+                _visual_enabled = _CfgV().agents.memory_features.visual_memory_enabled
+            except Exception:
+                pass
+            if _visual_enabled and len(messages) > 0 and messages[-1].get("role") == "user":
                 prev_content = messages[-1].get("content")
                 if isinstance(prev_content, list):
                     has_image = any(isinstance(c, dict) and c.get("type", "") == "image_url" for c in prev_content)
                     if has_image:
                         try:
-                            from datetime import datetime
-                            today_str = datetime.now().strftime("%Y-%m-%d")
-                            mem_text = f"Visual Memory ([Screenshot/Image Analysis]): {content}"
-                            if hasattr(self, 'memory') and self.memory:
-                                self.memory.append_daily_log(mem_text)
-                            if hasattr(self, 'vector_memory') and self.vector_memory:
-                                self.vector_memory.ingest_text(
-                                    content,
-                                    source=f"daily_log:{today_str}",
-                                    metadata={"date": today_str, "type": "visual_memory"}
-                                )
-                            from loguru import logger
-                            logger.info("Visual memory persisted to HISTORY and vector index.")
+                            # C3: Deduplicate — skip if this exact content was already persisted
+                            import hashlib
+                            content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()[:12]
+                            if content_hash in self._persisted_visual_hashes:
+                                from loguru import logger
+                                logger.debug(f"Visual memory already persisted (hash={content_hash}), skipping duplicate.")
+                            else:
+                                self._persisted_visual_hashes.add(content_hash)
+                                from datetime import datetime
+                                today_str = datetime.now().strftime("%Y-%m-%d")
+                                mem_text = f"Visual Memory ([Screenshot/Image Analysis]): {content}"
+                                if hasattr(self, 'memory') and self.memory:
+                                    self.memory.append_daily_log(mem_text)
+                                if hasattr(self, 'vector_memory') and self.vector_memory:
+                                    self.vector_memory.ingest_text(
+                                        content,
+                                        source=f"daily_log:{today_str}",
+                                        metadata={"date": today_str, "type": "visual_memory"}
+                                    )
+                                from loguru import logger
+                                logger.info("Visual memory persisted to HISTORY and vector index.")
                         except Exception as e:
                             from loguru import logger
                             logger.error(f"Failed to persist visual memory: {e}")

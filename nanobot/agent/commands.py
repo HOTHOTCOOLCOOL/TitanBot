@@ -2,6 +2,7 @@
 
 __all__ = ["CommandHandler"]
 
+import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,22 @@ from nanobot.agent.task_tracker import TaskTracker
 from nanobot.agent.knowledge_workflow import KnowledgeWorkflow
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.i18n import msg as i18n_msg
+
+
+def _safe_create_task(coro, *, name: str = "background") -> asyncio.Task:
+    """B2: Create an asyncio task with error logging callback.
+    
+    Prevents fire-and-forget tasks from silently swallowing exceptions.
+    """
+    task = asyncio.create_task(coro, name=name)
+    def _done_cb(t: asyncio.Task) -> None:
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc:
+            logger.error(f"Background task '{name}' failed: {exc}", exc_info=exc)
+    task.add_done_callback(_done_cb)
+    return task
 
 # Module-level constants for memory intent detection (avoid per-call allocation)
 _MEMORY_TRIGGERS = [
@@ -33,7 +50,6 @@ class CommandHandler:
         from nanobot.agent.i18n import msg as i18n_msg
         from nanobot.utils.metrics import metrics
         from nanobot.session.manager import Session
-        import asyncio
 
         if cmd == "/new":
             messages_to_archive = session.messages.copy()
@@ -47,7 +63,7 @@ class CommandHandler:
                 await agent.memory_manager.save_session_summary(temp_session)
                 await agent.memory_manager.consolidate_memory(temp_session, archive_all=True)
 
-            asyncio.create_task(_consolidate_and_cleanup())
+            _safe_create_task(_consolidate_and_cleanup(), name="new_session_consolidate")
             return OutboundMessage(
                 channel=msg.channel, chat_id=msg.chat_id,
                 content=i18n_msg("new_session"),
@@ -68,9 +84,9 @@ class CommandHandler:
             _register_dynamic_tools(agent)
             if agent._dynamic_tool_names:
                 tools_list = ", ".join(agent._dynamic_tool_names)
-                content = f"🔄 Plugins reloaded. Active dynamic tools: {tools_list}"
+                content = i18n_msg("reload_success", tools=tools_list)
             else:
-                content = "🔄 Plugins reloaded. No dynamic tools found in plugins directory."
+                content = i18n_msg("reload_no_tools")
             return OutboundMessage(
                 channel=msg.channel, chat_id=msg.chat_id,
                 content=content,
@@ -83,10 +99,10 @@ class CommandHandler:
             async def _run_deep_consolidate():
                 if hasattr(agent.memory_manager, "deep_consolidate"):
                     await agent.memory_manager.deep_consolidate()
-            asyncio.create_task(_run_deep_consolidate())
+            _safe_create_task(_run_deep_consolidate(), name="deep_consolidate")
             return OutboundMessage(
                 channel=msg.channel, chat_id=msg.chat_id,
-                content="⏳ System Deep Memory Consolidation started. This may take a while.",
+                content=i18n_msg("deep_consolidate_started"),
             )
         if cmd == "/stats":
             return OutboundMessage(
@@ -185,18 +201,27 @@ class CommandHandler:
             json.dumps(export_data, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        return f"✅ 记忆已导出到 `{export_path}`\n包含: MEMORY.md, preferences.json, {len(export_data['daily_logs'])} 个日志文件。"
+        return i18n_msg("export_success", path=str(export_path), count=str(len(export_data['daily_logs'])))
 
     def import_memory(self, file_path: str) -> str:
         """Import memory from a JSON export file."""
         p = Path(file_path)
+
+        # S4: Prevent path traversal — file must be within workspace
+        try:
+            resolved = p.resolve()
+            if not resolved.is_relative_to(self.workspace.resolve()):
+                return "⚠️ Access denied: import file must be within the workspace directory."
+        except (ValueError, OSError):
+            return "⚠️ Invalid file path."
+
         if not p.exists():
-            return f"⚠️ 文件不存在: {file_path}"
+            return i18n_msg("file_not_found", path=file_path)
 
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
-            return f"⚠️ JSON 解析失败: {e}"
+            return i18n_msg("json_parse_error", error=str(e))
 
         memory = MemoryStore(self.workspace)
         imported = []
@@ -221,8 +246,8 @@ class CommandHandler:
                     imported.append(f"{date_key}.md")
 
         if imported:
-            return f"✅ 已导入: {', '.join(imported)}"
-        return "⚠️ 导入文件中没有可导入的内容。"
+            return i18n_msg("import_success", items=", ".join(imported))
+        return i18n_msg("import_empty")
 
     def detect_memory_intent(self, user_input: str) -> str:
         """Detect if the user wants the agent to remember something.

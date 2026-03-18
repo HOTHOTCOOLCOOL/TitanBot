@@ -198,6 +198,40 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh": "你声称已经完成了任务或发送了邮件，但实际上系统检测到你并没有调用任何工具！这是你的幻觉。请立刻调用正确的工具执行实际操作！",
         "en": "You claimed to have completed the task or sent an email, but the system detected NO tool calls! This is a hallucination. Call the correct tools NOW to execute the actual operation!",
     },
+
+    # --- E4: Command Messages (previously hardcoded) ---
+    "reload_success": {
+        "zh": "🔄 插件已重载。当前动态工具: {tools}",
+        "en": "🔄 Plugins reloaded. Active dynamic tools: {tools}",
+    },
+    "reload_no_tools": {
+        "zh": "🔄 插件已重载。未发现动态工具。",
+        "en": "🔄 Plugins reloaded. No dynamic tools found in plugins directory.",
+    },
+    "deep_consolidate_started": {
+        "zh": "⏳ 深度记忆整合已启动，可能需要较长时间。",
+        "en": "⏳ System Deep Memory Consolidation started. This may take a while.",
+    },
+    "export_success": {
+        "zh": "✅ 记忆已导出到 `{path}`\n包含: MEMORY.md, preferences.json, {count} 个日志文件。",
+        "en": "✅ Memory exported to `{path}`\nIncludes: MEMORY.md, preferences.json, {count} daily log files.",
+    },
+    "file_not_found": {
+        "zh": "⚠️ 文件不存在: {path}",
+        "en": "⚠️ File not found: {path}",
+    },
+    "json_parse_error": {
+        "zh": "⚠️ JSON 解析失败: {error}",
+        "en": "⚠️ JSON parse error: {error}",
+    },
+    "import_success": {
+        "zh": "✅ 已导入: {items}",
+        "en": "✅ Imported: {items}",
+    },
+    "import_empty": {
+        "zh": "⚠️ 导入文件中没有可导入的内容。",
+        "en": "⚠️ No importable content found in the file.",
+    },
 }
 
 

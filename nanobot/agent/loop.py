@@ -48,14 +48,18 @@ _FAKE_COMPLETION_PHRASES = [
 ]
 
 # Keywords in the LLM response that suggest the workflow failed
+# L3: Removed 'no results' — too generic, causes false negatives in legitimate responses
 _FAIL_INDICATORS = [
     "找不到", "没有找到", "未找到", "没找到",
     "无法找到", "无法获取", "无法访问",
     "error:", "not found", "no emails found",
-    "no results", "无法", "失败", "出错",
+    "无法", "失败", "出错",
     "sorry", "抱歉",
 ]
 
+
+# D3: Maximum characters to inject into system prompt from RAG/KG/reflections/experience/few-shot
+_INJECTION_BUDGET = 8000
 
 class AgentLoop:
     """
@@ -149,6 +153,30 @@ class AgentLoop:
             task_tracker=self.task_tracker
         )
         self.state_handler = StateHandler(self)
+
+        # D2: Cached instances for ReflectionStore and KnowledgeGraph (lazy-init)
+        self._reflection_store = None
+        self._knowledge_graph = None
+
+    def _get_reflection_store(self):
+        """D2: Lazy-cached ReflectionStore (avoids disk I/O per message)."""
+        if self._reflection_store is None:
+            try:
+                from nanobot.agent.reflection import ReflectionStore
+                self._reflection_store = ReflectionStore(self.workspace)
+            except Exception:
+                pass
+        return self._reflection_store
+
+    def _get_knowledge_graph(self):
+        """D2: Lazy-cached KnowledgeGraph (avoids disk I/O per message)."""
+        if self._knowledge_graph is None:
+            try:
+                from nanobot.agent.knowledge_graph import KnowledgeGraph
+                self._knowledge_graph = KnowledgeGraph(self.workspace)
+            except Exception:
+                pass
+        return self._knowledge_graph
     
     def _get_config(self):
         """Get cached Config instance (avoids re-parsing on every LLM iteration)."""
@@ -201,6 +229,7 @@ class AgentLoop:
         final_content = None
         tools_used: list[str] = []
         tool_calls_with_args: list[dict] = []
+        consecutive_all_exceptions = 0  # B1: circuit breaker counter
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -226,18 +255,21 @@ class AgentLoop:
                     target_model = config.agents.vlm.model
                     logger.debug(f"Image detected in context. Routing to VLM: {target_model}")
                     
-                    # If the current provider is CustomProvider (which doesn't route) 
-                    # or if the target model provider differs, try to use LiteLLMProvider.
+                    # B4: Graceful fallback if VLM provider config is missing
                     p_conf = config.get_provider(target_model)
-                    from nanobot.providers.litellm_provider import LiteLLMProvider
-                    provider_name = config.get_provider_name(target_model)
-                    provider_for_turn = LiteLLMProvider(
-                        api_key=p_conf.api_key if p_conf else None,
-                        api_base=config.get_api_base(target_model),
-                        default_model=target_model,
-                        extra_headers=p_conf.extra_headers if p_conf else None,
-                        provider_name=provider_name
-                    )
+                    if not p_conf:
+                        logger.warning(f"VLM provider config missing for {target_model}, falling back to default model")
+                        target_model = self.model
+                    else:
+                        from nanobot.providers.litellm_provider import LiteLLMProvider
+                        provider_name = config.get_provider_name(target_model)
+                        provider_for_turn = LiteLLMProvider(
+                            api_key=p_conf.api_key,
+                            api_base=config.get_api_base(target_model),
+                            default_model=target_model,
+                            extra_headers=p_conf.extra_headers,
+                            provider_name=provider_name
+                        )
 
             with metrics.timer("llm_call"):
                 response = await provider_for_turn.chat(
@@ -296,6 +328,24 @@ class AgentLoop:
                     *[_exec_tool(tc) for tc in response.tool_calls],
                     return_exceptions=True,
                 )
+
+                # B1: circuit breaker — count consecutive all-exception turns
+                exception_count = sum(1 for r in results if isinstance(r, BaseException))
+                if exception_count == len(results) and len(results) > 0:
+                    consecutive_all_exceptions += 1
+                    logger.warning(f"All {len(results)} tools failed (streak: {consecutive_all_exceptions})")
+                    if consecutive_all_exceptions >= 3:
+                        logger.error("Circuit breaker: 3 consecutive all-exception turns. Breaking agent loop.")
+                        for tool_call, result in zip(response.tool_calls, results):
+                            if isinstance(result, BaseException):
+                                result = f"Error: {result}"
+                            messages = self.context.add_tool_result(
+                                messages, tool_call.id, tool_call.name, result
+                            )
+                        final_content = "⚠️ Multiple consecutive tool failures detected. Please check your request and try again."
+                        break
+                else:
+                    consecutive_all_exceptions = 0
 
                 # Add results to messages in original order
                 for tool_call, result in zip(response.tool_calls, results):
@@ -449,11 +499,13 @@ class AgentLoop:
                 
                 # P1: Auto-generate metacognitive reflection memory on failure
                 try:
-                    from nanobot.agent.reflection import ReflectionStore
-                    reflection_store = ReflectionStore(self.workspace)
-                    asyncio.create_task(
-                        reflection_store.generate_reflection(self.provider, self.model, session, user_input)
-                    )
+                    reflection_store = self._get_reflection_store()
+                    if reflection_store:
+                        from nanobot.agent.commands import _safe_create_task
+                        _safe_create_task(
+                            reflection_store.generate_reflection(self.provider, self.model, session, user_input),
+                            name="reflection_generation",
+                        )
                 except Exception as e:
                     logger.error(f"Failed to trigger reflection generation: {e}")
 
@@ -501,6 +553,8 @@ class AgentLoop:
 
         if match:
             # Found a match — ask user if they want to use or re-execute
+            # L2: Clear other pending states before setting new one
+            session.clear_pending()
             session.pending_knowledge = {
                 **match,
                 "_original_request": msg.content,
@@ -561,40 +615,55 @@ class AgentLoop:
             chat_id=msg.chat_id,
             search_query=search_query,
             evicted_context=session.evicted_context,
+            knowledge_graph=self._get_knowledge_graph(),  # D2: cached instance
         )
 
         # Inject few-shot reference into system prompt if available
         if few_shot_context and initial_messages and initial_messages[0].get("role") == "system":
             initial_messages[0]["content"] += f"\n\n{few_shot_context}"
 
+        # D3: Track injection budget to prevent context overflow
+        injection_used = 0
+
         # Inject tactical experience hint from Experience Bank (Phase 12)
-        if hasattr(self, "knowledge_workflow"):
+        # D1: gated behind memory_features.experience_enabled
+        config = self._get_config()
+        if (hasattr(self, "knowledge_workflow")
+                and getattr(getattr(config.agents, 'memory_features', None), 'experience_enabled', True)):
             experience_hint = self.knowledge_workflow.match_experience(request_text)
             if experience_hint and initial_messages and initial_messages[0].get("role") == "system":
-                initial_messages[0]["content"] += (
+                hint_text = (
                     f"\n\n## 💡 Helpful Experience / Tactical Hint:\n{experience_hint}\n"
                     "Consider applying this hint if it's relevant to solving the task."
                 )
+                if injection_used + len(hint_text) <= _INJECTION_BUDGET:
+                    initial_messages[0]["content"] += hint_text
+                    injection_used += len(hint_text)
 
-        # Memory intent detection: if user wants to remember something, hint the LLM
         memory_hint = self.command_handler.detect_memory_intent(request_text)
         if memory_hint and initial_messages and initial_messages[0].get("role") == "system":
-            initial_messages[0]["content"] += f"\n\n{memory_hint}"
+            if injection_used + len(memory_hint) <= _INJECTION_BUDGET:
+                initial_messages[0]["content"] += f"\n\n{memory_hint}"
+                injection_used += len(memory_hint)
             
         # P1: Inject Metacognitive Reflection Memory (Negative Examples)
-        try:
-            from nanobot.agent.reflection import ReflectionStore
-            reflection_store = ReflectionStore(self.workspace)
-            reflections = reflection_store.search_reflections(request_text)
-            if reflections and initial_messages and initial_messages[0].get("role") == "system":
-                reflection_text = "## ⚠️ Avoid Past Mistakes (Negative Examples)\n"
-                for r in reflections:
-                    reflection_text += f"- **When**: {r.get('trigger', '')}\n"
-                    reflection_text += f"  - **Mistake**: {r.get('failure_reason', '')}\n"
-                    reflection_text += f"  - **Correction**: {r.get('corrective_action', '')}\n"
-                initial_messages[0]["content"] += f"\n\n{reflection_text}"
-        except Exception as e:
-            logger.error(f"Failed to inject reflection memory: {e}")
+        # D1: gated behind memory_features.reflection_enabled
+        if getattr(getattr(config.agents, 'memory_features', None), 'reflection_enabled', True):
+            try:
+                reflection_store = self._get_reflection_store()
+                if reflection_store:
+                    reflections = reflection_store.search_reflections(request_text)
+                    if reflections and initial_messages and initial_messages[0].get("role") == "system":
+                        reflection_text = "## ⚠️ Avoid Past Mistakes (Negative Examples)\n"
+                        for r in reflections:
+                            reflection_text += f"- **When**: {r.get('trigger', '')}\n"
+                            reflection_text += f"  - **Mistake**: {r.get('failure_reason', '')}\n"
+                            reflection_text += f"  - **Correction**: {r.get('corrective_action', '')}\n"
+                        if injection_used + len(reflection_text) <= _INJECTION_BUDGET:
+                            initial_messages[0]["content"] += f"\n\n{reflection_text}"
+                            injection_used += len(reflection_text)
+            except Exception as e:
+                logger.error(f"Failed to inject reflection memory: {e}")
 
         final_content, tools_used, tool_calls_with_args = await self._run_agent_loop(
             initial_messages, channel=msg.channel, chat_id=msg.chat_id
@@ -620,7 +689,8 @@ class AgentLoop:
                 and not session.pending_upgrade):
             logger.info(f"Auto-consolidation triggered (count={session.message_count_since_consolidation})")
             session.message_count_since_consolidation = 0
-            asyncio.create_task(self.memory_manager.consolidate_memory(session))
+            from nanobot.agent.commands import _safe_create_task
+            _safe_create_task(self.memory_manager.consolidate_memory(session), name="auto_consolidation")
 
         # After LLM execution with tool calls → prompt user to save
         # But ONLY if the workflow appears to have succeeded
@@ -634,6 +704,8 @@ class AgentLoop:
             if _workflow_succeeded:
                 task_key = extracted_key or request_text[:50]
                 session.last_task_key = task_key
+                # L2: Clear other pending states before setting pending_save
+                session.clear_pending()
                 session.pending_save = {
                     "key": task_key,
                     "steps": tool_calls_with_args,

@@ -439,6 +439,16 @@ class VectorMemory:
 
     # -- Public: format search results for LLM context ----------------------
     
+    # E3: Pronouns that indicate coreference resolution is needed
+    _COREFERENCE_PRONOUNS = {
+        # English
+        "he", "she", "it", "they", "them", "his", "her", "its", "their",
+        "this", "that", "these", "those",
+        # Chinese
+        "他", "她", "它", "他们", "她们", "这个", "那个", "这些", "那些",
+        "其", "该",
+    }
+
     async def rewrite_query(self, query: str, conversation_history: list[dict[str, Any]] | None = None) -> str:
         """Rewrite the query to resolve coreferences based on conversational history (P13 feature).
         
@@ -453,6 +463,16 @@ class VectorMemory:
             The rewritten query, or the original query if no rewriting is needed or an error occurs.
         """
         if not self.provider or not self.model or not conversation_history:
+            return query
+
+        # E3: Short-circuit — skip LLM call if query has no coreferential pronouns
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
+        # Check both word-level (English) and substring-level (Chinese)
+        has_pronoun = bool(query_words & self._COREFERENCE_PRONOUNS) or any(
+            p in query_lower for p in self._COREFERENCE_PRONOUNS if len(p) > 1  # Chinese pronouns
+        )
+        if not has_pronoun:
             return query
             
         recent_history = conversation_history[-6:]

@@ -1,7 +1,6 @@
 """Personalization subsystem: Memory Distiller."""
 
 import json
-import re
 
 import json_repair
 from loguru import logger
@@ -65,8 +64,9 @@ Respond with ONLY valid JSON, no markdown fences."""
             
             text = (response.content or "").strip()
             
-            # Remove <think> tags if reasoning model leaked them
-            text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+            # S6: Strip <think> tags reliably
+            from nanobot.utils.think_strip import strip_think_tags
+            text = strip_think_tags(text)
             
             if text.startswith("```"):
                 text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()

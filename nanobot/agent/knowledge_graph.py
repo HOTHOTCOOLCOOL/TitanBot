@@ -1,7 +1,8 @@
 """Lightweight Entity-Relation Graph for structured memory."""
 
 import json
-import re
+import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -36,13 +37,27 @@ class KnowledgeGraph:
             self._triples = []
 
     def _save(self) -> None:
-        """Save graph to disk."""
+        """Save graph to disk (S5: atomic write via temp + rename)."""
         self.graph_file.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "triples": self._triples,
             "updated_at": datetime.now().isoformat()
         }
-        self.graph_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        content = json.dumps(data, indent=2, ensure_ascii=False)
+        # S5: Write to temp file then atomic rename to prevent corruption
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(self.graph_file.parent), suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_path, str(self.graph_file))
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def _add_triple(self, subject: str, predicate: str, obj: str, confidence: float = 1.0) -> None:
         """Add a triple, avoiding exact duplicates."""
@@ -101,7 +116,9 @@ Do not include markdown fences."""
                 temperature=0.1,
             )
             resp_text = (response.content or "").strip()
-            resp_text = re.sub(r'<think>.*?</think>', '', resp_text, flags=re.DOTALL).strip()
+            # S6: Strip think tags reliably
+            from nanobot.utils.think_strip import strip_think_tags
+            resp_text = strip_think_tags(resp_text)
             if resp_text.startswith("```"):
                 resp_text = resp_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
             

@@ -97,47 +97,54 @@ Inspired by *"Survey on AI Memory: Theories, Taxonomies, Evaluations, and Emergi
 
 Comprehensive code audit (post Phase 20) identified **32 issues** across 7 dimensions. Phase 21 consolidates all audit fixes + existing backlog items into 5 sub-phases.
 
-### Phase 21A — P0 Security & Critical Fixes *(Must-do, blocks all else)*
+### Phase 21A — P0 Security & Critical Fixes ✅
 
-| ID | Issue | File(s) | Description |
+| ID | Issue | File(s) | Fix Summary |
 |----|-------|---------|-------------|
-| S1 | Shell `..` bypass | `shell.py` | `cd ..`, env vars, URL-encoded `..` bypass workspace restriction |
-| S2 | Shell deny-list bypass via interpreters | `shell.py` | `python -c`, `node -e` can invoke blocked commands indirectly |
-| B1 | Concurrent tool exception loop | `loop.py` | `gather(return_exceptions=True)` converts exceptions to strings but no loop-break guard |
-| L1 | Implicit feedback false positives | `loop.py` | Overly broad negative-feedback keyword matching causes spurious reflections |
-| L2 | Pending state edge cases | `loop.py` | `pending_save`/`pending_knowledge` not mutually exclusive, mid-conversation state leaks |
-| D1 | Memory features lack on/off switches | `config/schema.py`, `loop.py` | Reflection, KG, Visual Memory, Experience — no per-feature disable flag |
+| S1 | Shell `..` bypass | `shell.py` | Added deny patterns for `cd ..`, `cd..`, `%2e` (URL-encoded traversal) |
+| S2 | Shell deny-list bypass via interpreters | `shell.py` | Added deny patterns for `python -c`, `python3 -c`, `node -e`, `ruby -e`, `perl -e` |
+| B1 | Concurrent tool exception loop | `loop.py` | Circuit breaker: breaks after 3 consecutive all-exception turns |
+| L1 | Implicit feedback false positives | `outcome_tracker.py` | Word-boundary regex for English, ≤30 char limit for Chinese, negated-positive phrase check |
+| L2 | Pending state edge cases | `session/manager.py`, `loop.py` | Added `Session.clear_pending()`, called before setting any new pending state |
+| D1 | Memory features lack on/off switches | `config/schema.py`, `loop.py`, `context.py` | Added `MemoryFeaturesConfig` with 4 boolean flags, gated all 4 memory features |
 
-### Phase 21B — P1 Security & Bug Fixes
+New tests: `test_phase21a_fixes.py` (27 tests). **Regression baseline: 647 passed, 0 failed.**
 
-| ID | Issue | File(s) | Description |
+### Phase 21B — P1 Security & Bug Fixes ✅
+
+| ID | Issue | File(s) | Fix Summary |
 |----|-------|---------|-------------|
-| S3 | WebSocket input validation | `dashboard/app.py` | No length/rate limit on WS messages; potential DoS via oversized payloads |
-| S4 | Memory import path traversal | `commands.py` | `import_memory()` accepts arbitrary file paths without workspace check |
-| B2 | Fire-and-forget task error swallowing | `commands.py`, `loop.py` | `asyncio.create_task` without done-callback silently drops errors |
-| B3 | SubagentManager `Config()` per-iteration | `subagent.py` | Redundant config reload inside tight loop |
-| B4 | VLM routing no fallback | `loop.py` | If VLM provider config missing, call fails with no graceful degradation |
-| L3 | `_workflow_succeeded` keyword false negative | `loop.py` | "No results" in successful response triggers false failure detection |
-| L4 | Consolidation async race condition | `loop.py` | Concurrent consolidation tasks may corrupt `session.last_consolidated` |
-| D2 | ReflectionStore/KG re-instantiated per call | `loop.py`, `context.py` | Disk I/O on every message; should cache at AgentLoop level |
-| D3 | System prompt unbounded injection | `loop.py`, `context.py` | RAG + KG + reflections + experience + few-shot can overflow context |
-| C1 | Memory store vs. consolidation race | `memory_search_tool.py`, `memory_manager.py` | Concurrent write to `MEMORY.md` from store and consolidation |
+| S3 | WebSocket input validation | `dashboard/app.py` | Added 10KB message limit + 30 msgs/min per-connection sliding window rate limit |
+| S4 | Memory import path traversal | `commands.py` | Added workspace `is_relative_to()` guard before file access |
+| B2 | Fire-and-forget task error swallowing | `commands.py`, `loop.py`, `memory_manager.py` | Added `_safe_create_task()` helper with done-callback error logging |
+| B3 | SubagentManager `Config()` per-iteration | `subagent.py` | Cached Config() before the loop |
+| B4 | VLM routing no fallback | `loop.py` | Falls back to default model when VLM provider config missing |
+| L3 | `_workflow_succeeded` keyword false negative | `loop.py` | Removed overly generic `"no results"` from `_FAIL_INDICATORS` |
+| L4 | Consolidation async race condition | `memory_manager.py` | Added `asyncio.Lock` serializing consolidation tasks |
+| D2 | ReflectionStore/KG re-instantiated per call | `loop.py`, `context.py` | Lazy-cached at AgentLoop level, injected into ContextBuilder |
+| D3 | System prompt unbounded injection | `loop.py` | Added 8000-char `_INJECTION_BUDGET` cap on RAG/KG/reflection/experience |
+| C1 | Memory store vs. consolidation race | `memory_manager.py` | Shared `_consolidation_lock` between regular and deep consolidation |
 
-### Phase 21C — P2 Quality & Robustness
+New tests: `test_phase21b_fixes.py` (19 tests). **Regression baseline: 666 passed, 0 failed.**
 
-| ID | Issue | File(s) | Description |
+### Phase 21C — P2 Quality & Robustness ✅
+
+| ID | Issue | File(s) | Fix Summary |
 |----|-------|---------|-------------|
-| S5 | JSON file no atomic write/lock | `reflection.py`, `knowledge_graph.py` | Concurrent async writes can corrupt JSON |
-| S6 | `<think>` tag strip unreliable | Multiple | Unmatched tags leak raw reasoning to user |
-| B5 | Consolidation empty-slice API waste | `memory_manager.py` | Edge case sends empty list to LLM |
-| B6 | Session JSONL no UTF-8 encoding | `session/manager.py` | Windows GBK default breaks Chinese content |
-| L5 | KB substring match threshold too low | `knowledge_workflow.py` | `ratio >= 0.5` causes false matches in Chinese |
-| C2 | Deep consolidation vs regular consolidation race | `memory_manager.py` | Both write `MEMORY.md` without coordination |
-| C3 | Visual Memory duplicate persistence | `context.py` | Same image analysis persisted multiple times in tool loops |
-| I3 | Tool output no global size limit | `tools/registry.py` | Large `read_file` results inflate context unboundedly |
-| I4 | Session JSONL full-rewrite I/O | `session/manager.py` | O(n) write on every save for long sessions |
-| E3 | Query rewrite always calls LLM | `vector_store.py` | No short-circuit for simple queries without pronouns |
-| E4 | Error messages i18n incomplete | Multiple | Mixed zh/en hardcoded error strings |
+| S5 | JSON file no atomic write/lock | `reflection.py`, `knowledge_graph.py` | Temp file + `os.replace()` atomic write in `_save()` |
+| S6 | `<think>` tag strip unreliable | Multiple (7 call sites) | New `think_strip.py` utility handles unmatched tags; replaced all inline regex |
+| B5 | Consolidation empty-slice API waste | `memory_manager.py` | Early-return guard when conversation text is empty |
+| B6 | Session JSONL no UTF-8 encoding | `session/manager.py` | Explicit `encoding="utf-8"` + `ensure_ascii=False` on all file I/O |
+| L5 | KB substring match threshold too low | `knowledge_workflow.py` | Raised threshold from 0.50→0.65, added 4-char minimum key length guard |
+| C2 | Deep consolidation vs regular race | `memory_manager.py` | Already resolved by C1 shared lock — verified with test |
+| C3 | Visual Memory duplicate persistence | `context.py` | Content hash dedup via `_persisted_visual_hashes` set |
+| I3 | Tool output no global size limit | `tools/registry.py` | `MAX_TOOL_OUTPUT = 50,000` chars with `[TRUNCATED]` marker |
+| I4 | Session JSONL full-rewrite I/O | `session/manager.py` | Extracted `_full_rewrite()` helper with proper UTF-8 encoding |
+| E3 | Query rewrite always calls LLM | `vector_store.py` | Pronoun-based short-circuit (19 EN/ZH pronouns checked first) |
+| E4 | Error messages i18n incomplete | `commands.py`, `i18n.py` | 8 new i18n keys, 7 hardcoded string replacements |
+
+New tests: `test_phase21c_fixes.py` (21 tests). **Regression baseline: 687 passed.**
+
 
 ### Phase 21D — Architecture & Config Improvements
 

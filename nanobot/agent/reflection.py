@@ -1,7 +1,8 @@
 """Metacognitive Reflection Memory for agent self-improvement."""
 
 import json
-import re
+import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -36,13 +37,28 @@ class ReflectionStore:
             self._reflections = []
 
     def _save(self) -> None:
-        """Save reflections to disk."""
+        """Save reflections to disk (S5: atomic write via temp + rename)."""
         self.reflections_file.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "reflections": self._reflections,
             "updated_at": datetime.now().isoformat()
         }
-        self.reflections_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        content = json.dumps(data, indent=2, ensure_ascii=False)
+        # S5: Write to temp file then atomic rename to prevent corruption
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(self.reflections_file.parent), suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_path, str(self.reflections_file))
+        except Exception:
+            # Clean up temp file on failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def add_reflection(self, trigger: str, failure_reason: str, corrective_action: str) -> None:
         """Add a new reflection."""
@@ -135,8 +151,9 @@ No markdown fences around the JSON.'''
                 temperature=0.2,
             )
             text = (response.content or "").strip()
-            # Strip think tags from reasoning models
-            text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+            # S6: Strip think tags from reasoning models (reliable utility)
+            from nanobot.utils.think_strip import strip_think_tags
+            text = strip_think_tags(text)
             if text.startswith("```"):
                 text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
             

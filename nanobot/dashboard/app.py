@@ -127,11 +127,17 @@ async def index(request: Request):
     """Render the main dashboard interface."""
     return templates.TemplateResponse("index.html", {"request": request})
 
+# S3: WebSocket per-connection constants
+_WS_MAX_MESSAGE_SIZE = 10_240      # 10 KB max per message
+_WS_RATE_LIMIT_WINDOW = 60         # seconds
+_WS_RATE_LIMIT_MAX_MSGS = 30       # max messages per window
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket for real-time log tailing and bus monitoring.
     
     Requires ?token=<dashboard_token> query parameter.
+    S3: Enforces per-message size limit and per-connection rate limit.
     """
     # Verify token before accepting
     if _dashboard_token:
@@ -142,9 +148,27 @@ async def websocket_endpoint(websocket: WebSocket):
 
     await websocket.accept()
     _active_websockets.append(websocket)
+
+    # S3: per-connection rate limiting state
+    _ws_msg_timestamps: list[float] = []
+
     try:
         while True:
             data = await websocket.receive_text()
+
+            # S3: reject oversized messages
+            if len(data) > _WS_MAX_MESSAGE_SIZE:
+                await websocket.send_text('{"error":"Message too large (max 10KB)"}')
+                continue
+
+            # S3: per-connection rate limit (sliding window)
+            now = time.time()
+            _ws_msg_timestamps = [t for t in _ws_msg_timestamps if now - t < _WS_RATE_LIMIT_WINDOW]
+            if len(_ws_msg_timestamps) >= _WS_RATE_LIMIT_MAX_MSGS:
+                await websocket.send_text('{"error":"Rate limit exceeded (max 30 msgs/min)"}')
+                continue
+            _ws_msg_timestamps.append(now)
+
             if _bus and data:
                 try:
                     payload = json.loads(data)

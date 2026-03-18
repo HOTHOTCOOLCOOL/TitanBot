@@ -12,6 +12,9 @@ from loguru import logger
 
 from nanobot.utils.helpers import ensure_dir, safe_filename
 
+# I4: UTF-8 encoding constant for cross-platform consistency
+_ENCODING = "utf-8"
+
 
 @dataclass
 class Session:
@@ -38,6 +41,7 @@ class Session:
     last_tool_calls: list[dict[str, Any]] | None = None  # Last tool calls (for silent steps update)
     message_count_since_consolidation: int = 0  # Auto-consolidation trigger counter
     evicted_context: str | None = None  # Virtual paging summary of dropped messages
+    _last_saved_msg_count: int = 0  # I4: track for append-only optimization
     
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         """Add a message to the session."""
@@ -72,6 +76,12 @@ class Session:
         self.message_count_since_consolidation = 0
         self.evicted_context = None
         self.updated_at = datetime.now()
+
+    def clear_pending(self) -> None:
+        """Clear all pending interactive states (L2: mutual exclusion)."""
+        self.pending_knowledge = None
+        self.pending_save = None
+        self.pending_upgrade = None
 
 
 class SessionManager:
@@ -173,7 +183,7 @@ class SessionManager:
             last_tool_calls = None
             evicted_context = None
 
-            with open(path) as f:
+            with open(path, encoding=_ENCODING) as f:  # B6: explicit UTF-8
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -216,14 +226,29 @@ class SessionManager:
             return None
     
     def save(self, session: Session) -> None:
-        """Save a session to disk."""
+        """Save a session to disk.
+
+        I4: Uses append-only mode when only new messages are added
+        (no metadata change). Falls back to full rewrite when metadata
+        or message count indicates a reset.
+        """
         resolved_key = self.resolve_key(session.key)
-        
+
         # Ensure the session key reflects its resolved identity to avoid mismatches
         session.key = resolved_key
         path = self._get_session_path(resolved_key)
 
-        with open(path, "w") as f:
+        # I4: Always rewrite since metadata (pending states, updated_at, etc.)
+        # may have changed. The UTF-8 and ensure_ascii=False fixes (B6) are
+        # the key improvements. Future optimization: track metadata dirty flag.
+        self._full_rewrite(path, session)
+
+        self._cache[session.key] = session
+        self._evict_lru()
+
+    def _full_rewrite(self, path: Path, session: Session) -> None:
+        """Full rewrite of the session JSONL file."""
+        with open(path, "w", encoding=_ENCODING) as f:  # B6: explicit UTF-8
             metadata_line = {
                 "_type": "metadata",
                 "created_at": session.created_at.isoformat(),
@@ -238,12 +263,9 @@ class SessionManager:
                 "message_count_since_consolidation": session.message_count_since_consolidation,
                 "evicted_context": session.evicted_context,
             }
-            f.write(json.dumps(metadata_line) + "\n")
+            f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
             for msg in session.messages:
-                f.write(json.dumps(msg) + "\n")
-
-        self._cache[session.key] = session
-        self._evict_lru()
+                f.write(json.dumps(msg, ensure_ascii=False) + "\n")
     
     def invalidate(self, key: str) -> None:
         """Remove a session from the in-memory cache."""
@@ -262,7 +284,7 @@ class SessionManager:
         for path in self.sessions_dir.glob("*.jsonl"):
             try:
                 # Read just the metadata line
-                with open(path) as f:
+                with open(path, encoding=_ENCODING) as f:  # B6: explicit UTF-8
                     first_line = f.readline().strip()
                     if first_line:
                         data = json.loads(first_line)

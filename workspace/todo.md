@@ -1,7 +1,7 @@
 # Nanobot 演进 TODO
 
 > 本文件是项目持续演进的唯一入口。新对话时先阅读此文件，无需重读已完成的代码。
-> 最后更新: 2026-03-18
+> 最后更新: 2026-03-19
 
 ---
 
@@ -148,8 +148,8 @@ Nanobot 是一个轻量级 AI Agent 框架，当前架构核心：
 - [x] Dashboard v2 Mobile UI
 - [x] Cron notifications
 
-**Phase 19+ (待完成的最后一步)**
-- [ ] `knowledge_workflow.py` 进一步分解 (目前 695 行，需精简)
+**Phase 19+ (已完成)**
+- [x] `knowledge_workflow.py` 进一步分解 — 提取 `key_extractor.py` (85 行) + `knowledge_judge.py` (273 行)，主文件从 595→350 行。新增 `test_knowledge_decomposition.py` (18 测试)
 
 ### Phase 20: AI Memory Architecture Enhancement (Next)
 - [x] 20A: Evicted Context Buffer (MemGPT-style Virtual Paging)
@@ -198,17 +198,32 @@ Nanobot 是一个轻量级 AI Agent 框架，当前架构核心：
 - [x] E3: 查询改写短路 — 无代词时跳过 LLM 调用
 - [x] E4: 错误消息 i18n — 8 个新 key + 7 处 commands.py 硬编码替换
 
-**回归基线: 687 passed, 0 failed**
+**回归基线: 704 passed, 0 failed**
 
-### Phase 21D+: 未来方向 Backlog
-- [ ] Config singleton 统一
-- [ ] Dashboard 新增 KB/Reflection/Graph API
-- [ ] 统一 async task manager
-- [ ] Knowledge matching 精度提升（语义缓存、自适应阈值）
-- [ ] Memory 容量管理（prune/expire）
-- [ ] Streaming response delivery
-- [ ] Embedding model upgrade
-- [ ] Vision-Language feedback loop
+### Phase 21D: Architecture & Config Improvements
+- [x] Config singleton 统一
+- [x] Dashboard 新增 KB/Reflection/Graph API
+- [x] 统一 async task manager
+- [x] Knowledge matching 精度提升（语义缓存、自适应阈值）
+- [x] Memory 容量管理（prune/expire）
+
+### Phase 21E: Feature Enhancements
+- [x] F1: Streaming response delivery — `stream_chat()` async generator on providers, `StreamChunk`/`StreamEvent` dataclasses, `MessageBus` stream pub/sub, `AgentLoop._stream_llm_call()`, Dashboard `/ws/stream` WebSocket, `StreamingConfig` config flag
+- [x] F2: Embedding Model Upgrade — `BAAI/bge-m3` (1024-dim, 100+ languages), configurable model path, dimension introspection, automatic ChromaDB collection migration, `local_files_only=True` preserved
+- [x] F3: Vision-Language Feedback Loop — `VLMFeedbackLoop` engine (`vlm_feedback.py`), before/after VLM screenshot comparison, `verify` + `expected_outcome` RPA params, configurable retry loop (`VLMFeedbackConfig`), graceful degradation when VLM not configured
+
+**回归基线: 793 passed**
+
+### Phase 21H: Production Hotfix — Dimension Probe + Feishu Image Support
+- [x] H9: Vector dimension probe numpy ndarray truthiness — `is not None` + `len()` 替代布尔检查 (L11)
+- [x] F4: 飞书图片下载 — `GetMessageResourceRequest` API + `image_downloader.py` 共享工具
+- [x] 新增测试: `test_channel_image_support.py` (7), `TestDimensionMigration` (1)
+
+### Future Backlog
+- [x] Embedding model upgrade — BAAI/bge-m3 (1024-dim, 100+ 语言) ✅
+- [x] Vision-Language feedback loop ✅
+- [x] 飞书图片支持 ✅
+- [ ] 多渠道图片支持 — MoChat, Slack, DingTalk
 - [ ] Plugin marketplace / dependency management
 - [ ] PWA Dashboard
 - [ ] Playwright Browser Automation

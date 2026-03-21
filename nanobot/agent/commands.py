@@ -17,19 +17,12 @@ from nanobot.agent.i18n import msg as i18n_msg
 
 
 def _safe_create_task(coro, *, name: str = "background") -> asyncio.Task:
-    """B2: Create an asyncio task with error logging callback.
+    """B2/D4: Create a tracked background task via the unified BackgroundTaskManager.
     
-    Prevents fire-and-forget tasks from silently swallowing exceptions.
+    The manager provides concurrency control, error logging, and introspection.
     """
-    task = asyncio.create_task(coro, name=name)
-    def _done_cb(t: asyncio.Task) -> None:
-        if t.cancelled():
-            return
-        exc = t.exception()
-        if exc:
-            logger.error(f"Background task '{name}' failed: {exc}", exc_info=exc)
-    task.add_done_callback(_done_cb)
-    return task
+    from nanobot.utils.task_manager import BackgroundTaskManager
+    return BackgroundTaskManager.get().spawn(coro, name=name)
 
 # Module-level constants for memory intent detection (avoid per-call allocation)
 _MEMORY_TRIGGERS = [
@@ -80,6 +73,9 @@ class CommandHandler:
             )
         if cmd == "/reload":
             agent._config = None
+            # I1: Also invalidate the process-level Config singleton
+            from nanobot.config.loader import invalidate_config
+            invalidate_config()
             from nanobot.agent.tool_setup import _register_dynamic_tools
             _register_dynamic_tools(agent)
             if agent._dynamic_tool_names:

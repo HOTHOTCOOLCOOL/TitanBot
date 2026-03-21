@@ -1,6 +1,12 @@
 ---
 name: weather
-description: Get current weather and forecasts (no API key required).
+description: >
+  Get current weather conditions and forecasts for any location (no API key required).
+  Use when user asks about: weather, temperature, forecast, rain, wind, humidity,
+  or climate for any city/location. Triggers: "天气", "weather", "今天多少度",
+  "what's the weather in", "forecast for", "will it rain". Uses wttr.in (primary)
+  and Open-Meteo (fallback JSON API). Requires `curl`.
+category: data_fetching
 homepage: https://wttr.in/:help
 metadata: {"nanobot":{"emoji":"🌤️","requires":{"bins":["curl"]}}}
 ---

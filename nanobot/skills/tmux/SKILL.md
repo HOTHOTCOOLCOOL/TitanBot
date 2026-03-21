@@ -1,6 +1,12 @@
 ---
 name: tmux
-description: Remote-control tmux sessions for interactive CLIs by sending keystrokes and scraping pane output.
+description: >
+  Remote-control tmux sessions for interactive CLIs. Use when user needs to:
+  run interactive terminal sessions, manage long-running processes, orchestrate
+  multiple coding agents in parallel, or send keystrokes to running programs.
+  Triggers: "tmux session", "interactive terminal", "run in background",
+  "parallel agents", "coding agent army". macOS/Linux only, requires tmux on PATH.
+category: infra_ops
 metadata: {"nanobot":{"emoji":"🧵","os":["darwin","linux"],"requires":{"bins":["tmux"]}}}
 ---
 

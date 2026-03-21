@@ -1,6 +1,12 @@
 ---
 name: skill-creator
-description: Create or update AgentSkills. Use when designing, structuring, or packaging skills with scripts, references, and assets.
+description: >
+  Create, update, or package agent skills (SKILL.md + scripts/references/assets).
+  Use when user asks to: create a new skill, design a skill workflow, structure
+  a reusable automation package, update an existing skill, or package a skill for
+  distribution. Triggers: "create a skill", "make a new skill", "设计一个技能",
+  "创建技能", "package skill", "update skill". Meta-skill for extending agent capabilities.
+category: content_generation
 ---
 
 # Skill Creator

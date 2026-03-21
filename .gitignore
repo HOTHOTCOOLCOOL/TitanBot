@@ -29,3 +29,10 @@ llm_payload_*.json
 *.log
 .vscode/
 debug/
+clean_log.txt
+debug_pytest.txt
+test_error.txt
+test_output.txt
+test_stdout.txt
+run_test.py
+"Skill trq212.md"

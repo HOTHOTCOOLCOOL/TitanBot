@@ -16,6 +16,9 @@ from nanobot.agent.task_knowledge import tokenize_key
 class KnowledgeGraph:
     """Manages a lightweight Triples entity-relation graph stored in graph.json."""
 
+    # E2: Maximum number of triples before auto-pruning
+    MAX_TRIPLES = 500
+
     def __init__(self, workspace: Path):
         self.workspace = workspace
         self.graph_file = workspace / "memory" / "graph.json"
@@ -82,7 +85,36 @@ class KnowledgeGraph:
             "confidence": confidence
         }
         self._triples.append(triple)
+        # E2: Auto-prune if over capacity
+        if len(self._triples) > self.MAX_TRIPLES:
+            self._prune()
         self._save()
+
+    @property
+    def count(self) -> int:
+        """Return the number of stored triples."""
+        return len(self._triples)
+
+    def _prune(self) -> int:
+        """E2: Remove oldest triples to stay within MAX_TRIPLES.
+
+        Returns:
+            Number of triples removed.
+        """
+        if len(self._triples) <= self.MAX_TRIPLES:
+            return 0
+        before = len(self._triples)
+        self._triples = self._triples[-self.MAX_TRIPLES:]
+        removed = before - len(self._triples)
+        logger.info(f"KnowledgeGraph: pruned {removed} oldest triples (cap={self.MAX_TRIPLES})")
+        return removed
+
+    def prune(self) -> int:
+        """Public prune API — trims and saves."""
+        removed = self._prune()
+        if removed > 0:
+            self._save()
+        return removed
 
     async def extract_triples(self, provider: LLMProvider, model: str, text: str) -> None:
         """Extract triples from consolidated memory/history text using LLM."""

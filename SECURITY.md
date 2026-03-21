@@ -245,19 +245,19 @@ If you suspect a security breach:
 4. ~~**Limited Command Filtering**~~ — ✅ **Resolved in Phase 18A**: 14+ deny patterns block network exfiltration, encoded PowerShell, pipe-to-shell, and reverse shells
 5. ~~**No Audit Trail**~~ — ✅ **Resolved in Phase 18B**: Error messages sanitized (generic user-facing, full traceback to logs), failed auth attempts logged
 
-⚠️ **Identified in Phase 21 Audit (pending fix):**
+⚠️ **Resolved in Phase 21 Audit:**
 
-6. **Shell Bypass via Interpreters** — `python -c "import subprocess; ..."` or `node -e` can indirectly invoke blocked commands. **Fix planned: Phase 21A (S2)**
-7. **Shell Path Traversal via `cd ..`** — Current `..` detection misses `cd ..` and env-var based escapes. **Fix planned: Phase 21A (S1)**
-8. **WebSocket Input Validation** — Dashboard WS messages have no size/rate limit. **Fix planned: Phase 21B (S3)**
-9. **Memory Import Path Traversal** — `/memory import` accepts arbitrary file paths. **Fix planned: Phase 21B (S4)**
-10. **JSON File Concurrent Write** — `reflections.json`, `graph.json` lack atomic write protection. **Fix planned: Phase 21C (S5)**
+6. ~~**Shell Bypass via Interpreters**~~ — ✅ **Resolved in Phase 21A (S2)**: Added deny patterns for `python -c`, `node -e`, etc. Later refined in Phase 21G (L16) to unblock legitimate scripting while keeping exploit patterns blocked.
+7. ~~**Shell Path Traversal via `cd ..`**~~ — ✅ **Resolved in Phase 21A (S1)**: Added deny patterns for `cd ..`, `cd..`, `%2e` URL-encoded traversal.
+8. ~~**WebSocket Input Validation**~~ — ✅ **Resolved in Phase 21B (S3)**: 10KB message limit + 30 msgs/min per-connection sliding window rate limit.
+9. ~~**Memory Import Path Traversal**~~ — ✅ **Resolved in Phase 21B (S4)**: Added workspace `is_relative_to()` guard before file access.
+10. ~~**JSON File Concurrent Write**~~ — ✅ **Resolved in Phase 21C (S5)**: Temp file + `os.replace()` atomic write in `reflection.py` and `knowledge_graph.py`.
 
 ## Security Checklist
 
 Before deploying nanobot:
 
-- [ ] API keys stored securely (not in code)
+- [ ] API keys stored securely (in `~/.nanobot/config.json`, not in code)
 - [ ] Config file permissions set to 0600
 - [ ] `allowFrom` lists configured for all channels
 - [ ] Running as non-root user
@@ -270,7 +270,7 @@ Before deploying nanobot:
 
 ## Updates
 
-**Last Updated**: 2026-03-17 (Phase 21 audit additions)
+**Last Updated**: 2026-03-21 (Phase 23A security fixes, config cleanup)
 
 For the latest security updates and announcements, check:
 - GitHub Security Advisories: https://github.com/HKUDS/nanobot/security/advisories

@@ -23,11 +23,13 @@ class ContextBuilder:
     
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md", "KNOWLEDGE.md"]
     
-    def __init__(self, workspace: Path, language: str = "zh", provider=None, model=None):
+    def __init__(self, workspace: Path, language: str = "zh", provider=None, model=None,
+                 embedding_model: str | None = None):
         self.workspace = workspace
         self.language = language
         self.memory = MemoryStore(workspace)
-        self.vector_memory = VectorMemory(workspace, provider=provider, model=model)
+        self.vector_memory = VectorMemory(workspace, provider=provider, model=model,
+                                          embedding_model=embedding_model)
         self.skills = SkillsLoader(workspace)
         # C3: Track persisted visual memory hashes to avoid duplicates in tool loops
         self._persisted_visual_hashes: set[str] = set()
@@ -74,7 +76,7 @@ class ContextBuilder:
         if skills_summary:
             parts.append(f"""# Skills
 
-The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
+The following skills extend your capabilities, organized by category. To use a skill, read its SKILL.md file using the read_file tool.
 CRITICAL: If a task matches a Skill listed below, you MUST use the read_file tool to read its SKILL.md BEFORE attempting to write custom bash/python scripts.
 Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
 
@@ -163,8 +165,10 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         """Get the language instruction based on configured language."""
         if self.language == "zh":
             return (
-                "请始终使用中文回复用户。用户使用中文提问时，必须用中文回答。"
-                "包括分析结果、报告摘要、错误提示等所有输出内容都应使用中文。"
+                "请始终使用**简体中文**回复用户，禁止使用繁体中文。"
+                "用户使用中文提问时，必须用简体中文回答。"
+                "包括分析结果、报告摘要、错误提示等所有输出内容都应使用简体中文。"
+                "注意：是简体（如：执行、报告、任务），不是繁体（如：執行、報告、任務）。"
             )
         return "Respond in the same language as the user's message."
 

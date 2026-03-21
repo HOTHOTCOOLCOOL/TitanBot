@@ -1,6 +1,14 @@
 ---
 name: ssrs-report
-description: 查询内网SSRS报表系统并分析报告内容
+description: >
+  Query intranet SSRS reporting system and analyze report content. Use when user asks to:
+  fetch/view/analyze SSRS reports, check sales rankings, query intranet reports,
+  generate PDF from reports, or send report summaries via email.
+  Triggers: "帮我查XXX report", "查一下购物村排名", "看看今天的销售排行",
+  "拉一下Top sales报告", "帮我看SSRS里的报表", "内网报告",
+  "ReportServer", any specific report name reference.
+  Requires intranet/VPN access and Windows NTLM auth.
+category: business_workflow
 homepage: https://github.com/HKUDS/nanobot
 metadata:
   nanobot:
@@ -16,16 +24,6 @@ metadata:
 # ssrs-report
 
 **从内网 SSRS 报表系统获取并分析报告**
-
-## When to use (trigger phrases)
-
-使用这个技能，当用户要求：
-- "帮我查 XXX report"
-- "查一下购物村排名"
-- "看看今天的销售排行"
-- "拉一下 Top sales 报告"
-- "帮我看 SSRS 里的XXX报表"
-- 任何提到 "内网报告"、"SSRS"、"ReportServer" 或特定报告名称的请求
 
 ## Summary
 

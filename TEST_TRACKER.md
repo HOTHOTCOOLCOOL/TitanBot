@@ -1,7 +1,7 @@
 # Nanobot 功能测试追踪表 (Test Tracker)
 
 > 每个新功能必须经过 ✅ **自动化测试通过** + ✅ **手动确认** 才算正式完成。
-> 最后更新: 2026-03-17
+> 最后更新: 2026-03-19
 
 ---
 
@@ -219,21 +219,23 @@ $env:NO_PROXY="*"; $env:HTTP_PROXY=""; $env:HTTPS_PROXY=""
 
 ---
 
-## 🔲 Phase 21 审计修复 (待开发)
+## ✅ Phase 21: Post-Audit Hardening (完成)
 
 | 功能 | 阶段 | 状态 | 测试文件 | 自动测试 | 手动确认 |
 |------|------|-----|---------|---------|------|
-| S1-S2: Shell 安全加固 | 21A | 待开发 | — | — | — |
-| B1: 并发工具异常处理 | 21A | 待开发 | — | — | — |
-| L1-L2: 隐式反馈与状态机修复 | 21A | 待开发 | — | — | — |
-| D1: Memory 功能开关 | 21A | 待开发 | — | — | — |
-| S3-S4: WS/Memory 输入校验 | 21B | 待开发 | — | — | — |
-| B2-B4: 异步任务/VLM/Config 修复 | 21B | 待开发 | — | — | — |
-| L3-L4: 工作流判断/竞争条件 | 21B | 待开发 | — | — | — |
-| D2-D3/C1: 缓存/上下文限制/写冲突 | 21B | 待开发 | — | — | — |
-| P2 全部 (S5-E4) | 21C | 待开发 | — | — | — |
-| I1-E2: 架构/配置改进 | 21D | 待开发 | — | — | — |
-| 功能增强 (Streaming/Embedding/VLM/PWA) | 21E | 待开发 | — | — | — |
+| S1-S2: Shell 安全加固 | 21A | ✅ | `tests/test_phase21a_fixes.py` | ✅ 27 pass | ✅ |
+| B1: 并发工具异常处理 | 21A | ✅ | `tests/test_phase21a_fixes.py` | ✅ | ✅ |
+| L1-L2: 隐式反馈与状态机修复 | 21A | ✅ | `tests/test_phase21a_fixes.py` | ✅ | ✅ |
+| D1: Memory 功能开关 | 21A | ✅ | `tests/test_phase21a_fixes.py` | ✅ | ✅ |
+| S3-S4: WS/Memory 输入校验 | 21B | ✅ | `tests/test_phase21b_fixes.py` | ✅ 19 pass | ✅ |
+| B2-B4: 异步任务/VLM/Config 修复 | 21B | ✅ | `tests/test_phase21b_fixes.py` | ✅ | ✅ |
+| L3-L4: 工作流判断/竞争条件 | 21B | ✅ | `tests/test_phase21b_fixes.py` | ✅ | ✅ |
+| D2-D3/C1: 缓存/上下文限制/写冲突 | 21B | ✅ | `tests/test_phase21b_fixes.py` | ✅ | ✅ |
+| P2 全部 (S5-E4) | 21C | ✅ | `tests/test_phase21c_fixes.py` | ✅ 21 pass | ✅ |
+| I1-E2: 架构/配置改进 | 21D | ✅ | `tests/test_phase21d_fixes.py` | ✅ 21 pass | ✅ |
+| F1: Streaming Response Delivery | 21E | ✅ | `tests/test_phase21e_streaming.py` | ✅ 20 pass | ✅ |
+| F2: Embedding Model Upgrade + Migration | 21E | ✅ | `tests/test_phase21e_embedding.py` | ✅ 16 pass | ✅ |
+| H5-H8: Recurring Bug Remediation | 21G | ✅ | `test_save_prompt_condition.py`, `test_phase21e_embedding.py` | ✅ 7 new | ✅ |
 
 ---
 
@@ -250,12 +252,12 @@ $env:NO_PROXY="*"; $env:HTTP_PROXY=""; $env:HTTPS_PROXY=""
 
 ## 📋 回归测试基线
 
-**上次全量测试结果:** 613 passed, 0 failed
-**测试日期:** 2026-03-17 (Phase 20 完成后)
+**上次全量测试结果:** 924+ passed, 0 failed
+**测试日期:** 2026-03-21 (Phase 23A + Config Cleanup 完成后)
 **Python 环境:** `.venv311` (Python 3.11)
-**下一里程碑:** Phase 21A 完成后目标 650+ passed
+**下一里程碑:** Phase 23B 数据完整性修复
 
 > [!TIP]
 > 每次新功能开发完成后，运行全量回归测试并更新此基线数字。
 > 任何 **新增 failure** 都必须在合入前修复。
-> Phase 21 需为每个修复项增加对应测试覆盖。
+

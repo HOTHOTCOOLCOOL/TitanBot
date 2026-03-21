@@ -13,7 +13,7 @@ from typing import Any
 
 from loguru import logger
 
-from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.bus.events import InboundMessage, OutboundMessage, ToolExecutedEvent, KnowledgeMatchedEvent, MemoryConsolidatedEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
 from nanobot.agent.context import ContextBuilder
@@ -34,7 +34,10 @@ from nanobot.utils.metrics import metrics
 # ── Module-level constants (extracted from inline for readability) ──
 
 # Tool names that warrant a "continue executing" nudge after their completion
-_CONTINUE_TOOLS = {"outlook", "attachment_analyzer", "message"}
+_CONTINUE_TOOLS = {"outlook", "attachment_analyzer"}
+
+# Safety guard: max number of message() calls per agent loop to prevent runaway floods
+_MAX_MESSAGE_CALLS = 3
 
 # Phrases indicating the LLM is stalling instead of calling tools
 _WAIT_PHRASES = [
@@ -106,7 +109,14 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
-        self.context = ContextBuilder(workspace, language=language, provider=provider, model=model)
+        # Phase 21E: Read embedding model path from config
+        from nanobot.config.loader import get_config
+        _cfg = get_config()
+        _emb_model = _cfg.agents.defaults.embedding_model or None
+        self.context = ContextBuilder(
+            workspace, language=language, provider=provider, model=model,
+            embedding_model=_emb_model,
+        )
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -127,9 +137,7 @@ class AgentLoop:
         self._mcp_connected = False
         self._dynamic_tool_names: list[str] = []  # Track plugin tools for /reload
         self._config = None  # Cached Config instance
-        from nanobot.agent.tool_setup import setup_all_tools
-        setup_all_tools(self)
-        
+
         # Task Tracker - 任务状态追踪 (用于 /tasks 命令)
         self.task_tracker = TaskTracker(workspace)
 
@@ -153,6 +161,10 @@ class AgentLoop:
             task_tracker=self.task_tracker
         )
         self.state_handler = StateHandler(self)
+
+        # Register tools AFTER all dependencies (knowledge_workflow, etc.) are initialized
+        from nanobot.agent.tool_setup import setup_all_tools
+        setup_all_tools(self)
 
         # D2: Cached instances for ReflectionStore and KnowledgeGraph (lazy-init)
         self._reflection_store = None
@@ -179,10 +191,10 @@ class AgentLoop:
         return self._knowledge_graph
     
     def _get_config(self):
-        """Get cached Config instance (avoids re-parsing on every LLM iteration)."""
+        """Get cached Config instance (I1: uses process-level singleton)."""
         if self._config is None:
-            from nanobot.config.schema import Config
-            self._config = Config()
+            from nanobot.config.loader import get_config
+            self._config = get_config()
         return self._config
     
 
@@ -229,7 +241,11 @@ class AgentLoop:
         final_content = None
         tools_used: list[str] = []
         tool_calls_with_args: list[dict] = []
+        message_call_count = 0  # Track message() calls to prevent floods
         consecutive_all_exceptions = 0  # B1: circuit breaker counter
+        # L14: Track recent tool call signatures to detect infinite loops
+        _recent_call_sigs: list[str] = []
+        _DUPLICATE_THRESHOLD = 3  # Break after N identical consecutive calls
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -271,14 +287,26 @@ class AgentLoop:
                             provider_name=provider_name
                         )
 
+            # Phase 21E: Check streaming config
+            _streaming_enabled = getattr(
+                getattr(config.agents, 'streaming', None), 'enabled', False
+            )
+
             with metrics.timer("llm_call"):
-                response = await provider_for_turn.chat(
-                    messages=messages,
-                    tools=self.tools.get_definitions(),
-                    model=target_model,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
+                if _streaming_enabled and channel and chat_id:
+                    # Streaming path: forward tokens in real-time
+                    response = await self._stream_llm_call(
+                        provider_for_turn, messages, target_model,
+                        channel, chat_id,
+                    )
+                else:
+                    response = await provider_for_turn.chat(
+                        messages=messages,
+                        tools=self.tools.get_definitions(),
+                        model=target_model,
+                        temperature=self.temperature,
+                        max_tokens=self.max_tokens,
+                    )
 
             # Aggregate token usage
             if response.usage:
@@ -320,8 +348,18 @@ class AgentLoop:
                     _start = time.monotonic()
                     with metrics.timer("tool_execution"):
                         res = await self.tools.execute(tc.name, tc.arguments)
+                    _elapsed_ms = (time.monotonic() - _start) * 1000
                     metrics.increment("tool_executions_count")
-                    logger.debug(f"Tool {tc.name} completed in {time.monotonic() - _start:.1f}s")
+                    logger.debug(f"Tool {tc.name} completed in {_elapsed_ms / 1000:.1f}s")
+                    # Phase 22D: Emit domain event for observability
+                    _is_err = isinstance(res, BaseException) or (isinstance(res, str) and res.startswith("Error: "))
+                    await self.bus.publish_event(ToolExecutedEvent(
+                        event_type="tool_executed",
+                        tool_name=tc.name,
+                        duration_ms=_elapsed_ms,
+                        success=not _is_err,
+                        error=str(res)[:200] if _is_err else None,
+                    ))
                     return res
 
                 results = await asyncio.gather(
@@ -356,6 +394,37 @@ class AgentLoop:
                         messages, tool_call.id, tool_call.name, result
                     )
                 
+                # Track message() calls and guard against floods
+                for tc in response.tool_calls:
+                    if tc.name == "message":
+                        message_call_count += 1
+                if message_call_count >= _MAX_MESSAGE_CALLS:
+                    logger.warning(f"Message flood guard: {message_call_count} message() calls, breaking loop")
+                    break
+
+                # L14: Duplicate tool call detection — prevent infinite loops
+                # Build signature for this iteration's tool calls
+                _iter_sig = "|".join(
+                    f"{tc.name}:{json.dumps(tc.arguments, sort_keys=True)}"
+                    for tc in response.tool_calls
+                )
+                _recent_call_sigs.append(_iter_sig)
+                # Keep only last N signatures
+                if len(_recent_call_sigs) > _DUPLICATE_THRESHOLD:
+                    _recent_call_sigs = _recent_call_sigs[-_DUPLICATE_THRESHOLD:]
+                # Check if last N are ALL identical
+                if (len(_recent_call_sigs) >= _DUPLICATE_THRESHOLD
+                        and len(set(_recent_call_sigs[-_DUPLICATE_THRESHOLD:])) == 1):
+                    logger.warning(
+                        f"Duplicate tool call detected ({_DUPLICATE_THRESHOLD}x): "
+                        f"{_iter_sig[:120]}... Breaking loop."
+                    )
+                    final_content = (
+                        "⚠️ I appear to be stuck in a loop calling the same tool repeatedly. "
+                        "Please rephrase your request or try a different approach."
+                    )
+                    break
+
                 # 根据最后执行的工具决定是否提示继续
                 last_tool = response.tool_calls[-1].name if response.tool_calls else ""
                 
@@ -408,6 +477,71 @@ class AgentLoop:
                 break
 
         return final_content, tools_used, tool_calls_with_args
+
+    # ── Phase 21E: streaming helper ──────────────────────────────
+
+    async def _stream_llm_call(
+        self,
+        provider: LLMProvider,
+        messages: list[dict],
+        model: str,
+        channel: str,
+        chat_id: str,
+    ) -> "LLMResponse":
+        """Call provider.stream_chat(), publishing StreamEvents to the bus.
+
+        Returns a fully assembled LLMResponse so the rest of the agent loop
+        can proceed without changes.
+        """
+        from nanobot.bus.events import StreamEvent
+        from nanobot.providers.base import LLMResponse
+
+        content_parts: list[str] = []
+        final_usage: dict[str, int] = {}
+        final_tool_calls = []
+        final_reasoning: str | None = None
+        final_finish = "stop"
+
+        async for chunk in provider.stream_chat(
+            messages=messages,
+            tools=self.tools.get_definitions(),
+            model=model,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        ):
+            # Publish text deltas for live display
+            if chunk.delta:
+                content_parts.append(chunk.delta)
+                await self.bus.publish_stream(StreamEvent(
+                    channel=channel,
+                    chat_id=chat_id,
+                    delta=chunk.delta,
+                    done=False,
+                ))
+
+            # Final chunk carries accumulated metadata
+            if chunk.finish_reason:
+                final_usage = chunk.usage
+                final_tool_calls = chunk.tool_calls
+                final_reasoning = chunk.reasoning_content
+                final_finish = chunk.finish_reason
+
+                # Send done event
+                await self.bus.publish_stream(StreamEvent(
+                    channel=channel,
+                    chat_id=chat_id,
+                    delta="",
+                    done=True,
+                ))
+
+        content = "".join(content_parts) or None
+        return LLMResponse(
+            content=content,
+            tool_calls=final_tool_calls,
+            finish_reason=final_finish,
+            usage=final_usage,
+            reasoning_content=final_reasoning,
+        )
 
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
@@ -517,6 +651,7 @@ class AgentLoop:
                 logger.info(f"Implicit feedback: positive for '{session.last_task_key}'")
             session.last_task_key = None
             session.last_tool_calls = None
+            session.mark_metadata_dirty()
 
         # ── Step 1: Awaiting user reply to knowledge match ──
         if session.pending_knowledge:
@@ -560,7 +695,16 @@ class AgentLoop:
                 "_original_request": msg.content,
                 "_extracted_key": task_key,
             }
+            session.mark_metadata_dirty()
             self.sessions.save(session)
+
+            # Phase 22D: Emit knowledge match event
+            await self.bus.publish_event(KnowledgeMatchedEvent(
+                event_type="knowledge_matched",
+                task_key=task_key or "",
+                confidence=match.get("_match_confidence", 0.0),
+                match_method=match.get("_match_method", "exact"),
+            ))
 
             return OutboundMessage(
                 channel=msg.channel,
@@ -671,6 +815,12 @@ class AgentLoop:
 
         if final_content is None:
             final_content = i18n_msg("no_response")
+        else:
+            # Strip <think> tags from reasoning models (DeepSeek-R1, etc.)
+            # Must happen BEFORE _FAIL_INDICATORS check to avoid false positives
+            # from reasoning content containing words like 无法, 失败, etc.
+            from nanobot.utils.think_strip import strip_think_tags
+            final_content = strip_think_tags(final_content)
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info(f"Response to {msg.channel}:{msg.sender_id}: {preview}")
@@ -687,10 +837,17 @@ class AgentLoop:
                 and not session.pending_knowledge
                 and not session.pending_save
                 and not session.pending_upgrade):
-            logger.info(f"Auto-consolidation triggered (count={session.message_count_since_consolidation})")
+            _consolidation_count = session.message_count_since_consolidation
+            logger.info(f"Auto-consolidation triggered (count={_consolidation_count})")
             session.message_count_since_consolidation = 0
             from nanobot.agent.commands import _safe_create_task
             _safe_create_task(self.memory_manager.consolidate_memory(session), name="auto_consolidation")
+            # Phase 22D: Emit memory consolidation event
+            await self.bus.publish_event(MemoryConsolidatedEvent(
+                event_type="memory_consolidated",
+                session_key=session.key,
+                messages_consolidated=_consolidation_count,
+            ))
 
         # After LLM execution with tool calls → prompt user to save
         # But ONLY if the workflow appears to have succeeded
@@ -715,6 +872,7 @@ class AgentLoop:
                 }
                 # P1: store tool calls for silent steps update on next implicit feedback
                 session.last_tool_calls = tool_calls_with_args
+                session.mark_metadata_dirty()
                 save_prompt = self.knowledge_workflow.format_save_prompt()
             else:
                 logger.info("Skipping save prompt: workflow appears to have failed")

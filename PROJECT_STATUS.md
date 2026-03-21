@@ -25,7 +25,7 @@
 - `nanobot/cron/`: Background scheduled task engine (`service.py`). Manages recurrent jobs and triggers the agent automatically.
 - `nanobot/session/`: Chat history management, caching, and state tracking per channel/user.
 - `resources/`: Mature, portable Skills stored here as verifiable backups and templates (e.g., `ssrs-report`, `outlook-email-analysis`). Use `onboard.py` to install into `plugins/`.
-- `nanobot/config/`: Configuration management (`.env` -> `config.json` cascading overlay).
+- `nanobot/config/`: Configuration management (`~/.nanobot/config.json` — sole config source).
 
 ## 3. Current System Capabilities (Production Ready)
 
@@ -83,7 +83,7 @@ To realize the enterprise-level Ultimate Goal, maintain momentum on these core f
 - [x] **P2 Code Quality & Bug Fixes (Phase 18C):** Fixed critical `/reload` command bug (`commands.py` called non-existent `agent._register_dynamic_tools()` → now imports module function from `tool_setup.py`). Hoisted per-call `_MEMORY_TRIGGERS` to module constant, fixed shadowed walrus variable in `memory_manager.py`, moved late `import re` to module top in `personalization.py`, removed redundant assignment in `state_handler.py`, added `__all__` exports to `tool_setup.py` and `hybrid_retriever.py`. New tests: `test_code_quality.py` (17 tests). Regression: 566 passed.
 - [x] **P3 Architecture Improvements (Phase 18D):** Refactored `ChannelManager._init_channels()` from 9 repetitive if/try/except blocks into a data-driven `_CHANNEL_REGISTRY` list with single loop (-80 lines). Replaced brittle `isinstance` checks in `_set_tool_context()` with duck-typed dispatch over `_CONTEXTUAL_TOOLS` tuple. Added `__all__` exports to 6 public modules (`context.py`, `commands.py`, `state_handler.py`, `session/manager.py`, `channels/manager.py`, `metrics.py`). Added `uptime_seconds()` metric to `MetricsCollector`, included in `report()`/`get_metrics()` output. New tests: `test_architecture.py` (33 tests). Regression: 599 passed.
 - [x] **Performance & Experience Optimization (Phase 19+):** Async parallel tool execution via `asyncio.gather` in `loop.py` (multi-tool turns now run concurrently). Context window optimization with character-budget history trimming in `context.py` (120K char default, keeps ≥4 recent messages). Dashboard v2 mobile-responsive UI with hamburger sidebar, stat cards, toast notifications, and XSS-safe rendering. Proactive cron failure notification system — `CronService.notification_callback` pushes alerts to dashboard WebSocket and the job's configured channel on failure. New tests: `test_phase19_optimizations.py` (10 tests). Regression: 602 passed.
-- [x] **Knowledge Workflow Refactoring (Phase 19+ Remaining) (Completed):** Extracted user command recognition, prompt formatting, KB management commands, and outcome tracking out of `knowledge_workflow.py` into separate modules (`command_recognition.py`, `prompt_formatter.py`, `kb_commands.py`, `outcome_tracker.py`), significantly slimming it down from ~805 lines to improve maintainability and strictly enforce single-responsibility, all while maintaining 100% backward API compatibility.
+- [x] **Knowledge Workflow Refactoring (Phase 19+ Remaining) (Completed):** Extracted user command recognition, prompt formatting, KB management commands, and outcome tracking out of `knowledge_workflow.py` into separate modules (`command_recognition.py`, `prompt_formatter.py`, `kb_commands.py`, `outcome_tracker.py`), significantly slimming it down from ~805 lines. Further decomposed by extracting `key_extractor.py` (85 lines) and `knowledge_judge.py` (273 lines), reducing the main file from 595→350 lines as a thin facade, strictly enforcing single-responsibility while maintaining 100% backward API compatibility. New tests: `test_knowledge_decomposition.py` (18 tests).
 
 ## 6. Phase 20: AI Memory Architecture Enhancement ✅
 
@@ -143,46 +143,130 @@ New tests: `test_phase21b_fixes.py` (19 tests). **Regression baseline: 666 passe
 | E3 | Query rewrite always calls LLM | `vector_store.py` | Pronoun-based short-circuit (19 EN/ZH pronouns checked first) |
 | E4 | Error messages i18n incomplete | `commands.py`, `i18n.py` | 8 new i18n keys, 7 hardcoded string replacements |
 
-New tests: `test_phase21c_fixes.py` (21 tests). **Regression baseline: 687 passed.**
+New tests: `test_phase21c_fixes.py` (21 tests). **Regression baseline: 704 passed.**
 
 
-### Phase 21D — Architecture & Config Improvements
+### Phase 21D — Architecture & Config Improvements ✅
 
-| ID | Issue | File(s) | Description |
+| ID | Issue | File(s) | Resolution |
+|----|-------|---------|------------|
+| I1 | Config singleton inconsistency | `loader.py`, `subagent.py`, `loop.py`, `litellm_provider.py` | `get_config()` / `invalidate_config()` singleton factory; 4 call sites updated |
+| I2 | Dashboard missing KB/Reflection/Graph APIs | `dashboard/app.py` | 4 new endpoints: `/api/reflections`, `/api/knowledge_graph`, `/api/knowledge_base`, `/api/background_tasks` |
+| D4 | No unified async task manager | `utils/task_manager.py`, `commands.py` | `BackgroundTaskManager` class with spawn, cancel, list, concurrency limit (10); `_safe_create_task` delegates to it |
+| E1 | Knowledge matching precision | `knowledge_workflow.py` | Adaptive threshold (scales 0.60–0.75 with KB size), LRU cache for key extraction (128 entries), `_match_confidence` score on all results |
+| E2 | Memory capacity management | `reflection.py`, `knowledge_graph.py` | Auto-pruning: ReflectionStore max 100, KnowledgeGraph max 500 triples; public `prune()` API |
+
+New tests: `test_phase21d_fixes.py` (21 tests). **Regression baseline: 86 passed across Phases 21A–21D.**
+
+### Phase 21E — Feature Enhancements ✅ *(From existing backlog)*
+
+| ID | Feature | File(s) | Summary |
+|----|---------|---------|---------|
+| F1 | Streaming Response Delivery | `base.py`, `litellm_provider.py`, `events.py`, `queue.py`, `loop.py`, `app.py`, `schema.py` | `stream_chat()` async generator on all providers (LiteLLM uses native `stream=True`), `StreamChunk` / `StreamEvent` dataclasses, `MessageBus` stream pub/sub, `AgentLoop._stream_llm_call()` integration, Dashboard `/ws/stream` WebSocket endpoint, `StreamingConfig` config flag |
+| F2 | Embedding Model Upgrade | `vector_store.py`, `schema.py`, `context.py`, `loop.py` | Upgraded default embedding from `paraphrase-multilingual-minilm-l12-v2` (384-dim) to `BAAI/bge-m3` (1024-dim, 100+ languages). Configurable model path via `agents.defaults.embeddingModel`. Dimension introspection property on `_SentenceTransformerEmbedding`. Automatic ChromaDB collection migration on dimension mismatch (peek → detect → delete → recreate). Kept `local_files_only=True` for offline-first operation. |
+| F3 | Vision-Language Feedback Loop | `vlm_feedback.py`, `rpa_executor.py`, `schema.py` | `VLMFeedbackLoop` engine with before/after screenshot VLM comparison. `VerificationResult` / `FeedbackLoopResult` dataclasses. `verify` + `expected_outcome` RPA parameters. Configurable retry loop (`VLMFeedbackConfig`: enabled, max_retries, verification_delay). Structured JSON VLM prompt with `json_repair` + heuristic fallback parsing. Graceful degradation when VLM not configured. |
+
+New tests: `test_phase21e_streaming.py` (20 tests), `test_phase21e_embedding.py` (18 tests), `test_phase21e_vlm_feedback.py` (30 tests). **Regression baseline: 793 passed.**
+
+### Phase 21F — Production Hotfix (Model-Switch Regressions) ✅
+
+Post-model-switch production debugging session. 5 bugs identified from live gateway logs, all causing user-visible symptoms: repeated answers, slowness, broken email, and mixed simplified/traditional Chinese.
+
+| ID | Bug | File(s) | Fix Summary |
+|----|-----|---------|-------------|
+| H1 | Infinite message loop | `loop.py` | Removed `"message"` from `_CONTINUE_TOOLS` (terminal action, not intermediate). Added `_MAX_MESSAGE_CALLS=3` flood guard |
+| H2 | Verbose key extraction | `key_extractor.py` | Take last line of LLM output + enforce 50/200 char limits. Handles reasoning models without `<think>` tags |
+| H3 | Vector dimension migration failure | `vector_store.py` | `peek()` → `get()` for dimension probe — `peek(include=)` not supported in installed ChromaDB version |
+| H4 | Outlook send silently fails | `outlook.py` | Error prefix standardized to `"Error: "`, recipient validation, explicit `CoInitialize()` in thread |
+| H5 | Simplified/Traditional Chinese mixing | `context.py` | Language instruction now explicitly requires 简体中文 with character examples (执行 vs 執行) |
+
+Created `LESSONS_LEARNED.md` documenting 6 lessons (L1–L6) from this incident for future reference.
+
+Updated tests: `test_phase21e_embedding.py` (mock `get()` instead of `peek()`), `test_loop_cleanup.py` (assert `message` NOT in `_CONTINUE_TOOLS`). **Regression baseline: 735+ passed.**
+
+### Phase 21G — Production Hotfix: Recurring Bug Remediation ✅
+
+Four bugs from Phase 21F recurred in production because previous fixes were incomplete/superficial. See `LESSONS_LEARNED.md` L7–L10 for detailed root cause analysis.
+
+| ID | Bug | File(s) | Fix Summary |
+|----|-----|---------|-------------|
+| H5 | Dimension migration error silently caught | `vector_store.py` | Error handler now checks for `"dimension"` in error message and forces collection recreation instead of silent skip (L7) |
+| H6 | `<think>` tags not stripped in agent loop | `loop.py` | `strip_think_tags()` applied to `final_content` in `_execute_with_llm()` BEFORE `_FAIL_INDICATORS` check — the most critical missing call site from S6 (L8) |
+| H7 | Outlook `mail.To` fails for external addresses | `outlook.py` | `Recipients.Add()` + `Resolve()` instead of `mail.To` — proper COM API for external SMTP addresses outside Exchange GAL (L9) |
+| H8 | Key extractor reasoning detection too weak | `key_extractor.py` | Added `_is_reasoning_text()` with 15+ prefix patterns, prompt echo detection, multi-sentence guard. Reduced English limit 200→100 chars (L10) |
+
+New/updated tests: 7 new test cases across `test_save_prompt_condition.py` (5 think-tag tests) and `test_phase21e_embedding.py` (2 dimension probe error tests). **Regression baseline: 793 passed.**
+
+### Phase 21H — Production Hotfix: Dimension Probe + Feishu Image Support ✅
+
+Two issues from production log analysis: (1) vector dimension migration failing for the third time (L11), (2) Feishu images arriving as `[image]` placeholder text.
+
+| ID | Issue | File(s) | Fix Summary |
 |----|-------|---------|-------------|
-| I1 | Config singleton inconsistency | `subagent.py`, multiple | Multiple `Config()` instantiations instead of shared singleton |
-| I2 | Dashboard missing KB/Reflection/Graph APIs | `dashboard/app.py` | No visibility into intelligent memory subsystems via dashboard |
-| D4 | No unified async task manager | `loop.py`, `memory_manager.py` | Fire-and-forget tasks have no cancel/error/concurrency control |
-| E1 | Knowledge matching precision | `knowledge_workflow.py` | Needs semantic cache, adaptive thresholds, feedback loop |
-| E2 | Memory capacity management | Multiple | No prune/expire mechanism for reflections, graph, vector store |
+| H9 | Dimension probe numpy ndarray truthiness | `vector_store.py` | `probe.get("embeddings")` returns numpy ndarray — `bool(ndarray)` raises ValueError, silently skipping migration. Fixed: `embeddings is not None and len(embeddings) > 0`. Upgraded else-branch from `debug` to `warning` (L11) |
+| F4 | Feishu images arrive as `[image]` text | `feishu.py`, `image_downloader.py` | New `_download_image()` method using `GetMessageResourceRequest` API. Shared `image_downloader.py` utility for saving image bytes. Image files passed via `media` parameter to VLM pipeline |
 
-### Phase 21E — Feature Enhancements *(From existing backlog)*
+New tests: `test_channel_image_support.py` (7 tests), `TestDimensionMigration` in `test_vector_store.py` (1 test). **Regression baseline: 0 failures (4 pre-existing import errors).**
 
-- [ ] **Streaming Response Delivery** — Forward LLM tokens in real-time via SSE/WebSocket
-- [ ] **Embedding Model Upgrade** — Evaluate multilingual models for improved Chinese retrieval
-- [ ] **Vision-Language Feedback Loop** — Tighter VLM ↔ RPA integration for self-correcting UI automation
-- [ ] **Dashboard PWA** — Progressive Web App install support, offline caching
+#### Remaining Backlog (Phase 22+)
+- [x] **Embedding Model Upgrade** — BAAI/bge-m3 (1024-dim, 100+ languages) ✅
+- [x] **Vision-Language Feedback Loop** — Tighter VLM ↔ RPA integration for self-correcting UI automation ✅
+- [x] **Dashboard PWA** — Progressive Web App install support, offline caching ✅
+- [x] **Feishu Image Support** — Channel-level image download + VLM pipeline integration ✅
+- [ ] **Multi-Channel Image Support** — Extend image download to MoChat, Slack, DingTalk channels
 
-## 8. Future Directions (Phase 22+)
+## 8. Phase 22: Skill System Hardening & Architecture Refinement
 
-### A. Plugin Ecosystem
-- **Plugin marketplace** — browsable registry of community-contributed skills
-- **Plugin dependency management** — auto-install pip dependencies declared in plugin metadata
-- **Plugin-level configuration** — per-plugin `config.json` merged into the main configuration hierarchy
+> Inspired by @trq212's "Lessons from Building Claude Code: How We Use Skills" (Anthropic). See `ARCHITECTURE_LESSONS.md` for the community article capturing our own lessons.
 
-### B. Multi-Modal & Voice
-- **Unified speech-to-text pipeline** — extend voice input beyond Telegram to all channels
-- **Image generation tool** — integrate DALL-E / Stable Diffusion as a built-in creative tool
+### Phase 22A — Skill Trigger & Discovery Optimization (P0/P1) ✅
 
-### C. Architecture Evolution
-- Evaluate event-driven architecture for better decoupling between agent and channels
-- Consider async generator pattern for streaming LLM responses end-to-end
-- Review session persistence strategy (WAL-mode SQLite vs. current JSONL)
+| ID | Item | File(s) | Description |
+|----|------|---------|-------------|
+| SK1 | AI-First Skill Descriptions | All 11 `SKILL.md` files | Rewrote all skill `description` fields as model-optimized trigger specs. Moved "When to use" trigger phrases from body → description. Description is the **only** trigger mechanism — multi-line YAML `>` syntax with both EN/ZH triggers. |
+| SK2 | Skill Taxonomy & Categories | `SKILL.md` frontmatter, `skills.py`, `context.py` | Added standardized `category` field (9 categories: library_api, code_quality, frontend_design, business_workflow, product_verification, content_generation, data_fetching, service_debugging, infra_ops). `build_skills_summary()` now groups skills by category in XML output. New `list_skills_by_category()` method. Improved YAML parser handles multi-line `>` syntax. `save_skill.py` includes `category` parameter for new skills. |
+| SK3 | Skill-Level Memory | `skills.py`, skill dirs | Each skill directory supports `memory/executions.jsonl`. `log_execution()` records input/output/duration/success per execution. `get_recent_executions()` retrieves recent N records. `format_execution_context()` formats for prompt injection. `build_skills_summary()` includes recent execution summary in XML. FIFO cap at 100 entries. |
 
-### D. Playwright Browser Automation *(⚠️ Heavy — separate discussion)*
+New tests: `test_phase22a_skills.py` (27 tests). **Regression baseline: 811 passed (2 pre-existing env-dependent failures).**
+
+### Phase 22B — Skill Configurability & Hooks (P2) ✅
+
+| ID | Item | File(s) | Description |
+|----|------|---------|-------------|
+| SK4 | Configurable Skill Behavior | `skills.py`, skill dirs | Per-skill `config.json` overlay system. `load_skill_config()`, `save_skill_config()` (atomic write), `get_effective_config()` merges `config.defaults.json` + `config.json`. XML summary includes `<config_keys>`. SaveSkillTool emits `config.defaults.json`. |
+| SK5 | Dynamic Hooks System | `skills.py` | `pre_execute` / `post_execute` hooks. Sources: SKILL.md frontmatter (`hooks_pre`/`hooks_post`) + `hooks.py` scripts (importlib with error isolation). 3 built-in hooks: `confirm_destructive`, `log_execution`, `notify_completion`. `HookResult` dataclass. |
+| SK6 | Tool Design Audit | `TOOLS.md` | Audit of 18 tools across 6 dimensions. All 18/18 compliant. |
+| SK7 | Skill Registry & Versioning | `skills.py`, `save_skill.py` | `skills_registry.json` tracks version, usage_count, last_used, dependencies. `check_dependencies()` via `importlib.util.find_spec()`. SaveSkillTool adds `version`, `pip_dependencies` params. |
+
+New tests: `test_phase22b_skills.py` (36 tests). **Regression baseline: 847 passed (4 pre-existing env-dependent collection errors).**
+
+### Phase 22C — Multi-Modal & Channel Extension
+
+- [ ] **Multi-Channel Image Support** — Extend image download to MoChat, Slack, DingTalk channels
+- [ ] **Unified speech-to-text pipeline** — extend voice input beyond Telegram to all channels
+- [ ] **Image generation tool** — integrate DALL-E / Stable Diffusion as a built-in creative tool
+
+### Phase 22D — Architecture Evolution ✅
+
+| ID | Item | File(s) | Description |
+|----|------|---------|-------------|
+| AE1 | Event-Driven Architecture Enhancement | `bus/events.py`, `bus/queue.py`, `bus/__init__.py`, `agent/loop.py`, `dashboard/app.py`, `cli/commands.py` | Extended `MessageBus` with typed domain events (`DomainEvent` base + 6 subclasses: `ToolExecutedEvent`, `KnowledgeMatchedEvent`, `MemoryConsolidatedEvent`, `SessionLifecycleEvent`, `SkillTriggeredEvent`, `CronJobEvent`). Topic-based pub/sub via `subscribe_event(topic, cb)` with wildcard `"*"` support. 3 emitters wired in agent loop. Dashboard WebSocket forwarding for real-time observability. Zero overhead — pure in-memory callback dispatch. |
+| AE2 | Session Save Optimization | `session/manager.py`, `agent/loop.py`, `agent/state_handler.py` | Added `_metadata_dirty` flag to `Session`. When only new messages are added (no pending state changes), `SessionManager.save()` uses append-only mode (O(1) per new message) instead of full O(n) rewrite. All metadata mutation points wire `mark_metadata_dirty()`. SQLite migration evaluated and deferred — JSONL is sufficient for current workloads. |
+
+- ~~Consider async generator pattern for streaming LLM responses end-to-end~~ ✅ *Done — Phase 21E*
+
+New tests: `test_phase22d_architecture.py` (35 tests, 1 skipped). **Regression baseline: 847 passed.**
+
+### Deferred (Phase 23+)
+
+#### Playwright Browser Automation *(⚠️ Heavy — separate discussion)*
 - **Headless browser agent** — Playwright (Chromium) as plugin for JS-rendered pages, form filling, session login
 - **Primary use case:** Legacy ERP browser automation
 - **Considerations:** ~150MB Chromium, 200-500MB per instance — evaluate as standalone Plugin
+
+#### Plugin Ecosystem
+- **Plugin marketplace** — browsable registry of community-contributed skills
+- **Plugin dependency management** — auto-install pip dependencies declared in plugin metadata
 
 > **Note:** Tool extensions (SqlQueryTool, CreateExcelTool, etc.) remain deprioritized — `ExecTool` + Knowledge Workflow covers these via Python libraries with automatic skill learning.
 

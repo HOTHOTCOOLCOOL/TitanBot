@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from loguru import logger
@@ -60,7 +60,7 @@ def init_dashboard(bus: MessageBus, workspace: Path, token: str = ""):
     resolved = token or os.environ.get("NANOBOT_DASHBOARD_TOKEN", "")
     if not resolved:
         resolved = secrets.token_hex(16)
-        logger.info(f"Dashboard auth token (auto-generated): {resolved}")
+        logger.info(f"Dashboard auth token (auto-generated): {resolved[:8]}***")
     _dashboard_token = resolved
 
 
@@ -126,6 +126,16 @@ async def verify_token(request: Request) -> None:
 async def index(request: Request):
     """Render the main dashboard interface."""
     return templates.TemplateResponse("index.html", {"request": request})
+
+@app.get("/sw.js")
+async def service_worker():
+    """Serve the Service Worker script at root level for proper scope."""
+    return FileResponse(STATIC_DIR / "sw.js", media_type="application/javascript")
+
+@app.get("/manifest.json")
+async def manifest():
+    """Serve the Web App Manifest."""
+    return FileResponse(STATIC_DIR / "manifest.json", media_type="application/manifest+json")
 
 # S3: WebSocket per-connection constants
 _WS_MAX_MESSAGE_SIZE = 10_240      # 10 KB max per message
@@ -197,7 +207,9 @@ async def broadcast_ws_message(msg_type: str, data: Any):
         try:
             await ws.send_text(payload)
         except Exception:
-            pass
+            # R9: remove dead websocket on failure
+            if ws in _active_websockets:
+                _active_websockets.remove(ws)
 
 # ====================================================================
 # API Endpoints for Knowledge & Memory
@@ -220,13 +232,19 @@ async def get_memory():
 
 @app.post("/api/memory", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
 async def update_memory(request: Request):
-    """Update MEMORY.md."""
+    """Update MEMORY.md.
+
+    Phase 23A R1: Enforces 1MB body size limit to prevent DoS.
+    """
     if not _workspace:
         return {"success": False, "error": "Workspace not configured."}
-    
-    data = await request.json()
+
+    body = await request.body()
+    if len(body) > 1_048_576:  # 1MB
+        raise HTTPException(status_code=413, detail="Payload too large (max 1MB)")
+    data = json.loads(body)
     content = data.get("content", "")
-    
+
     mem_file = _workspace / "memory" / "MEMORY.md"
     mem_file.write_text(content, encoding="utf-8")
     return {"success": True}
@@ -247,13 +265,19 @@ async def get_tasks():
 
 @app.post("/api/tasks", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
 async def update_tasks(request: Request):
-    """Save tasks.json entirely."""
+    """Save tasks.json entirely.
+
+    Phase 23A R1: Enforces 1MB body size limit to prevent DoS.
+    """
     if not _workspace:
         return {"success": False, "error": "Workspace not configured."}
-        
-    data = await request.json()
+
+    body = await request.body()
+    if len(body) > 1_048_576:  # 1MB
+        raise HTTPException(status_code=413, detail="Payload too large (max 1MB)")
+    data = json.loads(body)
     tasks_dict = data.get("tasks", {})
-    
+
     tasks_file = _workspace / "memory" / "tasks.json"
     tasks_file.write_text(json.dumps(tasks_dict, indent=2, ensure_ascii=False), encoding="utf-8")
     return {"success": True}
@@ -276,3 +300,165 @@ async def get_preferences():
 async def get_stats():
     """Get system stats and metrics."""
     return get_metrics()
+
+
+# ====================================================================
+# I2: Intelligent Memory Subsystem APIs (Phase 21D)
+# ====================================================================
+
+@app.get("/api/reflections", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
+async def get_reflections():
+    """I2: Read metacognitive reflections (Phase 20D)."""
+    if not _workspace:
+        return {"reflections": [], "count": 0}
+    reflections_file = _workspace / "memory" / "reflections.json"
+    if reflections_file.exists():
+        try:
+            data = json.loads(reflections_file.read_text(encoding="utf-8"))
+            items = data.get("reflections", [])
+            return {"reflections": items, "count": len(items)}
+        except Exception:
+            pass
+    return {"reflections": [], "count": 0}
+
+
+@app.get("/api/knowledge_graph", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
+async def get_knowledge_graph():
+    """I2: Read entity-relation graph triples (Phase 20E)."""
+    if not _workspace:
+        return {"triples": [], "count": 0}
+    graph_file = _workspace / "memory" / "graph.json"
+    if graph_file.exists():
+        try:
+            data = json.loads(graph_file.read_text(encoding="utf-8"))
+            items = data.get("triples", [])
+            return {"triples": items, "count": len(items)}
+        except Exception:
+            pass
+    return {"triples": [], "count": 0}
+
+
+@app.get("/api/knowledge_base", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
+async def get_knowledge_base():
+    """I2: Read knowledge base entries (tasks.json structured knowledge)."""
+    if not _workspace:
+        return {"entries": [], "count": 0}
+    tasks_file = _workspace / "memory" / "tasks.json"
+    if tasks_file.exists():
+        try:
+            data = json.loads(tasks_file.read_text(encoding="utf-8"))
+            entries = data.get("tasks", []) if isinstance(data, dict) else data if isinstance(data, list) else []
+            return {"entries": entries, "count": len(entries)}
+        except Exception:
+            pass
+    return {"entries": [], "count": 0}
+
+
+@app.get("/api/background_tasks", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
+async def get_background_tasks():
+    """D4: List running and recent background tasks from the unified manager."""
+    try:
+        from nanobot.utils.task_manager import BackgroundTaskManager
+        mgr = BackgroundTaskManager.get()
+        return {"tasks": mgr.list_tasks(), "summary": mgr.summary()}
+    except Exception:
+        return {"tasks": [], "summary": {}}
+
+
+# ====================================================================
+# Phase 21E: Streaming Response Delivery WebSocket
+# ====================================================================
+
+_stream_websockets: list[WebSocket] = []
+
+
+@app.websocket("/ws/stream")
+async def websocket_stream_endpoint(websocket: WebSocket):
+    """WebSocket for real-time LLM token streaming (Phase 21E).
+
+    Clients connect with ?token=<dashboard_token> and receive JSON frames:
+      {"delta": "token text", "done": false}
+      {"delta": "", "done": true}
+    """
+    if _dashboard_token:
+        ws_token = websocket.query_params.get("token", "")
+        if ws_token != _dashboard_token:
+            await websocket.close(code=1008)
+            return
+
+    await websocket.accept()
+    _stream_websockets.append(websocket)
+
+    try:
+        # Keep the connection alive until the client disconnects
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        if websocket in _stream_websockets:
+            _stream_websockets.remove(websocket)
+
+
+async def _broadcast_stream_event(event) -> None:
+    """Broadcast a StreamEvent to all /ws/stream clients."""
+    if not _stream_websockets:
+        return
+
+    payload = json.dumps({
+        "delta": event.delta,
+        "done": event.done,
+        "channel": event.channel,
+        "chat_id": event.chat_id,
+    }, ensure_ascii=False)
+
+    for ws in _stream_websockets.copy():
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            if ws in _stream_websockets:
+                _stream_websockets.remove(ws)
+
+
+def init_stream_subscription(bus) -> None:
+    """Wire dashboard stream broadcasting to the message bus.
+
+    Call this after init_dashboard() when a bus is available.
+    """
+    if bus:
+        bus.subscribe_stream(_broadcast_stream_event)
+
+
+# ====================================================================
+# Phase 22D: Domain Event Broadcasting
+# ====================================================================
+
+async def _broadcast_domain_event(event) -> None:
+    """Broadcast a DomainEvent to all /ws clients as JSON.
+
+    Domain events are sent with type "domain_event" so the frontend
+    can distinguish them from regular chat messages.
+    """
+    if not _active_websockets:
+        return
+
+    payload = json.dumps({
+        "type": "domain_event",
+        "data": event.to_dict(),
+    }, ensure_ascii=False)
+
+    for ws in _active_websockets.copy():
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            # R15: remove dead websocket on failure
+            if ws in _active_websockets:
+                _active_websockets.remove(ws)
+
+
+def init_event_subscription(bus) -> None:
+    """Wire domain event broadcasting to the message bus (Phase 22D).
+
+    Call this after init_dashboard() when a bus is available.
+    Subscribes with wildcard "*" to forward ALL domain events to the Dashboard.
+    """
+    if bus:
+        bus.subscribe_event("*", _broadcast_domain_event)

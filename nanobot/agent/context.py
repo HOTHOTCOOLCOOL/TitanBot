@@ -236,8 +236,8 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         # D1: gated behind memory_features.knowledge_graph_enabled
         # D2: Accept pre-cached KnowledgeGraph instance to avoid per-message disk I/O
         try:
-            from nanobot.config.schema import Config as _Cfg
-            _mem_feat = _Cfg().agents.memory_features
+            from nanobot.config.loader import get_config
+            _mem_feat = get_config().agents.memory_features
             if _mem_feat.knowledge_graph_enabled:
                 kg = knowledge_graph  # D2: prefer cached instance
                 if kg is None:
@@ -430,8 +430,8 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
             # D1: gated behind memory_features.visual_memory_enabled
             _visual_enabled = True
             try:
-                from nanobot.config.schema import Config as _CfgV
-                _visual_enabled = _CfgV().agents.memory_features.visual_memory_enabled
+                from nanobot.config.loader import get_config as _get_cfg_v
+                _visual_enabled = _get_cfg_v().agents.memory_features.visual_memory_enabled
             except Exception:
                 pass
             if _visual_enabled and len(messages) > 0 and messages[-1].get("role") == "user":

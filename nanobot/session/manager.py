@@ -1,8 +1,13 @@
-"""Session management for conversation history."""
+"""Session management for conversation history.
+
+Phase 22D: Added metadata dirty flag and append-only optimization.
+"""
 
 __all__ = ["Session", "SessionManager"]
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -41,7 +46,8 @@ class Session:
     last_tool_calls: list[dict[str, Any]] | None = None  # Last tool calls (for silent steps update)
     message_count_since_consolidation: int = 0  # Auto-consolidation trigger counter
     evicted_context: str | None = None  # Virtual paging summary of dropped messages
-    _last_saved_msg_count: int = 0  # I4: track for append-only optimization
+    _last_saved_msg_count: int = 0  # I4/22D: track for append-only optimization
+    _metadata_dirty: bool = True  # Phase 22D: when False, save() can use append-only
     
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         """Add a message to the session."""
@@ -76,12 +82,19 @@ class Session:
         self.message_count_since_consolidation = 0
         self.evicted_context = None
         self.updated_at = datetime.now()
+        self._metadata_dirty = True
+        self._last_saved_msg_count = 0
 
     def clear_pending(self) -> None:
         """Clear all pending interactive states (L2: mutual exclusion)."""
         self.pending_knowledge = None
         self.pending_save = None
         self.pending_upgrade = None
+        self._metadata_dirty = True
+
+    def mark_metadata_dirty(self) -> None:
+        """Phase 22D: Explicitly mark metadata as needing a full rewrite on next save."""
+        self._metadata_dirty = True
 
 
 class SessionManager:
@@ -183,16 +196,23 @@ class SessionManager:
             last_tool_calls = None
             evicted_context = None
 
+            original_key = None  # R13: stored original session key
             with open(path, encoding=_ENCODING) as f:  # B6: explicit UTF-8
-                for line in f:
+                for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
                         continue
 
-                    data = json.loads(line)
+                    # R3: Tolerate truncated JSON lines (e.g. crash during append)
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Session {key}: skipping truncated line {line_num}")
+                        continue
 
                     if data.get("_type") == "metadata":
                         metadata = data.get("metadata", {})
+                        original_key = data.get("original_key")  # R13
                         created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
                         updated_at = datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else None
                         last_consolidated = data.get("last_consolidated", 0)
@@ -207,7 +227,7 @@ class SessionManager:
                         messages.append(data)
 
             return Session(
-                key=key,
+                key=original_key or key,  # R13: prefer stored original key
                 messages=messages,
                 created_at=created_at or datetime.now(),
                 updated_at=updated_at or datetime.now(),
@@ -228,9 +248,9 @@ class SessionManager:
     def save(self, session: Session) -> None:
         """Save a session to disk.
 
-        I4: Uses append-only mode when only new messages are added
-        (no metadata change). Falls back to full rewrite when metadata
-        or message count indicates a reset.
+        Phase 22D: Uses append-only mode when metadata hasn't changed
+        and only new messages need to be written. Falls back to full
+        rewrite when metadata is dirty or messages were removed/reset.
         """
         resolved_key = self.resolve_key(session.key)
 
@@ -238,34 +258,69 @@ class SessionManager:
         session.key = resolved_key
         path = self._get_session_path(resolved_key)
 
-        # I4: Always rewrite since metadata (pending states, updated_at, etc.)
-        # may have changed. The UTF-8 and ensure_ascii=False fixes (B6) are
-        # the key improvements. Future optimization: track metadata dirty flag.
-        self._full_rewrite(path, session)
+        new_msg_count = len(session.messages)
+        can_append = (
+            not session._metadata_dirty
+            and path.exists()
+            and new_msg_count >= session._last_saved_msg_count
+            and session._last_saved_msg_count > 0
+        )
+
+        if can_append:
+            # Append-only: just write new messages since last save
+            new_messages = session.messages[session._last_saved_msg_count:]
+            if new_messages:
+                with open(path, "a", encoding=_ENCODING) as f:
+                    for msg in new_messages:
+                        f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                session._last_saved_msg_count = new_msg_count
+                logger.debug(f"Session {session.key}: appended {len(new_messages)} messages")
+        else:
+            # Full rewrite: metadata changed or file needs regenerating
+            self._full_rewrite(path, session)
+            session._metadata_dirty = False
+            session._last_saved_msg_count = new_msg_count
 
         self._cache[session.key] = session
         self._evict_lru()
 
     def _full_rewrite(self, path: Path, session: Session) -> None:
-        """Full rewrite of the session JSONL file."""
-        with open(path, "w", encoding=_ENCODING) as f:  # B6: explicit UTF-8
-            metadata_line = {
-                "_type": "metadata",
-                "created_at": session.created_at.isoformat(),
-                "updated_at": session.updated_at.isoformat(),
-                "metadata": session.metadata,
-                "last_consolidated": session.last_consolidated,
-                "pending_knowledge": session.pending_knowledge,
-                "pending_save": session.pending_save,
-                "pending_upgrade": session.pending_upgrade,
-                "last_task_key": session.last_task_key,
-                "last_tool_calls": session.last_tool_calls,
-                "message_count_since_consolidation": session.message_count_since_consolidation,
-                "evicted_context": session.evicted_context,
-            }
-            f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
-            for msg in session.messages:
-                f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+        """Full rewrite of the session JSONL file.
+
+        R3: Uses tempfile + os.replace for atomic writes.  If the process
+        crashes mid-write, the original file remains intact.
+        """
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding=_ENCODING) as f:
+                metadata_line = {
+                    "_type": "metadata",
+                    "original_key": session.key,  # R13: persist original key
+                    "created_at": session.created_at.isoformat(),
+                    "updated_at": session.updated_at.isoformat(),
+                    "metadata": session.metadata,
+                    "last_consolidated": session.last_consolidated,
+                    "pending_knowledge": session.pending_knowledge,
+                    "pending_save": session.pending_save,
+                    "pending_upgrade": session.pending_upgrade,
+                    "last_task_key": session.last_task_key,
+                    "last_tool_calls": session.last_tool_calls,
+                    "message_count_since_consolidation": session.message_count_since_consolidation,
+                    "evicted_context": session.evicted_context,
+                }
+                f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
+                for msg in session.messages:
+                    f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, str(path))
+        except Exception:
+            # Clean up temp file on failure
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
     
     def invalidate(self, key: str) -> None:
         """Remove a session from the in-memory cache."""
@@ -289,8 +344,9 @@ class SessionManager:
                     if first_line:
                         data = json.loads(first_line)
                         if data.get("_type") == "metadata":
+                            # R13: prefer stored original_key over filename-derived key
                             sessions.append({
-                                "key": path.stem.replace("_", ":"),
+                                "key": data.get("original_key", path.stem.replace("_", ":")),
                                 "created_at": data.get("created_at"),
                                 "updated_at": data.get("updated_at"),
                                 "path": str(path)

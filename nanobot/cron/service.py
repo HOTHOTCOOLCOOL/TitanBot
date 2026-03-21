@@ -2,7 +2,9 @@
 
 import asyncio
 import json
+import os
 import time
+import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -110,7 +112,10 @@ class CronService:
         return self._store
     
     def _save_store(self) -> None:
-        """Save jobs to disk."""
+        """Save jobs to disk.
+
+        R7: Uses tempfile + os.replace for atomic writes.
+        """
         if not self._store:
             return
         
@@ -151,7 +156,19 @@ class CronService:
             ]
         }
         
-        self.store_path.write_text(json.dumps(data, indent=2))
+        fd, tmp = tempfile.mkstemp(dir=str(self.store_path.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, str(self.store_path))
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
     
     async def start(self) -> None:
         """Start the cron service."""
@@ -159,17 +176,46 @@ class CronService:
         self._store = None  # Force reload from disk
         self._load_store()
         
-        # When starting up, we DO NOT recompute next_run_at_ms.
-        # This guarantees that if a job was scheduled at 8:00 AM, and we boot at 9:00 AM,
-        # its next_run_at_ms will still be 8:00 AM, and it will be immediately picked up
-        # by the heartbeat timer as a catch-up execution.
-        
-        # One thing we do want to catch: If a one-shot ('at') job was already executed,
-        # it shouldn't be executed again. But since we update state.next_run_at_ms = None
-        # for one-shot jobs after execution, those will naturally not be triggered.
+        # L15: Skip stale cross-day jobs on startup.
+        # Only same-day missed jobs are caught up. Cross-day stale jobs
+        # get their next_run recomputed to the next future occurrence.
+        # This prevents yesterday's cron job from executing when the
+        # gateway is restarted the next day.
+        self._skip_stale_cross_day_jobs()
         
         self._arm_timer()
         logger.info(f"Cron service started with {len(self._store.jobs if self._store else [])} jobs")
+    
+    def _skip_stale_cross_day_jobs(self) -> None:
+        """Skip catch-up for jobs whose next_run was on a PREVIOUS calendar day.
+        
+        Only same-day missed jobs are caught up. Cross-day stale jobs
+        get their next_run recomputed to the next future occurrence.
+        This prevents e.g. yesterday's daily report from executing when
+        the gateway restarts the next morning.
+        """
+        if not self._store:
+            return
+        now = _now_ms()
+        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start_ms = int(today_start.timestamp() * 1000)
+        
+        changed = False
+        for job in self._store.jobs:
+            if not job.enabled or not job.state.next_run_at_ms:
+                continue
+            # If the scheduled time is before today's midnight → stale (previous day)
+            if job.state.next_run_at_ms < today_start_ms:
+                logger.info(
+                    f"Cron: skipping stale job '{job.name}' ({job.id}) — "
+                    f"scheduled for previous day, recomputing next run"
+                )
+                job.state.last_status = "skipped"
+                job.state.next_run_at_ms = _compute_next_run(job.schedule, now)
+                changed = True
+        
+        if changed:
+            self._save_store()
     
     # Legacy _run_missed_jobs completely removed.
     # The new heartbeat timer inherently handles missed jobs without double execution.
@@ -333,7 +379,7 @@ class CronService:
         now = _now_ms()
         
         job = CronJob(
-            id=str(uuid.uuid4())[:8],
+            id=str(uuid.uuid4()),  # R7: full UUID for collision-free ID
             name=name,
             enabled=True,
             schedule=schedule,

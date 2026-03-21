@@ -15,6 +15,7 @@ This module serves as a thin facade, delegating to specialized sub-modules:
 - kb_commands: Knowledge base management commands (/kb list, delete, cleanup)
 """
 
+from collections import OrderedDict
 from functools import lru_cache
 from typing import Any
 
@@ -31,8 +32,8 @@ from nanobot.agent import key_extractor as key_ext
 from nanobot.agent import knowledge_judge as kj
 
 
-# E1: LRU cache for key extraction results (avoids redundant LLM calls)
-_key_extraction_cache: dict[str, str] = {}
+# E1/R10: LRU cache for key extraction results (OrderedDict for true LRU semantics)
+_key_extraction_cache: OrderedDict[str, str] = OrderedDict()
 _KEY_CACHE_MAX = 128
 
 
@@ -68,15 +69,16 @@ class KnowledgeWorkflow:
     async def extract_key(self, user_request: str, history: list[dict] | None = None) -> str:
         """Extract a task key from user request using a lightweight LLM call.
 
-        E1: Results are cached (LRU) to avoid redundant LLM calls for
-        repeated or similar requests within the same session.
+        E1/R10: Results are cached with true LRU eviction to avoid
+        redundant LLM calls for repeated or similar requests.
 
         Returns:
             Extracted key string, or a truncated version of the request as fallback.
         """
-        # E1: Check LRU cache first
+        # E1/R10: Check LRU cache first
         cache_key = user_request.strip()[:200]
         if cache_key in _key_extraction_cache:
+            _key_extraction_cache.move_to_end(cache_key)  # R10: LRU touch
             logger.debug(f"Key extraction cache hit: '{cache_key[:40]}'")
             return _key_extraction_cache[cache_key]
 
@@ -87,12 +89,12 @@ class KnowledgeWorkflow:
             history=history,
         )
 
-        # E1: Store in cache (evict oldest if over limit)
+        # E1/R10: Store in cache (evict LRU if over limit)
         if len(_key_extraction_cache) >= _KEY_CACHE_MAX:
-            oldest = next(iter(_key_extraction_cache))
-            del _key_extraction_cache[oldest]
+            _key_extraction_cache.popitem(last=False)  # R10: evict oldest (LRU)
         _key_extraction_cache[cache_key] = result
         return result
+
 
     # ----------------------------------------------------------------
     # 2. Knowledge Base Matching (pure code, no LLM)

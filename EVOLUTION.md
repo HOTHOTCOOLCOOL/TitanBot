@@ -11,12 +11,12 @@
 |------|----------------|----------------|------|
 | **核心源文件** | ~10 | **95** | **×9.5** |
 | **测试文件** | 0 | **73** | 0 → 73 |
-| **测试用例** | 0 | **924+ passed** | 0 → 924+ |
+| **测试用例** | 0 | **948+ passed** | 0 → 948+ |
 | **子包 (packages)** | 2 (`agent`, `config`) | **14** | **×7** |
 | **内置工具 (Tools)** | 3 (shell, outlook, exec) | **18** | **×6** |
 | **通道适配器 (Channels)** | 2 (CLI, MoChat) | **9** | **×4.5** |
 | **Phase 迭代** | — | **15+ 个大阶段** | — |
-| **论文参考** | 0 | **5** (AutoSkill, XSKILL, mem9, MemGPT, AI Memory Survey) | — |
+| **论文参考** | 0 | **6** (AutoSkill, XSKILL, mem9, MemGPT, AI Memory Survey, MDER-DR) | — |
 
 ---
 
@@ -204,7 +204,7 @@ graph TB
 
 | 方面 | 🐣 初始 | 🚀 当前 |
 |------|---------|---------|
-| **测试覆盖** | 0 个测试 | **924+ passed** |
+| **测试覆盖** | 0 个测试 | **948+ passed** |
 | **测试文件** | 0 | **74** |
 | **类型提示** | 无 | 核心模块完整 type hints |
 | **代码审计** | 无 | Phase 18 安全审计 + Phase 21 质量审计（32 项全修复） |
@@ -276,6 +276,11 @@ gantt
     section 安全+配置
     Phase 23A P0安全加固                  :done, p23a, after p22d, 1d
     Config Cleanup (移除.env)             :done, pcfg, after p23a, 1d
+    Phase 23B P1数据完整性                 :done, p23b, after pcfg, 1d
+    Phase 23C P2架构优化                   :done, p23c, after p23b, 1d
+
+    section 知识图谱进化
+    Phase 24 KG Evolution (MDER-DR)        :done, p24, after p23c, 2d
 ```
 
 ---
@@ -439,3 +444,56 @@ tests/                       ← 74 测试文件，811 用例
 - Removed `pydantic-settings` dependency.
 - Created `config.sample.json` (Git-tracked template, replaces `.env.example`).
 - Deleted `.env.example`.
+
+### Phase 23B — P1 Data Integrity & Architecture Fixes ✅
+
+- **R3: Atomic Writes** — Session and Cron stores use temp-file + `os.replace()`.
+- **R7: Cron Full UUID** — Cron job IDs use full 36-char UUID instead of truncated 8-char.
+- **R8: Config Singleton** — Ensured single `Config` instance across all modules via `get_config()`.
+- **R9/R15: Dead WebSocket Cleanup** — Failed WebSocket connections removed on send error.
+- **R10: LRU Key Extraction Cache** — True LRU eviction via `OrderedDict` (cap=128).
+- **R13: Session Key Restoration** — Original key persisted in JSONL metadata; `list_sessions()` uses it.
+- New tests: 15 passed. **Regression: 948 passed.**
+
+### Phase 23C — P2 Architecture Polish & Edge Hardening ✅
+
+- **R11: Image Size Limit** — `_build_user_content()` skips images >20 MB with warning log.
+- **R6: Write File Size Limit** — `WriteFileTool` rejects content >10 MB to prevent disk exhaustion.
+- **R14: VLM Env Override** — VLM dynamic route uses direct assignment (`os.environ[key] = value`) instead of `setdefault`.
+- **R16: SHA256 Visual Hash** — Visual memory dedup hash upgraded from MD5+12 chars to SHA256+16 chars.
+- **R12: Outlook State Docs** — Documented per-instance state scope and future isolation path.
+- New tests: 7 passed. **Regression: 948 passed** (2 pre-existing failures unrelated).
+
+### Phase 24 — Knowledge Graph Evolution (MDER-DR) ✅
+
+> 受 MDER-DR 论文 (arXiv 2603.11223) 启发："将多跳推理的复杂性从查询时移到索引时"
+
+| ID | Item | File(s) | Description |
+|----|------|---------|-------------|
+| KG1 | Triple Description Enrichment | `knowledge_graph.py` | 每个三元组附带自然语言 `description` 字段，保留提取时的时间、条件、范围等上下文信息。`extract_triples` LLM prompt 同时请求描述。`get_1hop_context` 输出包含描述。 |
+| KG2 | Entity Disambiguation | `knowledge_graph.py` | 轻量级实体消歧：子串包含 + 长度比例守卫（>30%）。自动合并 "David" → "David Liu" 等等价实体，存储 `aliases` 映射。支持手动 `add_alias()`。 |
+| KG3 | Entity-Centric Summaries | `knowledge_graph.py`, `context.py`, `memory_manager.py` | 为每个实体预生成 LLM 聚合摘要，存储在 `graph.json` 的 `entities` 索引中。`get_entity_context()` 替代 `get_1hop_context()` 作为首选注入方式。深度整合后自动重新生成摘要。 |
+| KG4 | Query Decomposition (DR) | `knowledge_graph.py` | `_is_complex_query()` 启发式检测多跳查询（中英文模式）。`decompose_query()` 将复杂查询分解为子查询链。`resolve_multihop()` 迭代解析并收集上下文。 |
+| KG5 | Semantic Chunking | `knowledge_graph.py` | `_semantic_chunk()` 在三元组提取前按段落和句子边界切分长文本（支持中英文），无需 embedding 调用。 |
+
+- `knowledge_graph.py` 从 216 行扩展至 ~450 行，保持轻量。
+- `context.py` 更新为优先使用实体摘要注入（KG3），无摘要时回退到 1-hop。
+- `memory_manager.py` 在深度整合后链式触发 `extract_triples()` → `generate_entity_summaries()`。
+- New tests: `test_phase24_knowledge_graph.py` (31 tests). **Regression: 979 passed** (2 pre-existing env-dependent failures).
+
+### Phase 25 — Project Retrospective & Hardening ✅
+
+> 系统性代码审查（15+ 核心模块），识别并修复 7 个 bug / 健壮性 / 安全边缘问题。
+
+| ID | Severity | File(s) | Description |
+|----|----------|---------|-------------|
+| F1 | P1-Bug | `dashboard/app.py` | WebSocket 断连异常处理覆盖：新增 `except Exception` 兜底，防止非 `WebSocketDisconnect` 异常导致 `_active_websockets` 残留 |
+| F2 | P1-Bug | `session/manager.py` | 追加模式下 `updated_at` 不更新：在 append-only 路径更新时间戳，每 10 条消息标记 metadata dirty |
+| F3 | P2-Robustness | `dashboard/app.py` | POST 接口 JSON 解析：`update_memory` / `update_tasks` 新增 `json.JSONDecodeError` 捕获，返回 400 而非 500 |
+| F4 | P2-Robustness | `config/loader.py` | `save_config` 原子写入：统一使用 tempfile + `os.replace()` 防止进程崩溃时配置文件损坏 |
+| F5 | P2-Performance | `knowledge_graph.py` | 移除 `_add_triple` 中的单次 `_save()` 调用，消除批量提取时 N 次冗余磁盘写入 |
+| F7 | P3-Security | `web.py` | `WebSearchTool` 统一使用 `_SSRFSafeTransport`，与 `WebFetchTool` 保持一致 |
+| F8 | P3-Robustness | `cron/service.py` | `_load_store` 显式指定 `encoding="utf-8"`，修复 Windows 非 ASCII 路径潜在问题 |
+
+- 无新增测试文件（修复均为防御性改进，已被现有 979 个测试覆盖）。**Regression: 979 passed.**
+

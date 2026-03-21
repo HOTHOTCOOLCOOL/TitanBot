@@ -1,6 +1,12 @@
 ---
 name: github
-description: "Interact with GitHub using the `gh` CLI. Use `gh issue`, `gh pr`, `gh run`, and `gh api` for issues, PRs, CI runs, and advanced queries."
+description: >
+  Interact with GitHub using the `gh` CLI for issues, PRs, CI runs, and API queries.
+  Use when user asks to: check PR status, view CI/workflow runs, list/create issues,
+  query GitHub API, or manage repositories. Triggers: "check PR", "GitHub issue",
+  "CI status", "workflow run", "gh run", "PR review", "list issues",
+  "查看PR状态", "GitHub". Requires `gh` CLI authenticated.
+category: infra_ops
 metadata: {"nanobot":{"emoji":"🐙","requires":{"bins":["gh"]},"install":[{"id":"brew","kind":"brew","formula":"gh","bins":["gh"],"label":"Install GitHub CLI (brew)"},{"id":"apt","kind":"apt","package":"gh","bins":["gh"],"label":"Install GitHub CLI (apt)"}]}}
 ---
 

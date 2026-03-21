@@ -25,6 +25,7 @@ class StateHandler:
             logger.info(f"Session {session.key}: User chose to use knowledge base")
             match = session.pending_knowledge
             session.pending_knowledge = None
+            session.mark_metadata_dirty()
 
             result_content = kw.get_knowledge_result(match)
 
@@ -49,6 +50,7 @@ class StateHandler:
             
             extracted_key = session.pending_knowledge.get("_extracted_key")
             session.pending_knowledge = None
+            session.mark_metadata_dirty()
 
             if original_request:
                 return await self.agent._execute_with_llm(
@@ -63,6 +65,7 @@ class StateHandler:
                     content=i18n_msg("re_execute_no_previous"),
                 )
         session.pending_knowledge = None
+        session.mark_metadata_dirty()
         return None
 
     async def handle_pending_save(self, session: Session, msg: InboundMessage, user_input: str) -> OutboundMessage | None:
@@ -71,6 +74,7 @@ class StateHandler:
             logger.info(f"Session {session.key}: User confirmed save to knowledge base")
             pending = session.pending_save
             session.pending_save = None
+            session.mark_metadata_dirty()
 
             await kw.save_to_knowledge(
                 key=pending.get("key", "unknown"),
@@ -87,6 +91,7 @@ class StateHandler:
                         "key": save_key,
                         "match": match,
                     }
+                    session.mark_metadata_dirty()
                     self.agent.sessions.save(session)
                     return OutboundMessage(
                         channel=msg.channel, chat_id=msg.chat_id,
@@ -101,6 +106,7 @@ class StateHandler:
                 content=kw.format_save_confirmed(),
             )
         session.pending_save = None
+        session.mark_metadata_dirty()
         return None
 
     async def handle_pending_upgrade(self, session: Session, msg: InboundMessage, user_input: str) -> OutboundMessage | None:
@@ -109,6 +115,7 @@ class StateHandler:
             logger.info(f"Session {session.key}: User confirmed skill upgrade")
             pending = session.pending_upgrade
             session.pending_upgrade = None
+            session.mark_metadata_dirty()
             self.agent.sessions.save(session)
 
             try:
@@ -138,6 +145,7 @@ class StateHandler:
                     content=i18n_msg("processing_error", error=str(e)),
                 )
         session.pending_upgrade = None
+        session.mark_metadata_dirty()
         return None
 
     async def handle_system_message(self, msg: InboundMessage) -> OutboundMessage | None:

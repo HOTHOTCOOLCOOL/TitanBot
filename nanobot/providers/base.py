@@ -1,6 +1,7 @@
 """Base LLM provider interface."""
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -64,7 +65,42 @@ class LLMProvider(ABC):
         """
         pass
     
+    async def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+    ) -> AsyncIterator["StreamChunk"]:
+        """Stream a chat completion, yielding chunks as they arrive.
+
+        Default implementation falls back to non-streaming chat().
+        Subclasses should override for true token-by-token streaming.
+        """
+        response = await self.chat(
+            messages=messages, tools=tools, model=model,
+            max_tokens=max_tokens, temperature=temperature,
+        )
+        if response.content:
+            yield StreamChunk(delta=response.content, finish_reason=response.finish_reason)
+        yield StreamChunk(
+            delta="", finish_reason=response.finish_reason or "stop",
+            usage=response.usage, tool_calls=response.tool_calls,
+            reasoning_content=response.reasoning_content,
+        )
+
     @abstractmethod
     def get_default_model(self) -> str:
         """Get the default model for this provider."""
         pass
+
+
+@dataclass
+class StreamChunk:
+    """A single chunk from a streaming LLM response."""
+    delta: str = ""                                     # Incremental text token
+    finish_reason: str | None = None                    # None while streaming, set on last chunk
+    usage: dict[str, int] = field(default_factory=dict) # Only populated on final chunk
+    tool_calls: list[ToolCallRequest] = field(default_factory=list)  # Accumulated tool calls (final chunk)
+    reasoning_content: str | None = None                # Reasoning content (final chunk)

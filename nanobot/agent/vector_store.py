@@ -7,8 +7,10 @@ retrieval.
 
 Design:
 - ChromaDB persistent storage at workspace/memory/vectordb/
-- Embedding: .\models\sentence-transformers\paraphrase-multilingual-minilm-l12-v2 (loaded lazily on first use)
+- Embedding: BAAI/bge-m3 (1024-dim, 100+ languages, loaded lazily on first use)
+- Configurable via agents.defaults.embeddingModel (falls back to local bge-m3)
 - Deduplication via content-hash-based document IDs
+- Automatic collection migration when embedding dimension changes
 - All public methods are fault-tolerant (return empty on error, never raise)
 """
 
@@ -30,14 +32,26 @@ from loguru import logger
 from chromadb.api.types import EmbeddingFunction, Documents, Embeddings
 
 class _SentenceTransformerEmbedding(EmbeddingFunction):
-    """Lazy-loaded sentence-transformers embedding for ChromaDB."""
+    """Lazy-loaded sentence-transformers embedding for ChromaDB.
 
-    # Default model path (used when no config override is provided)
-    _DEFAULT_MODEL = r"..\nanochat\models\sentence-transformers\paraphrase-multilingual-minilm-l12-v2"
+    Phase 21E: Upgraded default to BAAI/bge-m3 (1024-dim, 100+ languages).
+    Model must be pre-downloaded to local path (local_files_only=True).
+    """
+
+    # Default model path — local copy of BAAI/bge-m3
+    _DEFAULT_MODEL = r"..\nanochat\models\sentence-transformers\bge-m3"
     _SHARED_MODEL = None
+    _MODEL_DIMENSION: int | None = None  # Set after model load
 
     def __init__(self, model_path: str | None = None) -> None:
         self._model_path = model_path or self._DEFAULT_MODEL
+
+    @property
+    def dimension(self) -> int | None:
+        """Return the embedding dimension (available after first load)."""
+        if self.__class__._MODEL_DIMENSION is None:
+            self._load()
+        return self.__class__._MODEL_DIMENSION
 
     def _load(self) -> None:
         if self.__class__._SHARED_MODEL is not None:
@@ -54,7 +68,7 @@ class _SentenceTransformerEmbedding(EmbeddingFunction):
             # This avoids the "Pooling missing word_embedding_dimension" error occurring when 
             # the user only downloads the root model folder (pytorch_model.bin) and forgets 
             # the 1_Pooling subdirectory and its config.
-            word_embedding_model = models.Transformer(self._model_path, local_files_only=True)
+            word_embedding_model = models.Transformer(self._model_path)
             pooling_model = models.Pooling(
                 word_embedding_model.get_word_embedding_dimension(),
                 pooling_mode_mean_tokens=True,
@@ -66,6 +80,14 @@ class _SentenceTransformerEmbedding(EmbeddingFunction):
         except Exception as e:
             logger.warning(f"Failed to load using assembled components, falling back to standard SentenceTransformer: {e}")
             self.__class__._SHARED_MODEL = SentenceTransformer(self._model_path, local_files_only=True)
+
+        # Cache embedding dimension for collection migration checks
+        try:
+            dim = self.__class__._SHARED_MODEL.get_sentence_embedding_dimension()
+            self.__class__._MODEL_DIMENSION = dim
+            logger.info(f"Embedding dimension: {dim}")
+        except Exception:
+            pass
 
     def __call__(self, input: Documents) -> Embeddings:
         """ChromaDB EmbeddingFunction protocol."""
@@ -92,12 +114,13 @@ class VectorMemory:
 
     COLLECTION_NAME = "nanobot_memory"
 
-    def __init__(self, workspace: Path | str, provider=None, model=None) -> None:
+    def __init__(self, workspace: Path | str, provider=None, model=None,
+                 embedding_model: str | None = None) -> None:
         self.workspace = Path(workspace)
         self.memory_dir = self.workspace / "memory"
         self._db_path = self.memory_dir / "vectordb"
         self._collection = None
-        self._embedding_fn = _SentenceTransformerEmbedding()
+        self._embedding_fn = _SentenceTransformerEmbedding(model_path=embedding_model)
         self._init_done = False
         
         # Provider and model for query rewriting
@@ -107,7 +130,11 @@ class VectorMemory:
     # -- Lazy initialisation ------------------------------------------------
 
     def _ensure_init(self) -> bool:
-        """Lazily initialise ChromaDB. Returns True on success."""
+        """Lazily initialise ChromaDB. Returns True on success.
+
+        Phase 21E: Detects embedding dimension mismatch when switching models
+        and automatically recreates the collection.
+        """
         if self._init_done:
             return self._collection is not None
         self._init_done = True
@@ -120,11 +147,58 @@ class VectorMemory:
                 path=str(self._db_path),
                 settings=Settings(anonymized_telemetry=False)
             )
+
+            # Phase 21E: Dimension migration — detect model switch
             self._collection = client.get_or_create_collection(
                 name=self.COLLECTION_NAME,
                 embedding_function=self._embedding_fn,
                 metadata={"hnsw:space": "cosine"},
             )
+
+            model_dim = self._embedding_fn.dimension
+            if model_dim and self._collection.count() > 0:
+                try:
+                    # Probe existing collection dimension with a test query
+                    # Use get() instead of peek() — peek() doesn't support 'include' in all versions
+                    probe = self._collection.get(limit=1, include=["embeddings"])
+                    # CRITICAL: ChromaDB may return numpy ndarray for embeddings.
+                    # Do NOT use truthiness check (bool(ndarray) raises ValueError).
+                    # Use explicit `is not None` + `len()` which works for both
+                    # numpy arrays and Python lists.
+                    embeddings = probe.get("embeddings") if probe else None
+                    if embeddings is not None and len(embeddings) > 0:
+                        stored_dim = len(embeddings[0])
+                        if stored_dim != model_dim:
+                            logger.warning(
+                                f"Embedding dimension mismatch: collection has {stored_dim}-dim "
+                                f"vectors but current model produces {model_dim}-dim. "
+                                f"Recreating collection (old data will be re-indexed on next ingest)."
+                            )
+                            client.delete_collection(self.COLLECTION_NAME)
+                            self._collection = client.get_or_create_collection(
+                                name=self.COLLECTION_NAME,
+                                embedding_function=self._embedding_fn,
+                                metadata={"hnsw:space": "cosine"},
+                            )
+                except Exception as dim_err:
+                    # If the error itself is about dimension mismatch, force recreation
+                    if "dimension" in str(dim_err).lower():
+                        logger.warning(
+                            f"Dimension probe failed with mismatch error: {dim_err}. "
+                            f"Forcing collection recreation."
+                        )
+                        try:
+                            client.delete_collection(self.COLLECTION_NAME)
+                            self._collection = client.get_or_create_collection(
+                                name=self.COLLECTION_NAME,
+                                embedding_function=self._embedding_fn,
+                                metadata={"hnsw:space": "cosine"},
+                            )
+                        except Exception as recreate_err:
+                            logger.error(f"Failed to recreate collection: {recreate_err}")
+                    else:
+                        logger.warning(f"Dimension check failed: {dim_err}")
+
             logger.info(
                 f"VectorMemory ready: collection='{self.COLLECTION_NAME}', "
                 f"docs={self._collection.count()}"

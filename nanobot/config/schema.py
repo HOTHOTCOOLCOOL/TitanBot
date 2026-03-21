@@ -3,7 +3,6 @@
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic.alias_generators import to_camel
-from pydantic_settings import BaseSettings
 
 
 class Base(BaseModel):
@@ -189,7 +188,7 @@ class AgentDefaults(Base):
     memory_window: int = 50
     session_expiry_hours: int = 24  # Sessions older than this many hours will be expired
     language: str = "en"  # User-facing language: "en" or "zh"
-    embedding_model: str = ""  # Local path to sentence-transformers model. Empty = auto-detect.
+    embedding_model: str = ""  # Local path to sentence-transformers model. Empty = default (BAAI/bge-m3).
 
 
 class VLMConfig(Base):
@@ -219,6 +218,23 @@ class MemoryFeaturesConfig(Base):
     experience_enabled: bool = True       # Experience Bank tactical hints (Phase 12)
 
 
+class StreamingConfig(Base):
+    """Streaming response delivery configuration (Phase 21E)."""
+
+    enabled: bool = True  # Forward LLM tokens in real-time via WebSocket
+
+
+class VLMFeedbackConfig(Base):
+    """Vision-Language feedback loop for self-correcting RPA (Phase 21E)."""
+
+    enabled: bool = False                # Off by default — requires VLM config
+    max_retries: int = 3                 # Max verification+retry attempts per action
+    verification_delay: float = 1.0      # Seconds to wait before verification capture
+    auto_verify_actions: list[str] = Field(
+        default_factory=lambda: ["click", "double_click", "type"]
+    )
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
@@ -226,6 +242,8 @@ class AgentsConfig(Base):
     vlm: VLMConfig = Field(default_factory=VLMConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
     memory_features: MemoryFeaturesConfig = Field(default_factory=MemoryFeaturesConfig)
+    streaming: StreamingConfig = Field(default_factory=StreamingConfig)
+    vlm_feedback: VLMFeedbackConfig = Field(default_factory=VLMFeedbackConfig)
 
 
 class ProviderConfig(Base):
@@ -302,7 +320,7 @@ class ToolsConfig(Base):
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
-class Config(BaseSettings):
+class Config(Base):
     """Root configuration for nanobot."""
 
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
@@ -387,9 +405,5 @@ class Config(BaseSettings):
         return None
 
     model_config = ConfigDict(
-        env_prefix="NANOBOT_",
-        env_nested_delimiter="__",
-        env_file=".env",
-        env_file_encoding="utf-8",
         extra="ignore",
     )

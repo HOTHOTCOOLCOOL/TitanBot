@@ -97,6 +97,24 @@ by other agents or yourself in the future."""
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Tags for categorizing the skill (e.g., ['email', 'analysis', 'automation'])"
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Skill category: library_api, code_quality, frontend_design, business_workflow, product_verification, content_generation, data_fetching, service_debugging, or infra_ops",
+                    "enum": ["library_api", "code_quality", "frontend_design", "business_workflow", "product_verification", "content_generation", "data_fetching", "service_debugging", "infra_ops"]
+                },
+                "version": {
+                    "type": "string",
+                    "description": "Skill version in semver format (default: '1.0.0')"
+                },
+                "config": {
+                    "type": "object",
+                    "description": "Default configuration for the skill. Saved as config.defaults.json. Users can override via config.json."
+                },
+                "pip_dependencies": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Required pip packages (e.g., ['openpyxl', 'fpdf2'])"
                 }
             },
             "required": ["name", "description", "summary", "steps"]
@@ -110,6 +128,10 @@ by other agents or yourself in the future."""
         steps = kwargs.get("steps", [])
         requirements = kwargs.get("requirements", {})
         tags = kwargs.get("tags", [])
+        category = kwargs.get("category", "")
+        version = kwargs.get("version", "1.0.0")
+        config = kwargs.get("config")
+        pip_dependencies = kwargs.get("pip_dependencies", [])
         
         # Create skill directory
         skill_dir = self.skills_dir / name
@@ -122,13 +144,21 @@ by other agents or yourself in the future."""
         frontmatter_lines = ["---"]
         frontmatter_lines.append(f'name: "{name}"')
         frontmatter_lines.append(f'description: "{description}"')
+        if category:
+            frontmatter_lines.append(f'category: {category}')
         frontmatter_lines.append(f'created: "{self._current_timestamp()}"')
         
+        # Version field in frontmatter (SK7)
+        frontmatter_lines.append(f'version: {version}')
+        
         # Add nanobot metadata
+        nanobot_requires = {**requirements}
+        if pip_dependencies:
+            nanobot_requires["pip"] = pip_dependencies
         nanobot_meta = {
-            "requires": requirements,
+            "requires": nanobot_requires,
             "tags": tags,
-            "version": "1.0",
+            "version": version,
             "type": "workflow"
         }
         frontmatter_lines.append(f'metadata: {json.dumps({"nanobot": nanobot_meta}, ensure_ascii=False)}')
@@ -191,6 +221,14 @@ by other agents or yourself in the future."""
         # Write file
         skill_content = "\n".join(frontmatter_lines + content_lines)
         skill_file.write_text(skill_content, encoding="utf-8")
+        
+        # SK4: Write config.defaults.json if config provided
+        if config and isinstance(config, dict):
+            defaults_file = skill_dir / "config.defaults.json"
+            defaults_file.write_text(
+                json.dumps(config, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
         
         # Also create a simple summary file for quick reference
         summary_file = skill_dir / "SUMMARY.md"

@@ -243,10 +243,16 @@ Return ONLY a valid JSON object with a single key "memory_update" containing the
                     _safe_create_task(distiller.distill_preferences(), name="deep_distill_preferences")
                     
                     # P1: Extract Knowledge Graph Entity-Relation Triples
+                    # KG3: Also regenerate entity summaries after extraction
                     try:
                         from nanobot.agent.knowledge_graph import KnowledgeGraph
                         kg = KnowledgeGraph(self.workspace)
-                        _safe_create_task(kg.extract_triples(self.provider, self.model, str(new_memory)), name="kg_extraction")
+
+                        async def _kg_extract_and_summarize() -> None:
+                            await kg.extract_triples(self.provider, self.model, str(new_memory))
+                            await kg.generate_entity_summaries(self.provider, self.model)
+
+                        _safe_create_task(_kg_extract_and_summarize(), name="kg_extraction")
                     except Exception as e:
                         logger.error(f"Failed to start Knowledge Graph extraction: {e}")
         except Exception as e:

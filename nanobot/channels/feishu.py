@@ -6,6 +6,7 @@ import re
 import threading
 from collections import OrderedDict
 from typing import Any
+from pathlib import Path
 
 from loguru import logger
 
@@ -24,6 +25,7 @@ try:
         Emoji,
         P2ImMessageReceiveV1,
         P2ImMessageMessageReadV1,
+        GetMessageResourceRequest,
     )
     FEISHU_AVAILABLE = True
 except ImportError:
@@ -371,6 +373,8 @@ class FeishuChannel(BaseChannel):
             await self._add_reaction(message_id, "THUMBSUP")
             
             # Parse message content
+            media_paths: list[str] = []
+
             if msg_type == "text":
                 try:
                     content = json.loads(message.content).get("text", "")
@@ -382,6 +386,23 @@ class FeishuChannel(BaseChannel):
                     content = _extract_post_text(content_json)
                 except (json.JSONDecodeError, TypeError):
                     content = message.content or ""
+            elif msg_type == "image":
+                # Download image via Feishu API
+                image_key = ""
+                try:
+                    content_json = json.loads(message.content)
+                    image_key = content_json.get("image_key", "")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                if image_key:
+                    path = await self._download_image(message_id, image_key)
+                    if path:
+                        media_paths.append(str(path))
+                        content = "[User sent an image, please analyze its content]"
+                    else:
+                        content = "[image: download failed]"
+                else:
+                    content = "[image: no image_key found]"
             else:
                 content = MSG_TYPE_MAP.get(msg_type, f"[{msg_type}]")
             
@@ -394,6 +415,7 @@ class FeishuChannel(BaseChannel):
                 sender_id=sender_id,
                 chat_id=reply_to,
                 content=content,
+                media=media_paths,
                 metadata={
                     "message_id": message_id,
                     "chat_type": chat_type,
@@ -403,3 +425,47 @@ class FeishuChannel(BaseChannel):
             
         except Exception as e:
             logger.error(f"Error processing Feishu message: {e}")
+
+    def _download_image_sync(self, message_id: str, image_key: str) -> "Path | None":
+        """Sync helper to download image via Feishu API (runs in thread pool).
+
+        Uses ``client.im.v1.message_resource.get()`` to fetch the image binary.
+        """
+        if not self._client:
+            return None
+        try:
+            request = GetMessageResourceRequest.builder() \
+                .message_id(message_id) \
+                .file_key(image_key) \
+                .type("image") \
+                .build()
+
+            response = self._client.im.v1.message_resource.get(request)
+
+            if not response.success():
+                logger.error(
+                    f"Feishu image download failed: code={response.code}, "
+                    f"msg={response.msg}"
+                )
+                return None
+
+            # response.file is a file-like object with the image bytes
+            image_data = response.file.read() if response.file else None
+            if not image_data:
+                logger.warning(f"Feishu image download returned empty data for {image_key}")
+                return None
+
+            from nanobot.channels.image_downloader import save_image_bytes
+            return save_image_bytes(image_data, f"feishu_{image_key[:20]}.jpg")
+
+        except Exception as e:
+            logger.error(f"Feishu image download error: {e}")
+            return None
+
+    async def _download_image(self, message_id: str, image_key: str) -> "Path | None":
+        """Download image from Feishu (non-blocking, runs sync API in executor)."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._download_image_sync, message_id, image_key
+        )
+

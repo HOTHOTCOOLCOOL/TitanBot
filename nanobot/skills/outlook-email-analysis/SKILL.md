@@ -1,6 +1,14 @@
 ---
 name: outlook-email-analysis
-description: 自动分析Outlook邮件附件并发送分析报告
+description: >
+  Analyze Outlook email attachments and send analysis reports. Use when user asks to:
+  analyze emails/attachments, extract and parse email attachments (PDF/Excel/Word/CSV),
+  search inbox folders for reports, generate analysis summaries from email data,
+  or forward analysis results via email.
+  Triggers: "分析邮件", "邮件附件分析", "分析 outlook 附件", "提取附件",
+  "今天的销售report", "昨天的业绩数据", "analyze inbox", "email report analysis".
+  Requires Outlook desktop app running.
+category: business_workflow
 homepage: https://github.com/HKUDS/nanobot
 metadata:
   nanobot:
@@ -16,17 +24,6 @@ metadata:
 # outlook-email-analysis
 
 **自动分析Outlook邮件附件并发送分析报告**
-
-## When to use (trigger phrases)
-
-使用这个技能，当用户要求：
-- "帮我分析邮件"
-- "分析 outlook 附件"
-- "分析 inbox/xxx 文件夹的邮件"
-- "提取邮件附件"
-- "邮件附件分析"
-- "今天的销售report" / "昨天的业绩数据"
-- 任何关于分析 Outlook 邮件附件的请求
 
 ## Summary
 

@@ -343,6 +343,10 @@ def gateway(
     
     console.print(f"{__logo__} Starting nanobot gateway on port {port}...")
     
+    # Suppress noisy library warnings (urllib3/chardet version mismatch)
+    import warnings
+    warnings.filterwarnings("ignore", message="urllib3.*doesn't match a supported version")
+    
     config = load_config()
     bus = MessageBus()
     provider = _make_provider(config)
@@ -1077,10 +1081,12 @@ def dashboard(
         
     try:
         import uvicorn
-        from nanobot.dashboard.app import app as dashboard_app, init_dashboard, broadcast_ws_message
+        from nanobot.dashboard.app import app as dashboard_app, init_dashboard, broadcast_ws_message, init_event_subscription
         
         # Setup global dashboard dependencies
         init_dashboard(bus, config.workspace_path)
+        # Phase 22D: Wire domain event broadcasting to Dashboard WebSocket
+        init_event_subscription(bus)
         
         # Hook up bus outbound messages to WS broadcast
         async def _ws_outbound_logger(msg):

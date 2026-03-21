@@ -257,7 +257,21 @@ New tests: `test_phase22b_skills.py` (36 tests). **Regression baseline: 847 pass
 
 New tests: `test_phase22d_architecture.py` (35 tests, 1 skipped). **Regression baseline: 847 passed.**
 
-### Deferred (Phase 23+)
+### Phase 24 — Knowledge Graph Evolution (MDER-DR) ✅
+
+> Inspired by MDER-DR paper (arXiv 2603.11223): "Move multi-hop reasoning complexity from query-time to index-time."
+
+| ID | Item | File(s) | Description |
+|----|------|---------|-------------|
+| KG1 | Triple Description Enrichment | `knowledge_graph.py` | `description` field on every triple preserving time/conditions/scope context. Prompt updated to request descriptions. |
+| KG2 | Entity Disambiguation | `knowledge_graph.py` | Substring + length-ratio heuristic. Auto-merges "David" → "David Liu". `aliases` map in `graph.json`. Manual `add_alias()`. |
+| KG3 | Entity-Centric Summaries | `knowledge_graph.py`, `context.py`, `memory_manager.py` | Per-entity LLM summaries in `entities` index. `get_entity_context()` replaces `get_1hop_context()` as primary injection. |
+| KG4 | Query Decomposition (DR) | `knowledge_graph.py` | `_is_complex_query()` heuristic, `decompose_query()`, `resolve_multihop()` for multi-hop Q&A. |
+| KG5 | Semantic Chunking | `knowledge_graph.py` | `_semantic_chunk()` splits long texts at paragraph/sentence boundaries before extraction. |
+
+New tests: `test_phase24_knowledge_graph.py` (31 tests). **Regression: 979 passed** (2 pre-existing env-dependent failures).
+
+### Deferred (Phase 25+)
 
 #### Playwright Browser Automation *(⚠️ Heavy — separate discussion)*
 - **Headless browser agent** — Playwright (Chromium) as plugin for JS-rendered pages, form filling, session login
@@ -271,3 +285,43 @@ New tests: `test_phase22d_architecture.py` (35 tests, 1 skipped). **Regression b
 > **Note:** Tool extensions (SqlQueryTool, CreateExcelTool, etc.) remain deprioritized — `ExecTool` + Knowledge Workflow covers these via Python libraries with automatic skill learning.
 
 > **Note:** **Data Pipeline & Complex Contract Parsing** is an independent project with separate planning.
+
+## 9. Phase 23: Security Audit Remediation ✅
+
+> Full-spectrum security/architecture audit identified **16 risk items** across 3 priority levels. All remediated in 3 sub-phases.
+
+### Phase 23A — P0 Security Hardening ✅
+
+| ID | Risk | File(s) | Fix Summary |
+|----|------|---------|-------------|
+| R1 | Dashboard POST no input validation | `dashboard/app.py` | 1 MB body size limit on POST endpoints (HTTP 413) |
+| R2 | hooks.py arbitrary code execution | `skills.py` | Workspace-only path, 50 KB size limit, static scan blocking dangerous imports |
+| R4 | SSRF DNS rebinding bypass | `web.py` | `_SSRFSafeTransport` validates IPs at connect time, closing TOCTOU |
+| R5 | Token logged in plaintext | `dashboard/app.py` | Masked to first 8 chars + `***` |
+
+New tests: 14 passed. **Regression: 924+ passed.**
+
+### Phase 23B — P1 Data Integrity & Architecture ✅
+
+| ID | Risk | File(s) | Fix Summary |
+|----|------|---------|-------------|
+| R3 | Session non-atomic write | `session/manager.py` | Temp file + `os.replace()` for both append and full-rewrite modes |
+| R7 | Cron non-atomic write + truncated UUID | `cron/service.py` | Atomic write + full 36-char UUID |
+| R8 | Config singleton bypass | `context.py` | All call sites use `get_config()` singleton |
+| R9/R15 | WebSocket dead connection accumulation | `dashboard/app.py` | Failed WS removed on send error |
+| R10 | Key extraction cache FIFO not LRU | `knowledge_workflow.py` | `OrderedDict`-based true LRU (cap=128) |
+| R13 | Session key restore breaks on underscores | `session/manager.py` | `original_key` persisted in JSONL metadata |
+
+New tests: 15 passed. **Regression: 948 passed.**
+
+### Phase 23C — P2 Architecture Polish & Edge Hardening ✅
+
+| ID | Risk | File(s) | Fix Summary |
+|----|------|---------|-------------|
+| R11 | Image no size limit | `context.py` | 20 MB cap; oversized files skipped with warning |
+| R6 | Write file no size limit | `filesystem.py` | 10 MB cap; rejects before disk write |
+| R14 | VLM env `setdefault` ignores override | `litellm_provider.py` | Direct assignment for VLM dynamic route |
+| R16 | MD5+12 visual hash collision risk | `context.py` | SHA256+16 chars |
+| R12 | Outlook state shared across sessions | `outlook.py` | Documented per-instance scope; future isolation path noted |
+
+New tests: 7 passed. **Regression: 948 passed** (2 pre-existing failures unrelated).

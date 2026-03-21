@@ -1,11 +1,14 @@
-"""Async message queue for decoupled channel-agent communication."""
+"""Async message queue for decoupled channel-agent communication.
+
+Phase 22D: Added topic-based domain event pub/sub for internal observability.
+"""
 
 import asyncio
-from typing import Callable, Awaitable
+from typing import Callable, Awaitable, Any
 
 from loguru import logger
 
-from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.bus.events import InboundMessage, OutboundMessage, StreamEvent, DomainEvent
 
 
 class MessageBus:
@@ -14,6 +17,9 @@ class MessageBus:
     
     Channels push messages to the inbound queue, and the agent processes
     them and pushes responses to the outbound queue.
+    
+    Phase 22D: Also supports typed domain events via publish_event/subscribe_event
+    for internal system observability (tool execution, knowledge matching, etc.).
     """
     
     def __init__(self):
@@ -22,6 +28,10 @@ class MessageBus:
         self._outbound_subscribers: dict[str, list[Callable[[OutboundMessage], Awaitable[None]]]] = {}
         self._global_subscribers: list[Callable[[OutboundMessage], Awaitable[None]]] = []
         self._inbound_subscribers: list[Callable[[InboundMessage], Awaitable[None]]] = []
+        self._stream_subscribers: list[Callable[[StreamEvent], Awaitable[None]]] = []
+        # Phase 22D: Domain event subscribers
+        self._event_subscribers: dict[str, list[Callable[[DomainEvent], Awaitable[None]]]] = {}
+        self._global_event_subscribers: list[Callable[[DomainEvent], Awaitable[None]]] = []
         self._running = False
     
     async def publish_inbound(self, msg: InboundMessage) -> None:
@@ -106,3 +116,62 @@ class MessageBus:
     def outbound_size(self) -> int:
         """Number of pending outbound messages."""
         return self.outbound.qsize()
+
+    def subscribe_stream(
+        self,
+        callback: Callable[[StreamEvent], Awaitable[None]],
+    ) -> None:
+        """Subscribe to real-time streaming token events (Phase 21E)."""
+        self._stream_subscribers.append(callback)
+
+    async def publish_stream(self, event: StreamEvent) -> None:
+        """Publish a streaming token event to all stream subscribers."""
+        for callback in self._stream_subscribers:
+            try:
+                await callback(event)
+            except Exception as e:
+                logger.error(f"Error in stream subscriber: {e}")
+
+    # ── Phase 22D: Domain Event Pub/Sub ─────────────────────────────
+
+    def subscribe_event(
+        self,
+        event_type: str,
+        callback: Callable[[DomainEvent], Awaitable[None]],
+    ) -> None:
+        """Subscribe to domain events by topic.
+
+        Args:
+            event_type: The event type to subscribe to, e.g. ``"tool_executed"``.
+                Use ``"*"`` to receive **all** domain events (wildcard).
+            callback: Async function called with the DomainEvent instance.
+        """
+        if event_type == "*":
+            self._global_event_subscribers.append(callback)
+        else:
+            if event_type not in self._event_subscribers:
+                self._event_subscribers[event_type] = []
+            self._event_subscribers[event_type].append(callback)
+
+    async def publish_event(self, event: DomainEvent) -> None:
+        """Publish a domain event to all matching subscribers.
+
+        Dispatches to:
+        1. Topic-specific subscribers (matching ``event.event_type``)
+        2. Wildcard ``"*"`` subscribers (receive everything)
+
+        Errors in individual subscribers are logged but never propagate.
+        """
+        # Topic-specific subscribers
+        for callback in self._event_subscribers.get(event.event_type, []):
+            try:
+                await callback(event)
+            except Exception as e:
+                logger.error(f"Error in event subscriber ({event.event_type}): {e}")
+
+        # Wildcard subscribers
+        for callback in self._global_event_subscribers:
+            try:
+                await callback(event)
+            except Exception as e:
+                logger.error(f"Error in global event subscriber: {e}")

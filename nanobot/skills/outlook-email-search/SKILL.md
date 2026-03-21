@@ -1,6 +1,14 @@
 ---
 name: outlook-email-search
-description: 搜索和阅读Outlook邮件（查找特定邮件、查看邮件内容、查看回复）
+description: >
+  Search, find, and read Outlook emails. Use when user asks to:
+  find emails from/to specific people, read email content, check replies,
+  search inbox/sent folders, or look up emails by date/subject/sender.
+  Triggers: "帮我找XX的邮件", "XX发给我的邮件", "XX给我发了什么",
+  "我怎么回复的", "查看邮件内容", "找一下发给XX的邮件",
+  "find email from", "search inbox". Always loaded for email queries.
+  Requires Outlook desktop app running.
+category: business_workflow
 homepage: https://github.com/HKUDS/nanobot
 metadata:
   nanobot:
@@ -16,17 +24,6 @@ metadata:
 # outlook-email-search
 
 **搜索和阅读Outlook邮件**
-
-## When to use (trigger phrases)
-
-使用这个技能，当用户要求：
-- "帮我找XX的邮件"
-- "最近一次XX发给我的邮件"
-- "XX给我发了什么"
-- "我怎么回复的"
-- "查看邮件内容"
-- "找一下发给XX的邮件"
-- 任何关于搜索、查找、阅读邮件内容的请求
 
 ## Workflow Steps
 

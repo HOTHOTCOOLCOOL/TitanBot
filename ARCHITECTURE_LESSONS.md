@@ -306,3 +306,5 @@ Inspired by @trq212's article, we're incorporating several improvements:
 - *@trq212: "Lessons from Building Claude Code: Seeing like an Agent"*
 - *Ting Bai et al.: "Survey on AI Memory: Theories, Taxonomies, Evaluations, and Emerging Trends" (2026)*
 - *AutoSkill (ECNU, 2603.01145v2), XSKILL (HKUST, 2603.12056v1)*
+- *MDER-DR (Polimi, 2603.11223v1): "Multi-Hop Question Answering with Entity-Centric Summaries"*
+

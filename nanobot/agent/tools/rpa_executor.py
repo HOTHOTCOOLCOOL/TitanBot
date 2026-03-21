@@ -86,6 +86,18 @@ class RPAExecutorTool(Tool):
                 "type": "number",
                 "description": "Seconds to wait after the action completes before returning. Default 1.0.",
                 "default": 1.0
+            },
+            "verify": {
+                "type": "boolean",
+                "description": "If true, capture a screenshot after the action and ask the VLM to verify "
+                               "whether the action succeeded. If it failed, the system retries automatically. "
+                               "Use this for critical UI actions where correctness is important.",
+                "default": False
+            },
+            "expected_outcome": {
+                "type": "string",
+                "description": "Optional description of what the screen should look like after the action. "
+                               "Used by the VLM verifier to assess success. E.g. 'The dialog should close'."
             }
         },
         "required": ["action"],
@@ -94,6 +106,41 @@ class RPAExecutorTool(Tool):
 
     def __init__(self):
         super().__init__()
+
+    def _get_vlm_feedback_loop(self):
+        """Lazy-create a VLMFeedbackLoop if VLM feedback is enabled.
+
+        Returns (feedback_loop, config) or (None, None).
+        """
+        try:
+            from nanobot.config.loader import get_config
+            config = get_config()
+            fb_cfg = config.agents.vlm_feedback
+            if not fb_cfg.enabled:
+                return None, None
+            if not (config.agents.vlm.enabled and config.agents.vlm.model):
+                return None, None
+
+            vlm_model = config.agents.vlm.model
+            p_conf = config.get_provider(vlm_model)
+            if not p_conf:
+                return None, None
+
+            from nanobot.providers.litellm_provider import LiteLLMProvider
+            provider_name = config.get_provider_name(vlm_model)
+            provider = LiteLLMProvider(
+                api_key=p_conf.api_key,
+                api_base=config.get_api_base(vlm_model),
+                default_model=vlm_model,
+                extra_headers=p_conf.extra_headers,
+                provider_name=provider_name,
+            )
+
+            from nanobot.agent.vision.vlm_feedback import VLMFeedbackLoop
+            return VLMFeedbackLoop(provider=provider, vlm_model=vlm_model), fb_cfg
+        except Exception as e:
+            print(f"[RPA] VLM feedback init failed: {e}")
+            return None, None
 
     def _load_anchors(self):
         """Load anchors.json from the workspace tmp directory."""
@@ -188,6 +235,12 @@ class RPAExecutorTool(Tool):
         ui_index = kwargs.get("ui_index")
         ui_name = kwargs.get("ui_name")
         wait_after = float(kwargs.get("wait_after", 1.0))
+        verify = kwargs.get("verify", False)
+        expected_outcome = kwargs.get("expected_outcome", "")
+
+        # Resolve verify flag from string if needed
+        if isinstance(verify, str):
+            verify = verify.lower() == "true"
 
         try:
             if action in ["click", "double_click", "right_click"]:
@@ -318,10 +371,89 @@ class RPAExecutorTool(Tool):
             if wait_after > 0:
                 time.sleep(wait_after)
                 result += f" Waited {wait_after} seconds."
-                
+
+            # ── VLM Feedback Loop: post-action verification ──
+            if verify and action in ("click", "double_click", "right_click", "type"):
+                result = await self._run_vlm_verification(
+                    result, action, ui_name or ui_index or f"({x},{y})",
+                    expected_outcome,
+                )
+
             return result
 
         except pyautogui.FailSafeException:
             return "Error: PyAutoGUI FailSafe triggered (mouse moved to corner). Action aborted for safety."
         except Exception as e:
             return f"Error executing RPA action '{action}': {str(e)}"
+
+    async def _run_vlm_verification(
+        self,
+        action_result: str,
+        action: str,
+        target: str,
+        expected_outcome: str,
+    ) -> str:
+        """Run VLM-based post-action verification if configured.
+
+        Returns the original result with verification summary appended.
+        """
+        feedback_loop, fb_cfg = self._get_vlm_feedback_loop()
+        if not feedback_loop or not fb_cfg:
+            return action_result + "\n⚠️ VLM verification requested but not configured."
+
+        import asyncio
+        from pathlib import Path
+        from nanobot.config.loader import get_config
+
+        config = get_config()
+        workspace = config.workspace_path
+
+        # Find the most recent screenshot as "before" image
+        tmp_dir = workspace / "tmp"
+        captures = sorted(tmp_dir.glob("capture_*.jpg"), key=lambda p: p.stat().st_mtime)
+        if not captures:
+            return action_result + "\n⚠️ VLM verification skipped: no prior screenshot found."
+        before_screenshot = captures[-1]
+
+        action_desc = f"{action} on '{target}'"
+        max_retries = fb_cfg.max_retries
+
+        for attempt in range(1, max_retries + 1):
+            # Wait for UI to settle
+            await asyncio.sleep(fb_cfg.verification_delay)
+
+            try:
+                vr, after_path = await feedback_loop.capture_and_verify(
+                    action_description=action_desc,
+                    before_screenshot=before_screenshot,
+                    workspace=workspace,
+                    expected_outcome=expected_outcome,
+                )
+            except Exception as e:
+                return action_result + f"\n⚠️ VLM verification error: {e}"
+
+            if vr.success:
+                return (
+                    action_result
+                    + f"\n✅ VLM Verified (attempt {attempt}): {vr.explanation}"
+                )
+
+            # Verification failed
+            correction = vr.suggested_correction or "no suggestion"
+            print(
+                f"[RPA] VLM verification failed (attempt {attempt}/{max_retries}): "
+                f"{vr.explanation} | suggestion: {correction}"
+            )
+
+            if attempt >= max_retries:
+                return (
+                    action_result
+                    + f"\n❌ VLM Verification failed after {max_retries} attempts: "
+                    + f"{vr.explanation}"
+                    + (f"\n💡 Suggestion: {correction}" if vr.suggested_correction else "")
+                )
+
+            # Update "before" to current "after" for next attempt
+            before_screenshot = after_path
+
+        return action_result  # Fallback (should not reach here)

@@ -53,8 +53,9 @@ class ExecTool(Tool):
             r"\bcd\.\.",                     # cd.. (no space, Windows CMD)
             r"%2e",                          # URL-encoded dot (percent-encoded traversal)
             # --- Phase 21A (S2): interpreter bypass ---
-            r"\bpython3?\s+-c\b",            # python -c / python3 -c
-            r"\bnode\s+-e\b",               # node -e (eval JS)
+            # NOTE: python -c, node -e are ALLOWED — they are used legitimately
+            # by the LLM for PPT generation, data processing, etc.
+            # Only block truly dangerous interpreter patterns:
             r"\bruby\s+-e\b",               # ruby -e (eval Ruby)
             r"\bperl\s+-e\b",               # perl -e (eval Perl)
         ]

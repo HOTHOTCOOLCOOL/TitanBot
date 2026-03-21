@@ -88,8 +88,8 @@ class BaseChannel(ABC):
         # Emit a one-time warning so operators notice the open-access state.
         if not allow_list:
             if not self._warned_open_access:
-                logger.warning(
-                    f"Channel '{self.name}': allowFrom is empty — ALL senders are allowed. "
+                logger.info(
+                    f"Channel '{self.name}': allowFrom is empty — all senders are allowed. "
                     "Set allowFrom in config to restrict access."
                 )
                 self._warned_open_access = True

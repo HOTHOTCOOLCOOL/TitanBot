@@ -18,6 +18,9 @@ from nanobot.agent.task_knowledge import tokenize_key
 class ReflectionStore:
     """Store and manage negative feedback reflections."""
 
+    # E2: Maximum number of reflections before auto-pruning
+    MAX_REFLECTIONS = 100
+
     def __init__(self, workspace: Path):
         self.workspace = workspace
         self.reflections_file = workspace / "memory" / "reflections.json"
@@ -69,8 +72,37 @@ class ReflectionStore:
             "timestamp": datetime.now().isoformat()
         }
         self._reflections.append(reflection)
+        # E2: Auto-prune if over capacity
+        if len(self._reflections) > self.MAX_REFLECTIONS:
+            self._prune()
         self._save()
         logger.info(f"Added new reflection: {trigger}")
+
+    @property
+    def count(self) -> int:
+        """Return the number of stored reflections."""
+        return len(self._reflections)
+
+    def _prune(self) -> int:
+        """E2: Remove oldest reflections to stay within MAX_REFLECTIONS.
+
+        Returns:
+            Number of reflections removed.
+        """
+        if len(self._reflections) <= self.MAX_REFLECTIONS:
+            return 0
+        before = len(self._reflections)
+        self._reflections = self._reflections[-self.MAX_REFLECTIONS:]
+        removed = before - len(self._reflections)
+        logger.info(f"ReflectionStore: pruned {removed} oldest reflections (cap={self.MAX_REFLECTIONS})")
+        return removed
+
+    def prune(self) -> int:
+        """Public prune API — trims and saves."""
+        removed = self._prune()
+        if removed > 0:
+            self._save()
+        return removed
 
     def search_reflections(self, query: str, top_k: int = 2) -> list[dict[str, Any]]:
         """Simple substring / Jaccard similarity search for relevant reflections."""

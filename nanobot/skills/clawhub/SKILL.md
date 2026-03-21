@@ -1,6 +1,13 @@
 ---
 name: clawhub
-description: Search and install agent skills from ClawHub, the public skill registry.
+description: >
+  Search, install, update, and manage agent skills from ClawHub public registry.
+  Use when user asks to: find/search for a skill, install a skill, update skills,
+  list available skills, or browse the skill marketplace.
+  Triggers: "find a skill for", "search for skills", "install a skill",
+  "what skills are available", "update my skills", "找一个技能",
+  "安装技能", "skill marketplace". Requires Node.js (npx).
+category: service_debugging
 homepage: https://clawhub.ai
 metadata: {"nanobot":{"emoji":"🦞"}}
 ---
@@ -8,15 +15,6 @@ metadata: {"nanobot":{"emoji":"🦞"}}
 # ClawHub
 
 Public skill registry for AI agents. Search by natural language (vector search).
-
-## When to use
-
-Use this skill when the user asks any of:
-- "find a skill for …"
-- "search for skills"
-- "install a skill"
-- "what skills are available?"
-- "update my skills"
 
 ## Search
 

@@ -232,7 +232,7 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
             from loguru import logger
             logger.debug(f"Vector search skipped: {e}")
 
-        # P1: Inject Knowledge Graph 1-hop Entity Context
+        # P1: Inject Knowledge Graph Entity Context (Phase 24: entity summaries)
         # D1: gated behind memory_features.knowledge_graph_enabled
         # D2: Accept pre-cached KnowledgeGraph instance to avoid per-message disk I/O
         try:
@@ -244,7 +244,8 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
                     from nanobot.agent.knowledge_graph import KnowledgeGraph
                     kg = KnowledgeGraph(self.workspace)
                 kq_query = search_query or current_message
-                kg_context = kg.get_1hop_context(kq_query)
+                # KG3: Prefer entity summaries over raw 1-hop triples
+                kg_context = kg.get_entity_context(kq_query)
                 if kg_context:
                     system_prompt += f"\n\n{kg_context}"
         except Exception as e:
@@ -318,6 +319,8 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
             )
         return trimmed
 
+    _MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
+
     def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
         """Build user message content with optional base64-encoded images."""
         if not media:
@@ -326,6 +329,11 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         images = []
         for path in media:
             p = Path(path)
+            # R11: Skip oversized images to avoid injecting huge base64 payloads
+            if p.is_file() and p.stat().st_size > self._MAX_IMAGE_BYTES:
+                from loguru import logger
+                logger.warning(f"Image too large ({p.stat().st_size} bytes), skipping: {path}")
+                continue
             mime, _ = mimetypes.guess_type(path)
             if not p.is_file() or not mime or not mime.startswith("image/"):
                 continue
@@ -442,7 +450,8 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
                         try:
                             # C3: Deduplicate — skip if this exact content was already persisted
                             import hashlib
-                            content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()[:12]
+                            # R16: SHA256 + 16-char prefix for lower collision probability
+                            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
                             if content_hash in self._persisted_visual_hashes:
                                 from loguru import logger
                                 logger.debug(f"Visual memory already persisted (hash={content_hash}), skipping duplicate.")

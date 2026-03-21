@@ -1,6 +1,12 @@
 ---
 name: memory
-description: Two-layer memory system with grep-based recall.
+description: >
+  Two-layer memory system (MEMORY.md long-term facts + HISTORY.md event log) with
+  grep-based recall. Use when user asks to: remember/store a fact, search past events,
+  recall what happened on a date, or update user preferences and project context.
+  Triggers: "记住", "remember", "别忘了", "don't forget", "what happened on",
+  "search history", "update preferences". Always loaded — core memory infrastructure.
+category: library_api
 always: true
 ---
 

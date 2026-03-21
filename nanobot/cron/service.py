@@ -71,7 +71,7 @@ class CronService:
         
         if self.store_path.exists():
             try:
-                data = json.loads(self.store_path.read_text())
+                data = json.loads(self.store_path.read_text(encoding="utf-8"))
                 jobs = []
                 for j in data.get("jobs", []):
                     jobs.append(CronJob(

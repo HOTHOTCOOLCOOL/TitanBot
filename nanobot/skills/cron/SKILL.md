@@ -1,6 +1,12 @@
 ---
 name: cron
-description: Schedule reminders and recurring tasks.
+description: >
+  Schedule reminders, recurring tasks, and one-time alarms. Use when user asks to:
+  set a reminder, schedule a recurring job, create a timer, set up daily/weekly tasks,
+  or manage scheduled jobs (list/remove). Triggers: "提醒我", "每天XX点",
+  "定时任务", "remind me", "every N minutes/hours", "schedule", "at 9am daily",
+  "set alarm", "cron job". Supports cron expressions and timezone-aware scheduling.
+category: infra_ops
 ---
 
 # Cron

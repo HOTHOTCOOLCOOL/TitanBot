@@ -128,8 +128,9 @@ class SubagentManager:
             final_result: str | None = None
             
             # B3: Cache Config() once before the loop (was re-instantiated per iteration)
-            from nanobot.config.schema import Config
-            config = Config()
+            # I1: Use process-level singleton instead of new Config()
+            from nanobot.config.loader import get_config
+            config = get_config()
 
             while iteration < max_iterations:
                 iteration += 1

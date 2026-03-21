@@ -9,6 +9,7 @@ import socket
 from typing import Any
 from urllib.parse import urlparse
 
+import httpcore
 import httpx
 
 from nanobot.agent.tools.base import Tool
@@ -27,6 +28,28 @@ _BLOCKED_NETWORKS = [
     ipaddress.ip_network("::1/128"),
     ipaddress.ip_network("fe80::/10"),
 ]
+
+
+class _SSRFSafeTransport(httpx.AsyncBaseTransport):
+    """Transport that blocks connections to private/internal IPs (Phase 23A R4).
+
+    Wraps httpx.AsyncHTTPTransport and validates resolved IPs before
+    delegating, preventing DNS rebinding attacks (TOCTOU vulnerability).
+    """
+
+    def __init__(self) -> None:
+        self._inner = httpx.AsyncHTTPTransport()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        host = str(request.url.host)
+        for info in socket.getaddrinfo(host, None):
+            addr = ipaddress.ip_address(info[4][0])
+            if any(addr in net for net in _BLOCKED_NETWORKS):
+                raise ValueError(f"SSRF blocked: {host} resolves to private IP {addr}")
+        return await self._inner.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
 
 
 def _strip_tags(text: str) -> str:
@@ -92,7 +115,7 @@ class WebSearchTool(Tool):
         
         try:
             n = min(max(count or self.max_results, 1), 10)
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(transport=_SSRFSafeTransport()) as client:
                 r = await client.get(
                     "https://api.search.brave.com/res/v1/web/search",
                     params={"q": query, "count": n},
@@ -143,17 +166,16 @@ class WebFetchTool(Tool):
         if not is_valid:
             return json.dumps({"error": f"URL validation failed: {error_msg}", "url": url})
 
-        # S10: SSRF protection — block internal/private network addresses
-        parsed = urlparse(url)
-        hostname = parsed.hostname or ""
-        if _is_internal_address(hostname):
-            return json.dumps({"error": "Access to internal/private network addresses is blocked", "url": url})
+        # Phase 23A R4: SSRF protection via transport-level IP check.
+        # Uses _SSRFSafeTransport to validate resolved IPs at connect time,
+        # preventing DNS rebinding attacks (TOCTOU vulnerability).
 
         try:
             async with httpx.AsyncClient(
                 follow_redirects=True,
                 max_redirects=MAX_REDIRECTS,
-                timeout=30.0
+                timeout=30.0,
+                transport=_SSRFSafeTransport(),
             ) as client:
                 r = await client.get(url, headers={"User-Agent": USER_AGENT})
                 r.raise_for_status()

@@ -274,6 +274,10 @@ class SessionManager:
                     for msg in new_messages:
                         f.write(json.dumps(msg, ensure_ascii=False) + "\n")
                 session._last_saved_msg_count = new_msg_count
+                session.updated_at = datetime.now()  # F2/Phase 25
+                # F2: Periodically flush metadata so timestamps are persisted
+                if len(new_messages) >= 10:
+                    session._metadata_dirty = True
                 logger.debug(f"Session {session.key}: appended {len(new_messages)} messages")
         else:
             # Full rewrite: metadata changed or file needs regenerating

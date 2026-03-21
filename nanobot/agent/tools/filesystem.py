@@ -60,6 +60,8 @@ class ReadFileTool(Tool):
 class WriteFileTool(Tool):
     """Tool to write content to a file."""
     
+    _MAX_WRITE_BYTES = 10 * 1024 * 1024  # 10 MB
+
     def __init__(self, allowed_dir: Path | None = None):
         self._allowed_dir = allowed_dir
 
@@ -89,6 +91,9 @@ class WriteFileTool(Tool):
         }
     
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
+        # R6: Reject oversized writes to prevent disk exhaustion
+        if len(content.encode("utf-8")) > self._MAX_WRITE_BYTES:
+            return f"Error: Content too large ({len(content)} chars). Max write size is 10MB."
         try:
             file_path = _resolve_path(path, self._allowed_dir)
             file_path.parent.mkdir(parents=True, exist_ok=True)

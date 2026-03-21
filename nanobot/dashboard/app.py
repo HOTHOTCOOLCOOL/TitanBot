@@ -196,6 +196,11 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         if websocket in _active_websockets:
             _active_websockets.remove(websocket)
+    except Exception:
+        # F1/Phase 25: catch unexpected errors (e.g. ConnectionClosedError)
+        # to prevent stale entries in _active_websockets
+        if websocket in _active_websockets:
+            _active_websockets.remove(websocket)
 
 async def broadcast_ws_message(msg_type: str, data: Any):
     """Broadcast an event to all connected dashboard websockets."""
@@ -242,7 +247,10 @@ async def update_memory(request: Request):
     body = await request.body()
     if len(body) > 1_048_576:  # 1MB
         raise HTTPException(status_code=413, detail="Payload too large (max 1MB)")
-    data = json.loads(body)
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
     content = data.get("content", "")
 
     mem_file = _workspace / "memory" / "MEMORY.md"
@@ -275,7 +283,10 @@ async def update_tasks(request: Request):
     body = await request.body()
     if len(body) > 1_048_576:  # 1MB
         raise HTTPException(status_code=413, detail="Payload too large (max 1MB)")
-    data = json.loads(body)
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
     tasks_dict = data.get("tasks", {})
 
     tasks_file = _workspace / "memory" / "tasks.json"

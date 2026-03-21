@@ -333,3 +333,29 @@ The agent loop had NO detection for the LLM calling the same tool with the same 
 
 **Rule**: Security deny_patterns must NOT block legitimate productive tool usage. Agent loops MUST have stall detection beyond just `max_iterations`.
 
+---
+
+## 2026-03-21: Phase 23B/23C — Architecture Polish
+
+### L17: `os.environ.setdefault` Silently Ignores Override Attempts
+
+**File**: `nanobot/providers/litellm_provider.py`
+
+When switching VLM providers dynamically (e.g., from Claude to Gemini Vision), `setdefault` does NOT override an existing environment variable. If the main provider already set `GOOGLE_API_KEY`, a subsequent VLM route to a different Google model with a different API key will silently use the wrong key.
+
+**Fix**: Use `os.environ[key] = value` for dynamic routes that intentionally override. Keep `setdefault` only for initial setup where user-set env vars should be respected.
+
+**Rule**: `setdefault` is for "use this if nothing else is set." Direct assignment is for "I need this specific value now." Know the difference and choose deliberately.
+
+---
+
+### L18: Mocking `Path.stat()` for Size Checks — Use Threshold Manipulation Instead
+
+**File**: `tests/test_phase23c_polish.py`
+
+Initial test tried to mock `Path.stat` to return a fake `st_size` of 25 MB. This failed because `Path.stat()` is a built-in method that returns an `os.stat_result` (a C struct) — `MagicMock(wraps=...)` on it produces objects that don't behave like the real struct for attribute access.
+
+**Fix**: Instead of mocking the filesystem, temporarily lower the size threshold (`_MAX_IMAGE_BYTES = 50`) so a real 104-byte test file exceeds it. This tests the actual code path without fragile mocks.
+
+**Rule**: When testing size/threshold checks, prefer adjusting the threshold over mocking the filesystem. It's more robust and exercises real I/O.
+

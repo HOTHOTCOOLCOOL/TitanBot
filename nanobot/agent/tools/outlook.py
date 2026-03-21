@@ -47,7 +47,12 @@ class OutlookTool(Tool):
     
     State Management:
     - Tracks current folder and search results to ensure get_attachment 
-      can access previously found emails
+      can access previously found emails.
+    - R12: State (_last_search_results, _current_folder_name) is per-instance.
+      Each AgentLoop creates its own OutlookTool via setup_all_tools(),
+      so concurrent agent sessions hold independent state. If the tool
+      were ever promoted to a process-wide singleton, state should be
+      keyed by session_key instead.
     """
     
     def __init__(self):
@@ -603,14 +608,42 @@ Preview: {preview}...""")
         return res if res is not None else "Error: Get all threads returned None"
     
     async def _send_email(self, recipient: str, subject: str, body: str, attachment_paths: list[str]) -> str:
+        if not recipient or not recipient.strip():
+            return "Error: recipient is empty. Please provide a valid email address."
+
+        # Basic email format validation
+        clean_recipient = recipient.strip()
+        if " " in clean_recipient and "@" not in clean_recipient:
+            return f"Error: '{clean_recipient}' does not look like a valid email address."
+
         def _sync_send_email():
             import pythoncom
             outlook, namespace = None, None
             try:
+                pythoncom.CoInitialize()
                 outlook, namespace = OutlookTool._get_outlook()
                 
                 mail = outlook.CreateItem(0)
-                mail.To = recipient
+                # L14: Robust external email handling with PropertyAccessor fallback.
+                # Previous fixes (L4, L9) failed because:
+                #  - L4: just standardized error strings
+                #  - L9: used Recipients.Add + Resolve, but Send() still threw
+                #         "Outlook does not recognize one or more names"
+                # Root cause: Exchange GAL resolution rejects unknown external addresses.
+                # Fix: Force SMTP address type via PropertyAccessor, then ResolveAll.
+                PR_SMTP_ADDRESS = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E"
+                recip = mail.Recipients.Add(clean_recipient)
+                recip.Type = 1  # olTo
+                try:
+                    recip.PropertyAccessor.SetProperty(PR_SMTP_ADDRESS, clean_recipient)
+                except Exception as pa_err:
+                    logger.debug(f"PropertyAccessor.SetProperty failed (non-fatal): {pa_err}")
+                
+                # ResolveAll is more reliable than individual Resolve
+                resolved = mail.Recipients.ResolveAll()
+                if not resolved:
+                    logger.debug(f"Recipients.ResolveAll() returned False for '{clean_recipient}' (may still work for SMTP)")
+                
                 mail.Subject = subject
                 mail.Body = body
                 
@@ -618,18 +651,44 @@ Preview: {preview}...""")
                     if os.path.exists(path):
                         mail.Attachments.Add(path)
                 
-                mail.Send()
-                del mail
-                
-                return f"Email sent to {recipient}"
+                try:
+                    mail.Send()
+                    del mail
+                    logger.info(f"Outlook: email sent successfully to {clean_recipient}")
+                    return f"Email sent successfully to {clean_recipient}"
+                except Exception as send_err:
+                    logger.warning(f"Outlook Send() failed with PropertyAccessor approach: {send_err}")
+                    # Fallback: create a fresh mail item using mail.To directly
+                    try:
+                        del mail
+                    except Exception:
+                        pass
+                    
+                    logger.info("Attempting fallback: mail.To direct assignment")
+                    mail2 = outlook.CreateItem(0)
+                    mail2.To = clean_recipient
+                    mail2.Subject = subject
+                    mail2.Body = body
+                    for path in attachment_paths:
+                        if os.path.exists(path):
+                            mail2.Attachments.Add(path)
+                    mail2.Send()
+                    del mail2
+                    logger.info(f"Outlook: email sent via fallback to {clean_recipient}")
+                    return f"Email sent successfully to {clean_recipient} (via fallback)"
+
             except Exception as e:
-                return f"Failed to send email: {e}"
+                logger.error(f"Outlook send_email failed: {e}")
+                return f"Error: Failed to send email to {clean_recipient}: {e}"
             finally:
                 if outlook:
                     del outlook
                 if namespace:
                     del namespace
-                pythoncom.CoUninitialize()
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
         
         res = await asyncio.to_thread(_sync_send_email)
         return res if res is not None else "Error: Send thread returned None"

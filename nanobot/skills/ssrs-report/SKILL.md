@@ -9,7 +9,7 @@ description: >
   "ReportServer", any specific report name reference.
   Requires intranet/VPN access and Windows NTLM auth.
 category: business_workflow
-homepage: https://github.com/HKUDS/nanobot
+homepage: https://github.com/HOTHOTCOOLCOOL/nanobot
 metadata:
   nanobot:
     emoji: 📊

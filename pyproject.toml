@@ -1,13 +1,13 @@
 [project]
-name = "nanobot-ai"
-version = "0.1.3.post7"
-description = "A lightweight personal AI assistant framework"
+name = "titanbot"
+version = "0.2.0"
+description = "Enterprise AI Agent framework with 7-layer memory, knowledge graph, and multi-channel support. Based on nanobot by HKUDS."
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "nanobot contributors"}
+    {name = "HOTHOTCOOLCOOL"}
 ]
-keywords = ["ai", "agent", "chatbot"]
+keywords = ["ai", "agent", "chatbot", "enterprise", "knowledge-graph", "memory"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

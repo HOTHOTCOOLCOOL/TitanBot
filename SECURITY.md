@@ -2,10 +2,10 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in nanobot, please report it by:
+If you discover a security vulnerability in TitanBot, please report it by:
 
 1. **DO NOT** open a public GitHub issue
-2. Create a private security advisory on GitHub or contact the repository maintainers (xubinrencs@gmail.com)
+2. Create a [private security advisory](https://github.com/HOTHOTCOOLCOOL/nanobot/security/advisories) on GitHub
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce
@@ -109,7 +109,7 @@ pip install pip-audit
 pip-audit
 
 # Update to latest secure versions
-pip install --upgrade nanobot-ai
+pip install --upgrade titanbot
 ```
 
 For Node.js dependencies (WhatsApp bridge):
@@ -133,7 +133,7 @@ For production use:
    ```bash
    # Run in a container or VM
    docker run --rm -it python:3.11
-   pip install nanobot-ai
+   pip install titanbot
    ```
 
 2. **Use a Dedicated User**
@@ -163,7 +163,7 @@ For production use:
 6. **Regular Updates**
    ```bash
    # Check for updates weekly
-   pip install --upgrade nanobot-ai
+   pip install --upgrade titanbot
    ```
 
 ### 8. Development vs Production
@@ -255,7 +255,7 @@ If you suspect a security breach:
 
 ## Security Checklist
 
-Before deploying nanobot:
+Before deploying TitanBot:
 
 - [ ] API keys stored securely (in `~/.nanobot/config.json`, not in code)
 - [ ] Config file permissions set to 0600
@@ -273,8 +273,8 @@ Before deploying nanobot:
 **Last Updated**: 2026-03-21 (Phase 23A security fixes, config cleanup)
 
 For the latest security updates and announcements, check:
-- GitHub Security Advisories: https://github.com/HKUDS/nanobot/security/advisories
-- Release Notes: https://github.com/HKUDS/nanobot/releases
+- GitHub Security Advisories: https://github.com/HOTHOTCOOLCOOL/nanobot/security/advisories
+- Release Notes: https://github.com/HOTHOTCOOLCOOL/nanobot/releases
 
 ## License
 

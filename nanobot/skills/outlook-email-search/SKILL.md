@@ -9,7 +9,7 @@ description: >
   "find email from", "search inbox". Always loaded for email queries.
   Requires Outlook desktop app running.
 category: business_workflow
-homepage: https://github.com/HKUDS/nanobot
+homepage: https://github.com/HOTHOTCOOLCOOL/nanobot
 metadata:
   nanobot:
     emoji: 🔍

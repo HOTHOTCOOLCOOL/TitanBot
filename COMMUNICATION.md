@@ -1,5 +1,12 @@
-We provide QR codes for joining the HKUDS discussion groups on **WeChat** and **Feishu**.
+# TitanBot Community
 
-You can join by scanning the QR codes below:
+TitanBot is maintained by [@HOTHOTCOOLCOOL](https://github.com/HOTHOTCOOLCOOL).
 
-<img src="https://github.com/HKUDS/.github/blob/main/profile/QR.png" alt="WeChat QR Code" width="400"/>
+## Get in Touch
+
+- **GitHub Issues**: [Report a bug or request a feature](https://github.com/HOTHOTCOOLCOOL/nanobot/issues)
+- **GitHub Discussions**: [Ask questions or share ideas](https://github.com/HOTHOTCOOLCOOL/nanobot/discussions)
+
+## Contributing
+
+We welcome contributions! See [Contributing Guide](./README.md#-contributing) for details.

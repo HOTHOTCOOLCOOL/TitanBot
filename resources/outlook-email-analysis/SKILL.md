@@ -1,7 +1,7 @@
 ---
 name: outlook-email-analysis
 description: 自动分析Outlook邮件附件并发送分析报告
-homepage: https://github.com/HKUDS/nanobot
+homepage: https://github.com/HOTHOTCOOLCOOL/nanobot
 metadata:
   nanobot:
     emoji: 📧

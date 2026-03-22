@@ -9,7 +9,7 @@ description: >
   "今天的销售report", "昨天的业绩数据", "analyze inbox", "email report analysis".
   Requires Outlook desktop app running.
 category: business_workflow
-homepage: https://github.com/HKUDS/nanobot
+homepage: https://github.com/HOTHOTCOOLCOOL/nanobot
 metadata:
   nanobot:
     emoji: 📧

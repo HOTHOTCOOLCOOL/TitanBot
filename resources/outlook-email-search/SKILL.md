@@ -1,7 +1,7 @@
 ---
 name: outlook-email-search
 description: 搜索和阅读Outlook邮件（查找特定邮件、查看邮件内容、查看回复）
-homepage: https://github.com/HKUDS/nanobot
+homepage: https://github.com/HOTHOTCOOLCOOL/nanobot
 metadata:
   nanobot:
     emoji: 🔍

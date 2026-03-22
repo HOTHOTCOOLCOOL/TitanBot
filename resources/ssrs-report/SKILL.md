@@ -1,7 +1,7 @@
 ---
 name: ssrs-report
 description: 查询内网SSRS报表系统并分析报告内容
-homepage: https://github.com/HKUDS/nanobot
+homepage: https://github.com/HOTHOTCOOLCOOL/nanobot
 metadata:
   nanobot:
     emoji: 📊

@@ -1,0 +1,40 @@
+{
+    "name": "process_emails_attachments",
+    "description": "查找邮件中的附件，解析并分析内容，然后将分析结果保存并发送邮件",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "subject_contains": {
+                "type": "string",
+                "description": "邮件主题包含的关键词（可选）"
+            },
+            "from_email": {
+                "type": "string",
+                "description": "发件人邮箱包含的字符串（可选）"
+            },
+            "received_after": {
+                "type": "string",
+                "description": "接收日期之后，格式 YYYY-MM-DD（可选）"
+            },
+            "received_before": {
+                "type": "string",
+                "description": "接收日期之前，格式 YYYY-MM-DD（可选）"
+            },
+            "analysis_type": {
+                "type": "string",
+                "enum": ["summary", "keywords", "full"],
+                "description": "分析类型：摘要、关键词或全文",
+                "default": "summary"
+            },
+            "recipient_email": {
+                "type": "string",
+                "description": "接收分析结果的邮箱地址（必填）"
+            },
+            "save_results_to": {
+                "type": "string",
+                "description": "本地保存分析结果的目录路径，默认为桌面（可选）"
+            }
+        },
+        "required": ["recipient_email"]
+    }
+}

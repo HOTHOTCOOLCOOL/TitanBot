@@ -80,7 +80,78 @@
 |------|------|------|
 | `SECURITY.md` L248-254 | 5 项标记 "pending fix" 但 Phase 21 已全部修复 | **需更新** |
 | `ARCHITECTURE_LESSONS.md` L273 | "Phase 22" 说明已过时 | 低优先级 |
+| `TEST_TRACKER.md` | 停在 Phase 21G，未覆盖 22A-25；回归基线过期 (924 vs 979) | **需更新** |
 | `README.md` | 总体内容仍准确，无需改动 | ✅ |
+
+---
+
+## 🔍 手动验证追踪清单
+
+> **规则**：每项验证通过后标 `[x]`，附日期。一人维护大项目，逐项记录确保无遗漏。
+
+### A. 阶段功能 — 仅有自动测试，缺少生产手动验证
+
+> Phase 22A 至 Phase 25 均有自动化测试通过，但 `TEST_TRACKER.md` 未记录手动确认。
+
+| # | Phase | 功能 | 自动测试 | 手动验证 |
+|---|-------|------|---------|---------|
+| A1 | 22A | SK1: AI-First Skill 描述重写 (11 个 SKILL.md) | ✅ 27 pass | [ ] 验证 LLM 实际触发匹配 |
+| A2 | 22A | SK2: Skill 分类 + `build_skills_summary()` XML | ✅ | [ ] 验证 system prompt 中分类显示 |
+| A3 | 22A | SK3: Skill 执行记忆 (`executions.jsonl`) | ✅ | [ ] 执行 skill → 检查 jsonl 写入 |
+| A4 | 22B | SK4: per-skill `config.json` 配置 | ✅ 36 pass | [ ] 修改 config → 验证行为变化 |
+| A5 | 22B | SK5: pre/post hooks 系统 | ✅ | [ ] 放 hooks.py → 验证触发 |
+| A6 | 22B | SK7: Skill Registry 版本追踪 | ✅ | [ ] 查看 `skills_registry.json` 内容正确 |
+| A7 | 22D | AE1: Event Bus 领域事件 + Dashboard WS 转发 | ✅ 35 pass | [ ] Dashboard WS 实时接收事件 |
+| A8 | 22D | AE2: Session 追加模式保存优化 | ✅ | [ ] 多轮对话 → 检查 JSONL 追加 |
+| A9 | 23A | R1: Dashboard POST 1MB body 限制 | ✅ 14 pass | [ ] curl 大 body → 验证 413 |
+| A10 | 23A | R2: hooks.py 沙箱 (路径/大小/危险导入) | ✅ | [ ] 放恶意 hooks → 验证拒绝 |
+| A11 | 23A | R4: SSRF DNS rebinding 防护 (Transport 层) | ✅ | [ ] `web_fetch http://127.0.0.1` → 验证阻断 |
+| A12 | 23A | R5: Dashboard token 日志脱敏 | ✅ | [ ] 启动后查日志 token 已 mask |
+| A13 | 23B | R3: Session 原子写入 | ✅ 15 pass | [ ] 对话中断电 → Session 不损坏 |
+| A14 | 23B | R10: Key 提取 LRU 缓存 | ✅ | [ ] 重复查询 → 检查缓存命中 |
+| A15 | 23C | R11: 图片 20MB 限制 | ✅ 7 pass | [ ] 发大图 → 验证跳过不崩溃 |
+| A16 | 23C | R16: SHA256 视觉哈希去重 | ✅ | [ ] 重复截图 → 验证去重 |
+| A17 | 24 | KG1-KG5: 知识图谱演进 (5 项) | ✅ 31 pass | [ ] 多轮对话 → 检查实体/三元组 |
+| A18 | 25 | F1-F8: 回头看加固 (7项修复) | ✅ 979 pass | [ ] 长时间运行稳定性 |
+
+### B. 核心功能 — 需要生产环境验证
+
+| # | 功能 | 描述 | 手动验证 |
+|---|------|------|---------|
+| B1 | Streaming 响应 | F1: `/ws/stream` 流式 token 推送 | [ ] Dashboard 实时看到逐字输出 |
+| B2 | VLM Feedback Loop | F3: RPA 执行后 VLM 截图验证 | [ ] `verify=true` → VLM 比对结果 |
+| B3 | Embedding 迁移 | bge-m3 1024-dim 自动迁移 | [ ] 旧 ChromaDB → 自动重建无报错 |
+| B4 | Cron 跨日守护 | L15: 重启后不补跑昨天的任务 | [ ] 次日重启 → 昨日任务标 skipped |
+| B5 | Outlook 外部地址 | L14: COM PropertyAccessor 发送外部邮件 | [ ] 发送到 @gmail.com → 成功 |
+| B6 | 重复工具调用检测 | L16: 连续相同 tool call → 自动终止 | [ ] 触发场景 → 验证中断 |
+| B7 | 深度记忆整合 | 20B CLS 慢路径 → KG 自动 re-summary | [ ] 20+ 消息 → 整合触发 |
+
+### C. 通道生产就绪状态
+
+| # | 通道 | 代码存在 | 生产验证 |
+|---|------|---------|---------|
+| C1 | CLI | ✅ | [x] 日常使用 |
+| C2 | MoChat (企业微信) | ✅ | [ ] 消息收发 + 附件 |
+| C3 | Telegram | ✅ | [ ] 消息 + 语音 STT |
+| C4 | Discord | ✅ | [ ] WebSocket 长连 + 消息 |
+| C5 | Slack | ✅ | [ ] Socket Mode + Thread 回复 |
+| C6 | Email (IMAP/SMTP) | ✅ | [ ] 收信 → 自动回复 |
+| C7 | 飞书 (Feishu) | ✅ | [ ] 消息 + 图片下载 |
+| C8 | 钉钉 (DingTalk) | ✅ | [ ] Stream Mode 消息 |
+| C9 | WhatsApp | ✅ | [ ] Bridge WS + 消息收发 |
+| C10 | QQ | ✅ | [ ] botpy SDK 消息 |
+
+### D. 安全与文档维护
+
+| # | 项目 | 描述 | 状态 |
+|---|------|------|------|
+| D1 | `SECURITY.md` 更新 | L248-254 的 5 个 "pending fix" 标注需更新为已修复 | [ ] |
+| D2 | `TEST_TRACKER.md` 补全 | 添加 Phase 22A ~ Phase 25 的测试记录 | [ ] |
+| D3 | `TEST_TRACKER.md` 基线 | 回归基线从 924 更新为 979 | [ ] |
+| D4 | `ARCHITECTURE_LESSONS.md` | L273 "Phase 22" 说明过时 | [ ] 低优先级 |
+| D5 | `config.sample.json` | 确认包含所有新增配置项 (BrowserConfig 等) | [ ] Phase 26 后 |
+| D6 | `TOOLS.md` | 确认 18 工具审计表仍准确 | [ ] |
+| D7 | `pip-audit` 安全扫描 | 运行 `pip-audit` 检查依赖漏洞 | [ ] |
 
 ---
 
@@ -99,5 +170,6 @@
 1. **Phase 26A** — Plugin Dependency Management（新会话执行）
 2. **Phase 26B** — Playwright Skill + BrowserTool（新会话执行）
 3. **Phase 26C** — Session 持久化 + Trust Manager（新会话执行）
-4. **文档更新** — 修复上表中标记 "需更新" 的项目
+4. **手动验证** — 逐项完成上列 A/B/C/D 清单
+5. **文档更新** — 修复上表中标记 "需更新" 的项目
 

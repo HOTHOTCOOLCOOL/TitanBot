@@ -760,9 +760,10 @@ Feel free to [open an issue](https://github.com/HOTHOTCOOLCOOL/nanobot/issues) o
 
 ### Contributors
 
-<a href="https://github.com/HOTHOTCOOLCOOL/nanobot/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=HOTHOTCOOLCOOL/nanobot&max=100&columns=12" alt="Contributors" />
-</a>
+| | |
+|---|---|
+| <img src="https://github.com/HOTHOTCOOLCOOL.png" width="60" style="border-radius:50%"> | **[@HOTHOTCOOLCOOL](https://github.com/HOTHOTCOOLCOOL)** — Creator & Maintainer |
+| 🤖 | **Antigravity** — AI Pair Programmer |
 
 ---
 

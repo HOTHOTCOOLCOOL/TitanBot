@@ -497,3 +497,19 @@ tests/                       ← 74 测试文件，811 用例
 
 - 无新增测试文件（修复均为防御性改进，已被现有 979 个测试覆盖）。**Regression: 979 passed.**
 
+### Phase 26 — Playwright Browser Automation 🔜 (Planned)
+
+> 完整 Web RPA 方案，与桌面 RPA (UIA/OCR/YOLO) 互补。架构：Skill + Tool Hybrid 按需加载。
+
+| Sub-Phase | Scope | Status |
+|-----------|-------|--------|
+| **26A** | Plugin Dependency Management — SK7 扩展 + `BrowserConfig` | ❌ |
+| **26B** | Playwright Skill + BrowserTool Plugin — 11 action + 双层 SSRF + 渐进信任域名 | ❌ |
+| **26C** | Session 加密持久化 (DPAPI) + Trust Manager + TTL | ❌ |
+
+关键设计：
+- `skills/browser-automation/SKILL.md` (Skill 层) + `plugins/browser.py` (Tool 层)
+- 渐进信任：主导航首次授权 → 永久记住，子请求仅阻断内网 IP
+- DPAPI 加密 Cookie 持久化，域名隔离，TTL 过期
+- `browser` 管 Web 应用，`rpa` 管桌面应用，LLM 自动路由
+

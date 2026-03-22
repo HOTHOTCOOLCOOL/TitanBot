@@ -271,20 +271,32 @@ New tests: `test_phase22d_architecture.py` (35 tests, 1 skipped). **Regression b
 
 New tests: `test_phase24_knowledge_graph.py` (31 tests). **Regression: 979 passed** (2 pre-existing env-dependent failures).
 
-### Deferred (Phase 25+)
+### Deferred / Upcoming
 
-#### Playwright Browser Automation *(⚠️ Heavy — separate discussion)*
-- **Headless browser agent** — Playwright (Chromium) as plugin for JS-rendered pages, form filling, session login
-- **Primary use case:** Legacy ERP browser automation
-- **Considerations:** ~150MB Chromium, 200-500MB per instance — evaluate as standalone Plugin
+#### Phase 26 — Playwright Browser Automation 🔜 (Next)
 
-#### Plugin Ecosystem
-- **Plugin marketplace** — browsable registry of community-contributed skills
-- **Plugin dependency management** — auto-install pip dependencies declared in plugin metadata
+> **架构决策**: Skill + Tool Hybrid（按需加载）。详见 `implementation_plan.md`。
+
+| Sub-Phase | Scope | Est. |
+|---|---|---|
+| **26A** | Plugin Dependency Management — SK7 `install_dependencies()` + `BrowserConfig` schema | 0.5d |
+| **26B** | Playwright Skill (`skills/browser-automation/`) + `BrowserTool` Plugin (`plugins/browser.py`) — 11 actions, dual-layer SSRF, progressive trust | 1-2d |
+| **26C** | Session encryption (DPAPI) + `TrustManager` + TTL auto-cleanup | 1d |
+
+Design decisions (confirmed):
+- Skill layer for AI trigger/config/hooks + Plugin Tool layer for execution
+- Progressive trust: first navigation prompts user, then remembers permanently; sub-requests pass unless internal IP
+- DPAPI-encrypted cookie/storage persistence with domain isolation and TTL
+- Complements desktop RPA: `browser` for Web apps, `rpa` for Win32 apps
+
+#### Plugin Marketplace *(P3 — after Phase 26)*
+- Browsable registry of community-contributed skills
+- JSON registry + GitHub-hosted skill packages
 
 > **Note:** Tool extensions (SqlQueryTool, CreateExcelTool, etc.) remain deprioritized — `ExecTool` + Knowledge Workflow covers these via Python libraries with automatic skill learning.
 
 > **Note:** **Data Pipeline & Complex Contract Parsing** is an independent project with separate planning.
+
 
 ## 9. Phase 23: Security Audit Remediation ✅
 

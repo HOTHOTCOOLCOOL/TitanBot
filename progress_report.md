@@ -41,7 +41,24 @@
 
 ## ⏳ 待做阶段
 
-### Phase 22C — Multi-Modal & Channel Extension ❌
+### Phase 26 — Playwright Browser Automation 🔜 (Next)
+
+> **架构方案**：Skill + Tool Hybrid，按需加载。详见 `implementation_plan.md`。
+
+| 子阶段 | 内容 | 预计工作量 | 状态 |
+|--------|------|-----------|------|
+| **26A** | Plugin Dependency Management — SK7 扩展 + `BrowserConfig` schema | 半天 | ❌ |
+| **26B** | Playwright Skill + `BrowserTool` Plugin — 11 action + 双层 SSRF + 渐进信任 | 1-2天 | ❌ |
+| **26C** | Session 加密持久化 + Trust Manager | 1天 | ❌ |
+
+**关键设计决策**（已讨论确认）：
+- ✅ Skill 层 (`skills/browser-automation/SKILL.md`) + Plugin Tool 层 (`plugins/browser.py`)
+- ✅ 渐进信任域名模型 — 首次导航问一次，永久记住，子请求静默放行
+- ✅ Session 持久化 — DPAPI 加密 + TTL + 域名隔离
+- ✅ 双层 SSRF — 导航前 IP 检查 + `page.route("**/*")` 请求拦截
+- ✅ 与桌面 RPA 互补 — `browser` 管 Web，`rpa` 管桌面应用
+
+### Phase 22C — Multi-Modal & Channel Extension
 
 | 项目 | 优先级 | 描述 |
 |------|--------|------|
@@ -53,9 +70,7 @@
 
 | 项目 | 优先级 | 描述 |
 |------|--------|------|
-| Playwright Browser Automation | ⚠️ Heavy | Headless Chromium for JS-rendered pages |
-| Plugin Marketplace | P3 | 可浏览的社区 Skill 仓库 |
-| Plugin Dependency Management | P3 | 自动安装 pip 依赖 |
+| Plugin Marketplace | P3 | 可浏览的社区 Skill 仓库（Phase 26 完成后推进） |
 
 ---
 
@@ -81,6 +96,8 @@
 
 ## 建议下一步
 
-1. **Phase 22C** — 多模态通道扩展
-2. **文档更新** — 修复上表中标记 "需更新" 的项目
+1. **Phase 26A** — Plugin Dependency Management（新会话执行）
+2. **Phase 26B** — Playwright Skill + BrowserTool（新会话执行）
+3. **Phase 26C** — Session 持久化 + Trust Manager（新会话执行）
+4. **文档更新** — 修复上表中标记 "需更新" 的项目
 

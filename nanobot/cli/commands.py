@@ -501,6 +501,7 @@ def agent(
     from nanobot.bus.queue import MessageBus
     from nanobot.agent.loop import AgentLoop
     from nanobot.cron.service import CronService
+    from nanobot.session.manager import SessionManager
     from loguru import logger
     
     config = load_config()
@@ -1065,6 +1066,7 @@ def dashboard(
     """
     from loguru import logger
     from nanobot.config.loader import load_config, get_config_path
+    from nanobot.bus.queue import MessageBus
     
     # Try user-provided path, fallback to default
     config_path = Path(config_file)
@@ -1084,7 +1086,7 @@ def dashboard(
         from nanobot.dashboard.app import app as dashboard_app, init_dashboard, broadcast_ws_message, init_event_subscription
         
         # Setup global dashboard dependencies
-        init_dashboard(bus, config.workspace_path)
+        init_dashboard(bus, config.workspace_path, token=config.gateway.token)
         # Phase 22D: Wire domain event broadcasting to Dashboard WebSocket
         init_event_subscription(bus)
         

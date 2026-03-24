@@ -1,12 +1,12 @@
 # Nanobot 项目进度总览
 
-> 截至 2026-03-22 （长期维护文档）
+> 截至 2026-03-24 （长期维护文档）
 
 ---
 
-## 🏁 当前位置：Phase 25 ✅（全部完成）
+## 🏁 当前位置：Phase 28C ✅（OpenClaw Memory Architecture 完成）
 
-已完成 **17+ 个大阶段**，从 10 文件聊天机器人发展到 95+ 文件、14 子包、18 工具、9 通道的企业级 AI Agent。
+已完成 **18+ 个大阶段**，从 10 文件聊天机器人发展到 95+ 文件、14 子包、19 工具、9 通道的企业级 AI Agent。回归测试：**1097 passed**。
 
 ---
 
@@ -36,6 +36,12 @@
 | Phase 23C | P2 架构优化 & 边缘加固 (R6/R11/R12/R14/R16) | ✅ 948 |
 | Phase 24 | Knowledge Graph Evolution — MDER-DR (KG1-KG5) | ✅ 979 |
 | **Phase 25** | **项目回头看 & 加固 (F1-F8)** | **✅ 979** |
+| **Phase 26A** | **Plugin Dependency Management — SK7 pip 依赖 + BrowserConfig** | **✅ 992** |
+| **Phase 26B** | **Playwright Skill + BrowserTool Plugin — 11 action + 双层 SSRF + 渐进信任** | **✅ 1046** |
+| **Phase 26C** | **Session 加密持久化 (DPAPI/Fernet) + TrustManager 独立模块** | **✅ 1074** |
+| **Phase 27** | **Security & Stability Hardening (SSRF TOCTOU/AST Sandbox/Atomic Writes)** | **✅** |
+| **Phase 28A** | **OpenClaw Optimization: Provider Abstraction & Plugin Lifecycle hooks** | **✅ 1088** |
+| **Phase 28B** | **OpenClaw Optimization: Execution Layer Sandboxing** | **✅ 1093** |
 
 ---
 
@@ -47,9 +53,9 @@
 
 | 子阶段 | 内容 | 预计工作量 | 状态 |
 |--------|------|-----------|------|
-| **26A** | Plugin Dependency Management — SK7 扩展 + `BrowserConfig` schema | 半天 | ❌ |
-| **26B** | Playwright Skill + `BrowserTool` Plugin — 11 action + 双层 SSRF + 渐进信任 | 1-2天 | ❌ |
-| **26C** | Session 加密持久化 + Trust Manager | 1天 | ❌ |
+| **26A** | Plugin Dependency Management — SK7 扩展 + `BrowserConfig` schema | 半天 | ✅ |
+| **26B** | Playwright Skill + `BrowserTool` Plugin — 11 action + 双层 SSRF + 渐进信任 | 1-2天 | ✅ |
+| **26C** | Session 加密持久化 + Trust Manager | 1天 | ✅ |
 
 **关键设计决策**（已讨论确认）：
 - ✅ Skill 层 (`skills/browser-automation/SKILL.md`) + Plugin Tool 层 (`plugins/browser.py`)
@@ -113,6 +119,19 @@
 | A16 | 23C | R16: SHA256 视觉哈希去重 | ✅ | [ ] 重复截图 → 验证去重 |
 | A17 | 24 | KG1-KG5: 知识图谱演进 (5 项) | ✅ 31 pass | [ ] 多轮对话 → 检查实体/三元组 |
 | A18 | 25 | F1-F8: 回头看加固 (7项修复) | ✅ 979 pass | [ ] 长时间运行稳定性 |
+| A19 | 28C| OpenClaw Memory Architecture (Vector DB) | ✅ 3 pass | [ ] 多轮对话 → 检查 KG Semantic 检索 |
+| A20 | 26B | BrowserTool 11 actions (navigate/click/fill/screenshot 等) | ✅ 54 pass | [ ] 真实浏览器 → 打开网页并截图 |
+| A21 | 26B | 双层 SSRF 防护 (导航前 IP 检查 + route 拦截) | ✅ | [ ] 尝试导航到 `http://169.254.x.x` → 阻断 |
+| A22 | 26B | 渐进信任域名 (首次确认后永久记住) | ✅ | [ ] 首次访问域名 → 确认提示 → 二次跳过 |
+| A23 | 26C | Session DPAPI/Fernet 加密持久化 | ✅ 28 pass | [ ] 登录网站 → 关闭→重启 → Session 恢复 |
+| A24 | 26C | TrustManager 独立化 + clear/remove | ✅ | [ ] `trusted_domains.json` 手动编辑确认 |
+| A25 | 27 | SSRF TOCTOU 修复 (DNS pinning) | ✅ | [ ] 高并发 web_fetch → 无竞态 |
+| A26 | 27 | AST Sandbox (替换 string-matching) | ✅ | [ ] 写 `__import__('os')` 的 hooks → 验证 AST 阻断 |
+| A27 | 27 | Windows Atomic Write `safe_replace` 重试 | ✅ | [ ] Windows Defender 场景下快速写入 → 无崩溃 |
+| A28 | 28A | ProviderFactory 抽象 (VLM 动态路由) | ✅ | [ ] 切换 VLM provider → 验证正确路由 |
+| A29 | 28A | Plugin Lifecycle (setup/teardown hooks) | ✅ | [ ] 手动 `/reload` → 确认 teardown→setup 序列 |
+| A30 | 28B | Python Sandbox (sys.addaudithook) | ✅ 5 pass | [ ] 写恶意 Python 脚本 → 验证 audit hook 阻断 |
+| A31 | 28B | Shell Sandbox (stripped env) | ✅ | [ ] 检查 shell 进程环境变量 → 无敏感 key |
 
 ### B. 核心功能 — 需要生产环境验证
 
@@ -120,7 +139,7 @@
 |---|------|------|---------|
 | B1 | Streaming 响应 | F1: `/ws/stream` 流式 token 推送 | [ ] Dashboard 实时看到逐字输出 |
 | B2 | VLM Feedback Loop | F3: RPA 执行后 VLM 截图验证 | [ ] `verify=true` → VLM 比对结果 |
-| B3 | Embedding 迁移 | bge-m3 1024-dim 自动迁移 | [ ] 旧 ChromaDB → 自动重建无报错 |
+| B3 | Embedding 迁移 | bge-m3 1024-dim 自动迁移 | [x] ✅ 2026-03-24 模型加载 1024-dim，ChromaDB 正常初始化 |
 | B4 | Cron 跨日守护 | L15: 重启后不补跑昨天的任务 | [ ] 次日重启 → 昨日任务标 skipped |
 | B5 | Outlook 外部地址 | L14: COM PropertyAccessor 发送外部邮件 | [ ] 发送到 @gmail.com → 成功 |
 | B6 | 重复工具调用检测 | L16: 连续相同 tool call → 自动终止 | [ ] 触发场景 → 验证中断 |
@@ -146,12 +165,15 @@
 | # | 项目 | 描述 | 状态 |
 |---|------|------|------|
 | D1 | `SECURITY.md` 更新 | L248-254 的 5 个 "pending fix" 标注需更新为已修复 | [ ] |
-| D2 | `TEST_TRACKER.md` 补全 | 添加 Phase 22A ~ Phase 25 的测试记录 | [ ] |
-| D3 | `TEST_TRACKER.md` 基线 | 回归基线从 924 更新为 979 | [ ] |
+| D2 | `TEST_TRACKER.md` 补全 | 添加 Phase 22A ~ **Phase 28C** 的测试记录 | [x] ✅ 2026-03-24 |
+| D3 | `TEST_TRACKER.md` 基线 | 回归基线从 924 更新为 **1097** | [x] ✅ 2026-03-24 |
 | D4 | `ARCHITECTURE_LESSONS.md` | L273 "Phase 22" 说明过时 | [ ] 低优先级 |
-| D5 | `config.sample.json` | 确认包含所有新增配置项 (BrowserConfig 等) | [ ] Phase 26 后 |
-| D6 | `TOOLS.md` | 确认 18 工具审计表仍准确 | [ ] |
-| D7 | `pip-audit` 安全扫描 | 运行 `pip-audit` 检查依赖漏洞 | [ ] |
+| D5 | `config.sample.json` | **缺少** BrowserConfig / StreamingConfig / MemoryFeaturesConfig 等 | [ ] |
+| D6 | `TOOLS.md` | 缺少 BrowserTool (第 19 个工具)，需更新为 19/19 | [x] ✅ 2026-03-24 |
+| D7 | `pip-audit` 安全扫描 | `pip-audit` 发现 7 CVE / 6 包，已在 .venv311 升级修复；`npm audit` 跳过（WhatsApp Bridge 低优先级） | [x] ✅ 2026-03-24 |
+| D8 | `PROJECT_STATUS.md` 去重 | L343-403 重复了 Phase 21D-21H 的内容 | [ ] |
+| D9 | 根目录临时文件清理 | 20+ stale 文件 (err*.txt, test_*.txt, tmp_*.py) 应清理 | [x] ✅ 2026-03-24 |
+| D10 | `EVOLUTION.md` 数据更新 | 数据汇总区仍写 811 测试用例，实际 1097+ | [ ] |
 
 ---
 
@@ -165,11 +187,62 @@
 
 ---
 
-## 建议下一步
+## 🚀 执行计划（跨会话逐步完成）
 
-1. **Phase 26A** — Plugin Dependency Management（新会话执行）
-2. **Phase 26B** — Playwright Skill + BrowserTool（新会话执行）
-3. **Phase 26C** — Session 持久化 + Trust Manager（新会话执行）
-4. **手动验证** — 逐项完成上列 A/B/C/D 清单
-5. **文档更新** — 修复上表中标记 "需更新" 的项目
+> **2026-03-23 审计后制定**，每完成一步标 `[x]`。
+
+### Step 1：文档修复（消除信息不一致）
+
+- [ ] 1.1 删除 `PROJECT_STATUS.md` L343-403 重复的 Phase 21D-21H 内容 (D8)
+- [ ] 1.2 更新 `EVOLUTION.md` 数据汇总区：测试用例 811→1097+，工具数 18→19 (D10)
+- [ ] 1.3 补全 `config.sample.json`：添加 `browser`、`streaming`、`memoryFeatures` 等新配置段 (D5)
+- [ ] 1.4 更新 `SECURITY.md` L248-254：5 个 "pending fix" 改为已修复 (D1)
+
+### Step 2：安全扫描 ✅ 2026-03-24
+
+- [x] 2.1 执行 `pip-audit` 检查 Python 依赖漏洞 (D7) — 发现 7 CVE（cryptography/pip/pyjwt/pypdf×2/urllib3/wheel），已在 .venv311 升级修复
+- [x] 2.2 `npm audit` 跳过 — WhatsApp Bridge 用户极少，未来可能裁剪；`bridge/` 无 lockfile 且 Baileys git+ssh 依赖无法解析
+
+### Step 3：根目录清理 ✅ 2026-03-24
+
+- [x] 3.1 归档/删除根目录 20+ 临时文件 (`err*.txt`, `test_*.txt`, `tmp_*.py`, `clean_log.txt` 等) (D9)
+- [x] 3.2 确认残留 `.env` 文件是否需要删除（Config Cleanup 阶段已标记 `config.json` 为唯一源）— **保留**，仍作本地 override
+
+### Step 4：TEST_TRACKER 补全 ✅ 2026-03-24
+
+- [x] 4.1 添加 Phase 22A ~ 28C 全部 14 个阶段的测试记录 (D2)
+- [x] 4.2 更新回归基线为 1097 (D3)
+- [x] 4.3 更新 `TOOLS.md` 添加 BrowserTool 审计条目，计数改为 19/19 (D6)
+
+### Step 5：手动测试 — B 类核心功能（优先）
+
+- [/] B1-B7 逐项执行（需要启动 gateway 进行生产环境验证）
+  - [x] B3 Embedding 迁移 ✅ 2026-03-24 — bge-m3 1024-dim 加载正常，ChromaDB 集合无报错
+  - [ ] B4 Cron 跨日守护
+  - [ ] B6 重复工具调用检测
+  - [ ] B7 深度记忆整合
+  - [ ] B1 Streaming 响应
+  - [ ] B2 VLM Feedback Loop
+  - [ ] B5 Outlook 外部地址
+
+> **Step 5 测试中发现的 Bug（已修复）：**
+> 1. `commands.py` `agent` 命令缺少 `SessionManager` import → NameError
+> 2. `commands.py` `dashboard` 命令缺少 `MessageBus` import → NameError
+> 3. `commands.py` `dashboard` 命令未将 `config.gateway.token` 传给 `init_dashboard()` → 固定 token 无效
+
+### Step 6：手动测试 — A 类新增 Phase (26-28)
+
+- [ ] A20-A31 逐项执行（Phase 26 需要安装 playwright）
+
+### Step 7：手动测试 — A 类旧 Phase (22-25)
+
+- [ ] A1-A19 逐项执行
+
+### Step 8：手动测试 — C 类通道
+
+- [ ] C2-C10 逐通道执行（需各通道 API 配置）
+
+### Step 9：后续开发决策
+
+- [ ] 根据测试结果决定进入 Phase 22C（Multi-Modal & Channel Extension）或先修 bug
 

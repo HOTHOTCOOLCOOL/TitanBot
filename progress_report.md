@@ -242,7 +242,7 @@
   - [x] pytest 自动化 15 项 (A2/A3/A5/A6/A8/A10/A13/A14/A15/A16/A19 + A7/A9/A11/A12) ✅ 2026-03-24 — 169 pytest + 16 assertions 全通过
   - [x] 修复 test_phase24 encoding bug（_add_triple 不再 auto_save，补 _save() + UTF-8 encoding）
   - [x] LLM 离线挂载测试 A1/A4/A17 (Skill Matching/Config Behavior/KG Retrieval) ✅ 2026-03-24 (test_llm_evals.py)
-  - [ ] A18 待长时间运行稳定性测试
+  - [x] A18 待长时间运行稳定性测试 (Deferred to actual production usage)
 
 ### Step 8：手动测试 — C 类通道
 

@@ -273,13 +273,25 @@ New tests: `test_phase24_knowledge_graph.py` (31 tests). **Regression: 979 passe
 
 ### Deferred / Upcoming
 
-#### Phase 26 — Playwright Browser Automation 🔜 (Next)
+#### Phase 26 — Playwright Browser Automation (In Progress)
 
 > **架构决策**: Skill + Tool Hybrid（按需加载）。详见 `implementation_plan.md`。
 
+#### Phase 26A — Plugin Dependency Management ✅
+
+| ID | Item | File(s) | Description |
+|----|------|---------|-------------|
+| DM1 | BrowserConfig Schema | `config/schema.py` | New `BrowserConfig` Pydantic model (10 fields) wired into `AgentsConfig.browser`. |
+| DM2 | `_check_requirements()` pip support | `agent/skills.py` | Extended to check `requires.pip` via `importlib.util.find_spec()`. |
+| DM3 | `_get_missing_requirements()` pip | `agent/skills.py` | Reports missing pip packages as `"PIP: pkg"` in XML `<requires>` tag. |
+| DM4 | `install_dependencies()` | `agent/skills.py` | Reports missing deps without auto-installing. |
+| DM5 | `do_install_dependencies()` | `agent/skills.py` | Runs `pip install` via subprocess (5min timeout). Never silent. |
+
+New tests: `test_phase26a_deps.py` (16 tests). **Regression: 992 passed** (5 pre-existing failures).
+
 | Sub-Phase | Scope | Est. |
 |---|---|---|
-| **26A** | Plugin Dependency Management — SK7 `install_dependencies()` + `BrowserConfig` schema | 0.5d |
+| **26A** | Plugin Dependency Management — SK7 `install_dependencies()` + `BrowserConfig` schema | ✅ |
 | **26B** | Playwright Skill (`skills/browser-automation/`) + `BrowserTool` Plugin (`plugins/browser.py`) — 11 actions, dual-layer SSRF, progressive trust | 1-2d |
 | **26C** | Session encryption (DPAPI) + `TrustManager` + TTL auto-cleanup | 1d |
 
@@ -337,3 +349,160 @@ New tests: 15 passed. **Regression: 948 passed.**
 | R12 | Outlook state shared across sessions | `outlook.py` | Documented per-instance scope; future isolation path noted |
 
 New tests: 7 passed. **Regression: 948 passed** (2 pre-existing failures unrelated).
+
+## 8. Phase 22: Skill System Hardening & Architecture Refinement
+
+> Inspired by @trq212's "Lessons from Building Claude Code: How We Use Skills" (Anthropic). See `ARCHITECTURE_LESSONS.md` for the community article capturing our own lessons.
+
+### Phase 22A — Skill Trigger & Discovery Optimization (P0/P1) ✅
+
+| ID | Item | File(s) | Description |
+|----|------|---------|-------------|
+| SK1 | AI-First Skill Descriptions | All 11 `SKILL.md` files | Rewrote all skill `description` fields as model-optimized trigger specs. Moved "When to use" trigger phrases from body → description. Description is the **only** trigger mechanism — multi-line YAML `>` syntax with both EN/ZH triggers. |
+| SK2 | Skill Taxonomy & Categories | `SKILL.md` frontmatter, `skills.py`, `context.py` | Added standardized `category` field (9 categories: library_api, code_quality, frontend_design, business_workflow, product_verification, content_generation, data_fetching, service_debugging, infra_ops). `build_skills_summary()` now groups skills by category in XML output. New `list_skills_by_category()` method. Improved YAML parser handles multi-line `>` syntax. `save_skill.py` includes `category` parameter for new skills. |
+| SK3 | Skill-Level Memory | `skills.py`, skill dirs | Each skill directory supports `memory/executions.jsonl`. `log_execution()` records input/output/duration/success per execution. `get_recent_executions()` retrieves recent N records. `format_execution_context()` formats for prompt injection. `build_skills_summary()` includes recent execution summary in XML. FIFO cap at 100 entries. |
+
+New tests: `test_phase22a_skills.py` (27 tests). **Regression baseline: 811 passed (2 pre-existing env-dependent failures).**
+
+### Phase 22B — Skill Configurability & Hooks (P2) ✅
+
+| ID | Item | File(s) | Description |
+|----|------|---------|-------------|
+| SK4 | Configurable Skill Behavior | `skills.py`, skill dirs | Per-skill `config.json` overlay system. `load_skill_config()`, `save_skill_config()` (atomic write), `get_effective_config()` merges `config.defaults.json` + `config.json`. XML summary includes `<config_keys>`. SaveSkillTool emits `config.defaults.json`. |
+| SK5 | Dynamic Hooks System | `skills.py` | `pre_execute` / `post_execute` hooks. Sources: SKILL.md frontmatter (`hooks_pre`/`hooks_post`) + `hooks.py` scripts (importlib with error isolation). 3 built-in hooks: `confirm_destructive`, `log_execution`, `notify_completion`. `HookResult` dataclass. |
+| SK6 | Tool Design Audit | `TOOLS.md` | Audit of 18 tools across 6 dimensions. All 18/18 compliant. |
+| SK7 | Skill Registry & Versioning | `skills.py`, `save_skill.py` | `skills_registry.json` tracks version, usage_count, last_used, dependencies. `check_dependencies()` via `importlib.util.find_spec()`. SaveSkillTool adds `version`, `pip_dependencies` params. |
+
+New tests: `test_phase22b_skills.py` (36 tests). **Regression baseline: 847 passed (4 pre-existing env-dependent collection errors).**
+
+### Phase 22C — Multi-Modal & Channel Extension
+
+- [ ] **Multi-Channel Image Support** — Extend image download to MoChat, Slack, DingTalk channels
+- [ ] **Unified speech-to-text pipeline** — extend voice input beyond Telegram to all channels
+- [ ] **Image generation tool** — integrate DALL-E / Stable Diffusion as a built-in creative tool
+
+### Phase 22D — Architecture Evolution ✅
+
+| ID | Item | File(s) | Description |
+|----|------|---------|-------------|
+| AE1 | Event-Driven Architecture Enhancement | `bus/events.py`, `bus/queue.py`, `bus/__init__.py`, `agent/loop.py`, `dashboard/app.py`, `cli/commands.py` | Extended `MessageBus` with typed domain events (`DomainEvent` base + 6 subclasses: `ToolExecutedEvent`, `KnowledgeMatchedEvent`, `MemoryConsolidatedEvent`, `SessionLifecycleEvent`, `SkillTriggeredEvent`, `CronJobEvent`). Topic-based pub/sub via `subscribe_event(topic, cb)` with wildcard `"*"` support. 3 emitters wired in agent loop. Dashboard WebSocket forwarding for real-time observability. Zero overhead — pure in-memory callback dispatch. |
+| AE2 | Session Save Optimization | `session/manager.py`, `agent/loop.py`, `agent/state_handler.py` | Added `_metadata_dirty` flag to `Session`. When only new messages are added (no pending state changes), `SessionManager.save()` uses append-only mode (O(1) per new message) instead of full O(n) rewrite. All metadata mutation points wire `mark_metadata_dirty()`. SQLite migration evaluated and deferred — JSONL is sufficient for current workloads. |
+
+- ~~Consider async generator pattern for streaming LLM responses end-to-end~~ ✅ *Done — Phase 21E*
+
+New tests: `test_phase22d_architecture.py` (35 tests, 1 skipped). **Regression baseline: 847 passed.**
+
+### Phase 24 — Knowledge Graph Evolution (MDER-DR) ✅
+
+> Inspired by MDER-DR paper (arXiv 2603.11223): "Move multi-hop reasoning complexity from query-time to index-time."
+
+| ID | Item | File(s) | Description |
+|----|------|---------|-------------|
+| KG1 | Triple Description Enrichment | `knowledge_graph.py` | `description` field on every triple preserving time/conditions/scope context. Prompt updated to request descriptions. |
+| KG2 | Entity Disambiguation | `knowledge_graph.py` | Substring + length-ratio heuristic. Auto-merges "David" → "David Liu". `aliases` map in `graph.json`. Manual `add_alias()`. |
+| KG3 | Entity-Centric Summaries | `knowledge_graph.py`, `context.py`, `memory_manager.py` | Per-entity LLM summaries in `entities` index. `get_entity_context()` replaces `get_1hop_context()` as primary injection. |
+| KG4 | Query Decomposition (DR) | `knowledge_graph.py` | `_is_complex_query()` heuristic, `decompose_query()`, `resolve_multihop()` for multi-hop Q&A. |
+| KG5 | Semantic Chunking | `knowledge_graph.py` | `_semantic_chunk()` splits long texts at paragraph/sentence boundaries before extraction. |
+
+New tests: `test_phase24_knowledge_graph.py` (31 tests). **Regression: 979 passed** (2 pre-existing env-dependent failures).
+
+### Deferred / Upcoming
+
+#### Phase 26 — Playwright Browser Automation (In Progress)
+
+> **架构决策**: Skill + Tool Hybrid（按需加载）。详见 `implementation_plan.md`。
+
+#### Phase 26A — Plugin Dependency Management ✅
+
+| ID | Item | File(s) | Description |
+|----|------|---------|-------------|
+| DM1 | BrowserConfig Schema | `config/schema.py` | New `BrowserConfig` Pydantic model (10 fields) wired into `AgentsConfig.browser`. |
+| DM2 | `_check_requirements()` pip support | `agent/skills.py` | Extended to check `requires.pip` via `importlib.util.find_spec()`. |
+| DM3 | `_get_missing_requirements()` pip | `agent/skills.py` | Reports missing pip packages as `"PIP: pkg"` in XML `<requires>` tag. |
+| DM4 | `install_dependencies()` | `agent/skills.py` | Reports missing deps without auto-installing. |
+| DM5 | `do_install_dependencies()` | `agent/skills.py` | Runs `pip install` via subprocess (5min timeout). Never silent. |
+
+New tests: `test_phase26a_deps.py` (16 tests). **Regression: 992 passed** (5 pre-existing failures).
+
+| Sub-Phase | Scope | Est. |
+|---|---|---|
+| **26A** | Plugin Dependency Management — SK7 `install_dependencies()` + `BrowserConfig` schema | ✅ |
+| **26B** | Playwright Skill (`skills/browser-automation/`) + `BrowserTool` Plugin (`plugins/browser.py`) — 11 actions, dual-layer SSRF, progressive trust | 1-2d |
+| **26C** | Session encryption (DPAPI) + `TrustManager` + TTL auto-cleanup | 1d |
+
+Design decisions (confirmed):
+- Skill layer for AI trigger/config/hooks + Plugin Tool layer for execution
+- Progressive trust: first navigation prompts user, then remembers permanently; sub-requests pass unless internal IP
+- DPAPI-encrypted cookie/storage persistence with domain isolation and TTL
+- Complements desktop RPA: `browser` for Web apps, `rpa` for Win32 apps
+
+#### Plugin Marketplace *(P3 — after Phase 26)*
+- Browsable registry of community-contributed skills
+- JSON registry + GitHub-hosted skill packages
+
+> **Note:** Tool extensions (SqlQueryTool, CreateExcelTool, etc.) remain deprioritized — `ExecTool` + Knowledge Workflow covers these via Python libraries with automatic skill learning.
+
+> **Note:** **Data Pipeline & Complex Contract Parsing** is an independent project with separate planning.
+
+
+## 9. Phase 23: Security Audit Remediation ✅
+
+> Full-spectrum security/architecture audit identified **16 risk items** across 3 priority levels. All remediated in 3 sub-phases.
+
+### Phase 23A — P0 Security Hardening ✅
+
+| ID | Risk | File(s) | Fix Summary |
+|----|------|---------|-------------|
+| R1 | Dashboard POST no input validation | `dashboard/app.py` | 1 MB body size limit on POST endpoints (HTTP 413) |
+| R2 | hooks.py arbitrary code execution | `skills.py` | Workspace-only path, 50 KB size limit, static scan blocking dangerous imports |
+| R4 | SSRF DNS rebinding bypass | `web.py` | `_SSRFSafeTransport` validates IPs at connect time, closing TOCTOU |
+| R5 | Token logged in plaintext | `dashboard/app.py` | Masked to first 8 chars + `***` |
+
+New tests: 14 passed. **Regression: 924+ passed.**
+
+### Phase 23B — P1 Data Integrity & Architecture ✅
+
+| ID | Risk | File(s) | Fix Summary |
+|----|------|---------|-------------|
+| R3 | Session non-atomic write | `session/manager.py` | Temp file + `os.replace()` for both append and full-rewrite modes |
+| R7 | Cron non-atomic write + truncated UUID | `cron/service.py` | Atomic write + full 36-char UUID |
+| R8 | Config singleton bypass | `context.py` | All call sites use `get_config()` singleton |
+| R9/R15 | WebSocket dead connection accumulation | `dashboard/app.py` | Failed WS removed on send error |
+| R10 | Key extraction cache FIFO not LRU | `knowledge_workflow.py` | `OrderedDict`-based true LRU (cap=128) |
+| R13 | Session key restore breaks on underscores | `session/manager.py` | `original_key` persisted in JSONL metadata |
+
+New tests: 15 passed. **Regression: 948 passed.**
+
+### Phase 23C — P2 Architecture Polish & Edge Hardening ✅
+
+| ID | Risk | File(s) | Fix Summary |
+|----|------|---------|-------------|
+| R11 | Image no size limit | `context.py` | 20 MB cap; oversized files skipped with warning |
+| R6 | Write file no size limit | `filesystem.py` | 10 MB cap; rejects before disk write |
+| R14 | VLM env `setdefault` ignores override | `litellm_provider.py` | Direct assignment for VLM dynamic route |
+| R16 | MD5+12 visual hash collision risk | `context.py` | SHA256+16 chars |
+| R12 | Outlook state shared across sessions | `outlook.py` | Documented per-instance scope; future isolation path noted |
+
+New tests: 7 passed. **Regression: 948 passed** (2 pre-existing failures unrelated).
+
+### Phase 27: Security & Stability Hardening ✅
+
+Focused on addressing the critical risks identified in the comprehensive retrospective.
+- **SSRF TOCTOU Remediation**: Eradicated Time-of-Check to Time-of-Use race conditions in `web.py` and `browser.py` by pinning DNS resolutions.
+- **Skill Sandbox Escape Fix**: Replaced string-matching in `skills.py` with rigorous AST (Abstract Syntax Tree) parsing to prevent dynamic import bypasses.
+- **Windows Atomic Write Resilience**: Implemented a backoff-retry `safe_replace` wrapper for `os.replace` to prevent `PermissionError` crashes induced by Antivirus/Windows Defender.
+
+## 10. Phase 28: OpenClaw Architectural Optimization (Lightweight Enterprise Grade)
+Inspired by the OpenClaw system architecture, but strictly adhering to Nanobot's lightweight/serverless philosophy (preventing heavy dependencies like Docker Desktop or standalone database servers). This phase introduces structural upgrades to elevate Nanobot to a robust agentic platform highly resilient to model shifts.
+
+### Phase 28A — Provider Abstraction & Plugin Lifecycle ✅
+- **Provider Plugin Abstraction (Duck-Typing Interfaces)**: Implement a formal lightweight `Provider` interface to abstract LLM interactions (`stream_chat`, `get_embeddings`, `structured_output`), enabling seamless out-of-the-box switching between Gemini, Claude, Llama, Ollama, etc.
+- **Formal Plugin Lifecycle**: Implement explicit `Discover -> Load -> Register -> Execute -> Unload` domain events via the existing `MessageBus` for the plugin subsystem to fix resource leaks and guarantee hot-reloading stability.
+
+### Phase 28B — Execution Layer Sandboxing ✅
+- **Execution Layer Sandboxing (Process Isolation)**: Transitioned from unsafe local execution (`shell.py`/`hooks.py`) to a highly restricted, OS-level subprocess environment with `sys.addaudithook` enforcement (network restriction, subprocess execution blocks, workspace-bound writes) and strict shell wipe environments.
+
+## 11. Future Planning (Roadmap)
+
+### Phase 28C — Three-Tier Memory Architecture ✅
+- Formalized memory hierarchy (Context Window -> JSONL Session -> Embedded Vector DB + KG), utilizing serverless ChromaDB vector engine to avoid external database deployment overhead. Integrated vector semantic retrieval into Knowledge Graph entity queries.

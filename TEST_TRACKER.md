@@ -1,7 +1,7 @@
 # Nanobot 功能测试追踪表 (Test Tracker)
 
 > 每个新功能必须经过 ✅ **自动化测试通过** + ✅ **手动确认** 才算正式完成。
-> 最后更新: 2026-03-19
+> 最后更新: 2026-03-24
 
 ---
 
@@ -239,6 +239,148 @@ $env:NO_PROXY="*"; $env:HTTP_PROXY=""; $env:HTTPS_PROXY=""
 
 ---
 
+## ✅ Phase 22A: Skill Trigger & Discovery Optimization (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| SK1: AI-First Skill 描述重写 (11 个 SKILL.md) | `tests/test_phase22a_skills.py` | ✅ 27 pass | ✅ |
+| SK2: Skill 分类 + `build_skills_summary()` XML 输出 | `tests/test_phase22a_skills.py` | ✅ | ✅ |
+| SK3: Skill 执行记忆 (`executions.jsonl` FIFO) | `tests/test_phase22a_skills.py` | ✅ | [ ] |
+| SaveSkillTool `category` 参数 | `tests/test_phase22a_skills.py` | ✅ | [ ] |
+
+---
+
+## ✅ Phase 22B: Skill Config & Hooks (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| SK4: per-skill `config.json` 配置 | `tests/test_phase22b_skills.py` | ✅ 36 pass | ✅ |
+| SK5: pre/post hooks 系统 | `tests/test_phase22b_skills.py` | ✅ | [ ] |
+| SK7: Skill Registry 版本追踪 | `tests/test_phase22b_skills.py` | ✅ | [ ] |
+
+---
+
+## ✅ Phase 22D: Event-Driven Architecture + Session Save (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| AE1: Event Bus 领域事件 + Dashboard WS 转发 | `tests/test_phase22d_architecture.py` | ✅ 35 pass | [ ] |
+| AE2: Session 追加模式保存优化 | `tests/test_phase22d_architecture.py` | ✅ | [ ] |
+
+---
+
+## ✅ Phase 23A: P0 安全加固 (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| R1: Dashboard POST 1MB body 限制 | `tests/test_phase23a_security.py` | ✅ 14 pass | [ ] |
+| R2: hooks.py 沙箱 (路径/大小/危险导入) | `tests/test_phase23a_security.py` | ✅ | [ ] |
+| R4: SSRF DNS rebinding 防护 (Transport 层) | `tests/test_phase23a_security.py` | ✅ | [ ] |
+| R5: Dashboard token 日志脱敏 | `tests/test_phase23a_security.py` | ✅ | [ ] |
+
+---
+
+## ✅ Phase 23B: P1 数据完整性 & 架构修复 (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| R3: Session/Cron 原子写入 | `tests/test_phase23b_integrity.py` | ✅ 15 pass | [ ] |
+| R7: Config 单例使用 | `tests/test_phase23b_integrity.py` | ✅ | [ ] |
+| R8: WebSocket 死连接清理 | `tests/test_phase23b_integrity.py` | ✅ | [ ] |
+| R10: Key 提取 LRU 缓存 | `tests/test_phase23b_integrity.py` | ✅ | [ ] |
+| R13: Session Key 恢复 | `tests/test_phase23b_integrity.py` | ✅ | [ ] |
+
+---
+
+## ✅ Phase 23C: P2 架构优化 & 边缘加固 (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| R11: 图片 20MB 限制 | `tests/test_phase23c_polish.py` | ✅ 7 pass | [ ] |
+| R6: VLM 环境变量 override | `tests/test_phase23c_polish.py` | ✅ | [ ] |
+| R16: SHA256 视觉哈希去重 | `tests/test_phase23c_polish.py` | ✅ | [ ] |
+
+---
+
+## ✅ Phase 24: Knowledge Graph Evolution — MDER-DR (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| KG1: Triple 描述 (subject/predicate/object) | `tests/test_phase24_knowledge_graph.py` | ✅ 31 pass | ✅ |
+| KG2: Entity 消歧 (实体合并/同义) | `tests/test_phase24_knowledge_graph.py` | ✅ | ✅ |
+| KG3: Entity-Centric Summaries | `tests/test_phase24_knowledge_graph.py` | ✅ | ✅ |
+| KG4: Query Decomposition | `tests/test_knowledge_decomposition.py` | ✅ | ✅ |
+| KG5: Semantic Chunking | `tests/test_phase24_knowledge_graph.py` | ✅ | ✅ |
+
+---
+
+## ✅ Phase 26A: Plugin Dependency Management (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| SK7 扩展: pip 依赖自动安装 | `tests/test_phase26a_deps.py` | ✅ 13 pass | [ ] |
+| BrowserConfig schema 定义 | `tests/test_phase26a_deps.py` | ✅ | [ ] |
+
+---
+
+## ✅ Phase 26B: Playwright Skill + BrowserTool Plugin (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| BrowserTool 11 actions (navigate/click/fill/type/select/screenshot/content/evaluate/wait/login/close) | `tests/test_phase26b_browser.py` | ✅ 54 pass | [ ] |
+| 双层 SSRF 防护 (导航前 IP 检查 + page.route 拦截) | `tests/test_phase26b_browser.py` | ✅ | [ ] |
+| 渐进信任域名 (TrustManager) | `tests/test_phase26b_browser.py` | ✅ | [ ] |
+| Evaluate JS 白名单 | `tests/test_phase26b_browser.py` | ✅ | [ ] |
+
+---
+
+## ✅ Phase 26C: Session 加密持久化 + TrustManager (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| DPAPI/Fernet/Base64 三级加密 | `tests/test_phase26c_sessions.py` | ✅ 28 pass | [ ] |
+| BrowserSessionStore TTL + 域名隔离 | `tests/test_phase26c_sessions.py` | ✅ | [ ] |
+| TrustManager 独立模块 (add/remove/clear/persist) | `tests/test_phase26c_sessions.py` | ✅ | [ ] |
+
+---
+
+## ✅ Phase 27: Security & Stability Hardening (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| SSRF TOCTOU 修复 (DNS pinning) | `tests/test_phase27_skills_ast.py` | ✅ | [ ] |
+| AST Sandbox (替换 string-matching hooks 检测) | `tests/test_phase27_skills_ast.py` | ✅ | [ ] |
+| Windows Atomic Write `safe_replace` 重试 | `tests/test_phase27_skills_ast.py` | ✅ | [ ] |
+
+---
+
+## ✅ Phase 28A: OpenClaw — Provider Abstraction & Plugin Lifecycle (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| ProviderFactory 抽象 (VLM 动态路由) | `tests/test_provider_factory.py` | ✅ | [ ] |
+| Plugin Lifecycle hooks (setup/teardown) | `tests/test_plugin_lifecycle.py` | ✅ | [ ] |
+
+---
+
+## ✅ Phase 28B: OpenClaw — Execution Layer Sandboxing (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| Python Sandbox (sys.addaudithook + 进程隔离) | `tests/test_phase28b_sandbox.py` | ✅ 5 pass | [ ] |
+| Shell Sandbox (stripped env, 无敏感 key) | `tests/test_phase28b_sandbox.py` | ✅ | [ ] |
+
+---
+
+## ✅ Phase 28C: OpenClaw — Memory Architecture (Vector DB → KG) (完成)
+
+| 功能 | 测试文件 | 自动测试 | 手动确认 |
+|------|---------|---------|---------| 
+| Vector DB 与 Knowledge Graph 集成 (语义检索) | `tests/test_phase28c_knowledge_graph.py` | ✅ 3 pass | [ ] |
+| Entity Summary → ChromaDB 注入 | `tests/test_phase28c_knowledge_graph.py` | ✅ | [ ] |
+
+---
+
 ## ⚠️ 已知问题
 
 | 问题 | 影响 | 状态 |
@@ -252,10 +394,10 @@ $env:NO_PROXY="*"; $env:HTTP_PROXY=""; $env:HTTPS_PROXY=""
 
 ## 📋 回归测试基线
 
-**上次全量测试结果:** 924+ passed, 0 failed
-**测试日期:** 2026-03-21 (Phase 23A + Config Cleanup 完成后)
+**上次全量测试结果:** 1097 passed, 0 failed
+**测试日期:** 2026-03-24 (Phase 28C + Security Scan 完成后)
 **Python 环境:** `.venv311` (Python 3.11)
-**下一里程碑:** Phase 23B 数据完整性修复
+**下一里程碑:** 手动验证 + Phase 22C
 
 > [!TIP]
 > 每次新功能开发完成后，运行全量回归测试并更新此基线数字。

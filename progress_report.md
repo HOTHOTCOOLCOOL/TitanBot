@@ -140,9 +140,9 @@
 | B1 | Streaming 响应 | F1: `/ws/stream` 流式 token 推送 | [ ] Dashboard 实时看到逐字输出 |
 | B2 | VLM Feedback Loop | F3: RPA 执行后 VLM 截图验证 | [ ] `verify=true` → VLM 比对结果 |
 | B3 | Embedding 迁移 | bge-m3 1024-dim 自动迁移 | [x] ✅ 2026-03-24 模型加载 1024-dim，ChromaDB 正常初始化 |
-| B4 | Cron 跨日守护 | L15: 重启后不补跑昨天的任务 | [ ] 次日重启 → 昨日任务标 skipped |
+| B4 | Cron 跨日守护 | L15: 重启后不补跑昨天的任务 | [x] ✅ 2026-03-24 篡改 nextRunAtMs 到昨日 → 重启后日志显示 skipped，未补跑 |
 | B5 | Outlook 外部地址 | L14: COM PropertyAccessor 发送外部邮件 | [ ] 发送到 @gmail.com → 成功 |
-| B6 | 重复工具调用检测 | L16: 连续相同 tool call → 自动终止 | [ ] 触发场景 → 验证中断 |
+| B6 | 重复工具调用检测 | L16: 连续相同 tool call → 自动终止 | [x] ✅ 2026-03-24 3x web_fetch(404) → Duplicate detected，循环终止 |
 | B7 | 深度记忆整合 | 20B CLS 慢路径 → KG 自动 re-summary | [ ] 20+ 消息 → 整合触发 |
 
 ### C. 通道生产就绪状态
@@ -218,8 +218,8 @@
 
 - [/] B1-B7 逐项执行（需要启动 gateway 进行生产环境验证）
   - [x] B3 Embedding 迁移 ✅ 2026-03-24 — bge-m3 1024-dim 加载正常，ChromaDB 集合无报错
-  - [ ] B4 Cron 跨日守护
-  - [ ] B6 重复工具调用检测
+  - [x] B4 Cron 跨日守护 ✅ 2026-03-24
+  - [x] B6 重复工具调用检测 ✅ 2026-03-24
   - [ ] B7 深度记忆整合
   - [ ] B1 Streaming 响应
   - [ ] B2 VLM Feedback Loop

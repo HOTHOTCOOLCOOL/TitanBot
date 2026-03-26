@@ -76,8 +76,8 @@ class CommandHandler:
             # I1: Also invalidate the process-level Config singleton
             from nanobot.config.loader import invalidate_config
             invalidate_config()
-            from nanobot.agent.tool_setup import _register_dynamic_tools
-            _register_dynamic_tools(agent)
+            from nanobot.agent.tool_setup import _reload_dynamic_tools
+            await _reload_dynamic_tools(agent)
             if agent._dynamic_tool_names:
                 tools_list = ", ".join(agent._dynamic_tool_names)
                 content = i18n_msg("reload_success", tools=tools_list)

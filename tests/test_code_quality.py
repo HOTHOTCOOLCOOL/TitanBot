@@ -8,7 +8,7 @@ Covers:
 
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 # ── /reload command fix ──
@@ -31,11 +31,11 @@ class TestReloadCommandFix:
         agent = MagicMock()
         agent._dynamic_tool_names = ["plugin_a"]
 
-        with patch("nanobot.agent.tool_setup._register_dynamic_tools") as mock_fn:
+        with patch("nanobot.agent.tool_setup._reload_dynamic_tools", new_callable=AsyncMock) as mock_fn:
             result = await handler.dispatch_command("/reload", msg, session, MagicMock(), agent)
 
         assert result is not None
-        mock_fn.assert_called_once_with(agent)
+        mock_fn.assert_awaited_once_with(agent)
         assert "Plugins reloaded" in result.content
 
     @pytest.mark.asyncio
@@ -49,7 +49,7 @@ class TestReloadCommandFix:
         agent = MagicMock()
         agent._dynamic_tool_names = []
 
-        with patch("nanobot.agent.tool_setup._register_dynamic_tools"):
+        with patch("nanobot.agent.tool_setup._reload_dynamic_tools", new_callable=AsyncMock):
             result = await handler.dispatch_command("/reload", msg, MagicMock(), MagicMock(), agent)
 
         assert "No dynamic tools found" in result.content

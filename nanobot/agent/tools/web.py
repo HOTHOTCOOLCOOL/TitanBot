@@ -42,10 +42,19 @@ class _SSRFSafeTransport(httpx.AsyncBaseTransport):
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         host = str(request.url.host)
+        safe_ip = None
         for info in socket.getaddrinfo(host, None):
             addr = ipaddress.ip_address(info[4][0])
             if any(addr in net for net in _BLOCKED_NETWORKS):
                 raise ValueError(f"SSRF blocked: {host} resolves to private IP {addr}")
+            if safe_ip is None:
+                safe_ip = str(addr)
+                
+        if safe_ip and safe_ip != host:
+            request.url = request.url.copy_with(host=safe_ip)
+            request.headers["host"] = host
+            request.extensions["sni_hostname"] = host
+            
         return await self._inner.handle_async_request(request)
 
     async def aclose(self) -> None:

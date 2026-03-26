@@ -13,6 +13,7 @@ import json_repair
 from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session
 from nanobot.agent.task_knowledge import tokenize_key
+from nanobot.utils.helpers import safe_replace
 
 
 class ReflectionStore:
@@ -54,7 +55,7 @@ class ReflectionStore:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(content)
-            os.replace(tmp_path, str(self.reflections_file))
+            safe_replace(tmp_path, str(self.reflections_file))
         except Exception:
             # Clean up temp file on failure
             try:

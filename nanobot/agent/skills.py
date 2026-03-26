@@ -5,13 +5,18 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
+import ast
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+from nanobot.utils.helpers import safe_replace
 
 
 @dataclass
@@ -239,6 +244,10 @@ class SkillsLoader:
         for env in requires.get("env", []):
             if not os.environ.get(env):
                 missing.append(f"ENV: {env}")
+        for pkg in requires.get("pip", []):
+            import_name = pkg.replace("-", "_").split("[")[0]
+            if importlib.util.find_spec(import_name) is None:
+                missing.append(f"PIP: {pkg}")
         return ", ".join(missing)
     
     def _get_skill_description(self, name: str) -> str:
@@ -265,13 +274,17 @@ class SkillsLoader:
             return {}
     
     def _check_requirements(self, skill_meta: dict) -> bool:
-        """Check if skill requirements are met (bins, env vars)."""
+        """Check if skill requirements are met (bins, env vars, pip packages)."""
         requires = skill_meta.get("requires", {})
         for b in requires.get("bins", []):
             if not shutil.which(b):
                 return False
         for env in requires.get("env", []):
             if not os.environ.get(env):
+                return False
+        for pkg in requires.get("pip", []):
+            import_name = pkg.replace("-", "_").split("[")[0]
+            if importlib.util.find_spec(import_name) is None:
                 return False
         return True
     
@@ -528,7 +541,7 @@ class SkillsLoader:
             try:
                 os.write(fd, data.encode("utf-8"))
                 os.close(fd)
-                os.replace(tmp_path, str(config_file))
+                safe_replace(tmp_path, str(config_file))
             except Exception:
                 try:
                     os.close(fd)
@@ -700,11 +713,8 @@ class SkillsLoader:
         
         return None
 
-    # Phase 23A R2: Dangerous import patterns blocked in hooks.py
-    _DANGEROUS_IMPORTS = frozenset({
-        "import os", "import subprocess", "import shutil", "import sys",
-        "from os ", "from subprocess ", "from shutil ", "from sys ",
-    })
+    # Phase 27: Strict AST validation for dangerous imports
+    _DANGEROUS_MODULES = frozenset({"os", "subprocess", "shutil", "sys", "importlib"})
 
     async def _run_hooks_py(
         self,
@@ -742,31 +752,69 @@ class SkillsLoader:
             logger.warning(f"hooks.py too large ({file_size} bytes): {hooks_file}")
             return None
 
-        # R2-3: Static check for dangerous imports
+        # R2-3: Strict AST-based static check for dangerous imports (Phase 27)
         source = hooks_file.read_text(encoding="utf-8")
-        for pattern in self._DANGEROUS_IMPORTS:
-            if pattern in source:
-                logger.warning(f"hooks.py blocked: contains '{pattern}' in {hooks_file}")
-                return None
+        try:
+            tree = ast.parse(source, filename=str(hooks_file))
+        except SyntaxError as e:
+            logger.warning(f"hooks.py blocked: SyntaxError {e} in {hooks_file}")
+            return None
+
+        class _SecurityVisitor(ast.NodeVisitor):
+            def __init__(self, danger_modules):
+                self.violation = None
+                self.danger_modules = danger_modules
+
+            def visit_Import(self, node):
+                for alias in node.names:
+                    base_module = alias.name.split('.')[0]
+                    if base_module in self.danger_modules:
+                        self.violation = f"import {alias.name}"
+                        return
+                self.generic_visit(node)
+
+            def visit_ImportFrom(self, node):
+                if node.module:
+                    base_module = node.module.split('.')[0]
+                    if base_module in self.danger_modules:
+                        self.violation = f"from {node.module} import ..."
+                        return
+                self.generic_visit(node)
+
+            def visit_Call(self, node):
+                if isinstance(node.func, ast.Name) and node.func.id == '__import__':
+                    self.violation = "use of __import__"
+                    return
+                if isinstance(node.func, ast.Attribute) and node.func.attr == 'import_module':
+                    self.violation = "use of import_module"
+                    return
+                self.generic_visit(node)
+
+        visitor = _SecurityVisitor(self._DANGEROUS_MODULES)
+        visitor.visit(tree)
+        if visitor.violation:
+            logger.warning(f"hooks.py blocked: Dangerous operation detected ({visitor.violation}) in {hooks_file}")
+            return None
 
         try:
-            spec = importlib.util.spec_from_file_location(
-                f"skill_hooks_{skill_name}", str(hooks_file)
-            )
-            if not spec or not spec.loader:
-                return None
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
+            from nanobot.agent.sandbox import PythonSandbox
             
-            if phase == "pre_execute" and hasattr(module, "pre_execute"):
-                hook_result = await module.pre_execute(context)
-                if isinstance(hook_result, dict):
-                    return HookResult(
-                        proceed=hook_result.get("proceed", True),
-                        message=hook_result.get("message", ""),
-                    )
-            elif phase == "post_execute" and hasattr(module, "post_execute"):
-                await module.post_execute(context, result)
+            success, message, result_data = await PythonSandbox.run_hook(
+                hooks_file=hooks_file,
+                hook_name=phase,
+                context=context,
+                result_content=result
+            )
+            
+            if not success:
+                logger.warning(f"hooks.py execution failed for skill '{skill_name}' (phase={phase}): {message}")
+                return None
+                
+            if phase == "pre_execute" and result_data is not None:
+                return HookResult(
+                    proceed=result_data.get("proceed", True),
+                    message=result_data.get("message", ""),
+                )
             
         except Exception as e:
             logger.warning(
@@ -808,7 +856,7 @@ class SkillsLoader:
             try:
                 os.write(fd, content.encode("utf-8"))
                 os.close(fd)
-                os.replace(tmp_path, str(path))
+                safe_replace(tmp_path, str(path))
             except Exception:
                 try:
                     os.close(fd)
@@ -889,6 +937,67 @@ class SkillsLoader:
             if importlib.util.find_spec(import_name) is None:
                 missing.append(pkg)
         return missing
+
+    def install_dependencies(self, skill_name: str) -> tuple[bool, str]:
+        """
+        Check pip dependencies for a skill and report status (Phase 26A).
+
+        Does NOT auto-install. Returns a descriptive message so the LLM
+        can inform the user and get confirmation before calling
+        ``do_install_dependencies()``.
+
+        Returns:
+            (True, "all satisfied")  — nothing to install.
+            (False, description)     — lists missing packages.
+        """
+        missing = self.check_dependencies(skill_name)
+        if not missing:
+            return True, "All pip dependencies are already installed."
+        pkg_list = ", ".join(missing)
+        return (
+            False,
+            f"Missing pip packages for skill '{skill_name}': {pkg_list}. "
+            f"Run `do_install_dependencies({missing})` after user confirmation.",
+        )
+
+    @staticmethod
+    def do_install_dependencies(packages: list[str]) -> tuple[bool, str]:
+        """
+        Install pip packages via subprocess (Phase 26A).
+
+        **Never called silently** — the LLM must inform the user of the
+        packages to be installed and obtain explicit confirmation first.
+
+        Args:
+            packages: List of pip package names to install.
+
+        Returns:
+            (True, stdout)  on success.
+            (False, stderr)  on failure.
+        """
+        if not packages:
+            return True, "No packages to install."
+
+        cmd = [sys.executable, "-m", "pip", "install", *packages]
+        logger.info(f"Installing pip packages: {packages}")
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5-minute hard cap
+            )
+            if proc.returncode == 0:
+                logger.info(f"pip install succeeded for {packages}")
+                return True, proc.stdout[-2000:] if len(proc.stdout) > 2000 else proc.stdout
+            logger.warning(f"pip install failed (rc={proc.returncode}) for {packages}")
+            return False, proc.stderr[-2000:] if len(proc.stderr) > 2000 else proc.stderr
+        except subprocess.TimeoutExpired:
+            logger.error(f"pip install timed out for {packages}")
+            return False, "Installation timed out after 300 seconds."
+        except Exception as e:
+            logger.error(f"pip install error for {packages}: {e}")
+            return False, str(e)
 
     def get_registry_summary(self) -> str:
         """

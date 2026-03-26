@@ -36,8 +36,9 @@ class TestKG1TripleDescriptions:
     def test_add_triple_with_description(self, kg, workspace):
         """Triple with description persists to JSON and reloads."""
         kg._add_triple("David", "works for", "Salesforce", description="Since 2020 in Shenzhen team")
+        kg._save()  # Phase 25: _add_triple no longer auto-saves
 
-        data = json.loads((workspace / "memory" / "graph.json").read_text())
+        data = json.loads((workspace / "memory" / "graph.json").read_text(encoding="utf-8"))
         assert data["triples"][0]["description"] == "Since 2020 in Shenzhen team"
 
         # Reload from disk

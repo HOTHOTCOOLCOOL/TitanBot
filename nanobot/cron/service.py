@@ -13,6 +13,7 @@ from typing import Any, Callable, Coroutine
 from loguru import logger
 
 from nanobot.cron.types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
+from nanobot.utils.helpers import safe_replace
 
 
 def _now_ms() -> int:
@@ -162,7 +163,7 @@ class CronService:
                 json.dump(data, f, indent=2)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp, str(self.store_path))
+            safe_replace(tmp, str(self.store_path))
         except Exception:
             try:
                 os.unlink(tmp)

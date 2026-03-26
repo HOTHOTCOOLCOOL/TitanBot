@@ -20,6 +20,17 @@ test_output.txt
 test_stdout.txt
 run_test.py
 "Skill trq212.md"
+err*.txt
+fail*.txt
+regress*.txt
+pytest_out.txt
+test_all.txt
+test_out.txt
+tmp_*.py
+test_browser_dns.py
+openclaw_*.txt
+openclaw_*.html
+*_report.txt
 
 # ===== Python Standard =====
 

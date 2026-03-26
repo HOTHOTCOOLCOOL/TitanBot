@@ -211,6 +211,7 @@ If you suspect a security breach:
 - 14+ dangerous command deny patterns (network exfiltration, encoded PowerShell, reverse shells — Phase 18A)
 - Input length limits on HTTP requests
 - SSRF protection blocking RFC1918/loopback/link-local/metadata IPs in `web_fetch` (Phase 18B)
+- Weak Model Pre-execution Validation (Payload/Schema checks — Phase 30)
 
 ✅ **Authentication**
 - Allow-list based access control per channel
@@ -245,13 +246,14 @@ If you suspect a security breach:
 4. ~~**Limited Command Filtering**~~ — ✅ **Resolved in Phase 18A**: 14+ deny patterns block network exfiltration, encoded PowerShell, pipe-to-shell, and reverse shells
 5. ~~**No Audit Trail**~~ — ✅ **Resolved in Phase 18B**: Error messages sanitized (generic user-facing, full traceback to logs), failed auth attempts logged
 
-⚠️ **Resolved in Phase 21 Audit:**
+✅ **Resolved in Phase 21 Audit:**
 
 6. ~~**Shell Bypass via Interpreters**~~ — ✅ **Resolved in Phase 21A (S2)**: Added deny patterns for `python -c`, `node -e`, etc. Later refined in Phase 21G (L16) to unblock legitimate scripting while keeping exploit patterns blocked.
 7. ~~**Shell Path Traversal via `cd ..`**~~ — ✅ **Resolved in Phase 21A (S1)**: Added deny patterns for `cd ..`, `cd..`, `%2e` URL-encoded traversal.
 8. ~~**WebSocket Input Validation**~~ — ✅ **Resolved in Phase 21B (S3)**: 10KB message limit + 30 msgs/min per-connection sliding window rate limit.
 9. ~~**Memory Import Path Traversal**~~ — ✅ **Resolved in Phase 21B (S4)**: Added workspace `is_relative_to()` guard before file access.
 10. ~~**JSON File Concurrent Write**~~ — ✅ **Resolved in Phase 21C (S5)**: Temp file + `os.replace()` atomic write in `reflection.py` and `knowledge_graph.py`.
+11. ~~**Weak Model Hallucination Loops**~~ — ✅ **Resolved in Phase 30**: Added multi-layered execution safeguards (pre-execution validation, circuit breakers, duplicate tool detection) to isolate and prevent infinite loops when interacting with weaker LLMs.
 
 ## Security Checklist
 

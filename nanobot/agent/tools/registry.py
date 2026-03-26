@@ -1,6 +1,9 @@
 """Tool registry for dynamic tool management."""
 
+import asyncio
 from typing import Any
+
+from loguru import logger
 
 from nanobot.agent.tools.base import Tool
 
@@ -60,7 +63,13 @@ class ToolRegistry:
             errors = tool.validate_params(params)
             if errors:
                 return f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors)
-            result = await tool.execute(**params)
+            # BP-3: Unified tool execution timeout
+            timeout = tool.execution_timeout
+            try:
+                result = await asyncio.wait_for(tool.execute(**params), timeout=timeout)
+            except asyncio.TimeoutError:
+                logger.warning(f"Tool '{name}' timed out after {timeout}s")
+                return f"Error: Tool '{name}' execution timed out after {timeout} seconds"
             # I3: Truncate oversized output to prevent context explosion
             if isinstance(result, str) and len(result) > self.MAX_TOOL_OUTPUT:
                 result = result[:self.MAX_TOOL_OUTPUT] + "\n\n[OUTPUT TRUNCATED — original length: {:,} chars]".format(len(result))

@@ -17,6 +17,7 @@ import json_repair
 
 from nanobot.providers.base import LLMProvider
 from nanobot.agent.task_knowledge import tokenize_key
+from nanobot.utils.helpers import safe_replace
 
 
 class KnowledgeGraph:
@@ -53,8 +54,9 @@ class KnowledgeGraph:
     # E2: Maximum number of triples before auto-pruning
     MAX_TRIPLES = 500
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, vector_memory: Any = None):
         self.workspace = workspace
+        self.vector_memory = vector_memory
         self.graph_file = workspace / "memory" / "graph.json"
 
         # Structure
@@ -100,7 +102,7 @@ class KnowledgeGraph:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(content)
-            os.replace(tmp_path, str(self.graph_file))
+            safe_replace(tmp_path, str(self.graph_file))
         except Exception:
             try:
                 os.unlink(tmp_path)
@@ -488,6 +490,17 @@ Do not include markdown fences."""
             if count > 0:
                 self._save()
                 logger.info(f"KnowledgeGraph: generated summaries for {count} entities")
+                
+                # Phase 28C: Sync entity summaries to Vector DB for semantic searching
+                if getattr(self, "vector_memory", None):
+                    for name, summary in summaries.items():
+                        if name in self._entities and isinstance(summary, str) and summary.strip():
+                            # Prefix with kg_entity: to easily filter during retrieval
+                            self.vector_memory.ingest_text(
+                                text=f"{name}: {summary}", 
+                                source=f"kg_entity:{name}",
+                                metadata={"entity": name, "type": "kg_summary"}
+                            )
             return count
         except Exception as e:
             logger.error(f"Entity summary generation failed: {e}")
@@ -512,21 +525,39 @@ Do not include markdown fences."""
         if not query_words:
             return ""
 
-        matched_entities: list[tuple[str, dict[str, Any], int]] = []
+        # Phase 28C: Semantic retrieval from Vector DB
+        semantic_boost = {}
+        if getattr(self, "vector_memory", None):
+            try:
+                # Top 5 semantic matches
+                v_results = self.vector_memory.search(query, top_k=5, source_filter="kg_entity")
+                for r in v_results:
+                    entity_name = r.get("metadata", {}).get("entity")
+                    if entity_name:
+                        # VectorMemory score is typically 0.0-1.0; scale to match local scoring
+                        semantic_boost[entity_name.lower()] = float(r.get("score", 0.0)) * 3.0
+            except Exception as e:
+                logger.warning(f"KnowledgeGraph semantic search failed: {e}")
+
+        matched_entities: list[tuple[str, dict[str, Any], float]] = []
         for name, info in self._entities.items():
             if not info.get("summary"):
                 continue
             name_lower = name.lower()
             name_words = set(tokenize_key(name_lower))
 
-            # Priority scoring
-            score = 0
+            # Priority scoring (Hybrid Exact + Semantic)
+            score = 0.0
             if name_lower in query_lower:
-                score = 3  # Exact substring match
+                score += 3.0  # Exact substring match
             elif query_words & name_words:
-                score = 1  # Token overlap
+                score += 1.0  # Token overlap
+            
+            # Add semantic boost
+            if name_lower in semantic_boost:
+                score += semantic_boost[name_lower]
 
-            if score > 0:
+            if score > 0.0:
                 matched_entities.append((name, info, score))
 
         if not matched_entities:
@@ -538,7 +569,7 @@ Do not include markdown fences."""
         matched_entities = matched_entities[:5]
 
         parts = []
-        for name, info, _ in matched_entities:
+        for name, info, score in matched_entities:
             summary = info.get("summary", "")
             parts.append(f"- **{name}**: {summary}")
 

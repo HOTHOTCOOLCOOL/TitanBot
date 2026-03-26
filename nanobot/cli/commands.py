@@ -324,10 +324,11 @@ def _make_provider(config: Config):
 
 @app.command()
 def gateway(
+    host: str = typer.Option("127.0.0.1", "--host", help="Host to bind the gateway to"),
     port: int = typer.Option(18790, "--port", "-p", help="Gateway port"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
-    """Start the nanobot gateway."""
+    """Start the nanobot unified gateway (Core Engine + Channels + Web Dashboard)."""
     from nanobot.config.loader import load_config, get_data_dir
     from nanobot.bus.queue import MessageBus
     from nanobot.agent.loop import AgentLoop
@@ -462,14 +463,68 @@ def gateway(
     
     console.print(f"[green]✓[/green] Heartbeat: every 30m")
     
+    try:
+        import uvicorn
+        from nanobot.dashboard.app import (
+            app as dashboard_app, init_dashboard,
+            broadcast_ws_message, init_event_subscription,
+            init_stream_subscription,
+            verify_token
+        )
+        from fastapi import Depends
+
+        # Setup global dashboard dependencies
+        init_dashboard(bus, config.workspace_path, token=config.gateway.token)
+        init_event_subscription(bus)
+        init_stream_subscription(bus)
+
+        # Hook up bus outbound messages to WS broadcast
+        async def _ws_outbound_logger(msg):
+            await broadcast_ws_message("log", {"sender": msg.channel, "message": msg.content})
+
+        async def _ws_inbound_logger(msg):
+            await broadcast_ws_message("log", {"sender": "User", "message": msg.content})
+
+        bus.subscribe_global(_ws_outbound_logger)
+        bus.subscribe_inbound_global(_ws_inbound_logger)
+        
+        # Inject CLI direct chat endpoint
+        from pydantic import BaseModel
+        class CliChatReq(BaseModel):
+            message: str
+            session_id: str = "cli:direct"
+            
+        @dashboard_app.post("/api/cli_chat", dependencies=[Depends(verify_token)])
+        async def cli_chat(req: CliChatReq):
+            reply = await agent.process_direct(req.message, session_key=req.session_id, channel="cli")
+            return {"response": reply}
+
+        console.print(f"[green]✓[/green] Web Dashboard: http://{host}:{port}  (Token: {config.gateway.token or 'auto'})")
+
+        uvi_config = uvicorn.Config(
+            dashboard_app, host=host, port=port,
+            log_level="info" if verbose else "warning",
+            access_log=False,
+        )
+        server = uvicorn.Server(uvi_config)
+    except ImportError:
+        console.print("[red]Missing dependencies for Web UI. Please run `pip install fastapi uvicorn`[/red]")
+        server = None
+
     async def run():
         try:
             await cron.start()
             await heartbeat.start()
-            await asyncio.gather(
+            
+            tasks = [
                 agent.run(),
                 channels.start_all(),
-            )
+                bus.dispatch_outbound(),
+            ]
+            if server:
+                tasks.append(server.serve())
+            
+            await asyncio.gather(*tasks)
         except KeyboardInterrupt:
             console.print("\nShutting down...")
         finally:
@@ -494,77 +549,50 @@ def agent(
     message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"),
     session_id: str = typer.Option("cli:direct", "--session", "-s", help="Session ID"),
     markdown: bool = typer.Option(True, "--markdown/--no-markdown", help="Render assistant output as Markdown"),
-    logs: bool = typer.Option(False, "--logs/--no-logs", help="Show nanobot runtime logs during chat"),
+    host: str = typer.Option("127.0.0.1", help="Gateway host to connect to"),
+    port: int = typer.Option(18790, help="Gateway port to connect to"),
 ):
-    """Interact with the agent directly."""
-    from nanobot.config.loader import load_config, get_data_dir
-    from nanobot.bus.queue import MessageBus
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.cron.service import CronService
-    from nanobot.session.manager import SessionManager
-    from loguru import logger
+    """Interact with the agent via the Gateway."""
+    from nanobot.config.loader import load_config
+    import urllib.request
+    import urllib.error
+    import json
     
     config = load_config()
+    token = config.gateway.token or ""
     
-    # Set i18n language from config
-    from nanobot.agent.i18n import set_language
-    language = config.agents.defaults.language
-    set_language(language)
-    
-    bus = MessageBus()
-    provider = _make_provider(config)
+    def _send_to_gateway(text: str) -> str:
+        url = f"http://{host}:{port}/api/cli_chat"
+        req_data = json.dumps({"message": text, "session_id": session_id}).encode('utf-8')
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {token}'
+        }
+        req = urllib.request.Request(url, data=req_data, headers=headers, method='POST')
+        try:
+            with urllib.request.urlopen(req) as response:
+                res_data = json.loads(response.read().decode('utf-8'))
+                return res_data.get("response", "")
+        except urllib.error.URLError as e:
+            console.print(f"[red]Error communicating with gateway: {e}[/red]")
+            console.print("Make sure 'nanobot gateway' is running.")
+            raise typer.Exit(1)
 
-    # Create cron service for tool usage (no callback needed for CLI unless running)
-    cron_store_path = get_data_dir() / "cron" / "jobs.json"
-    cron = CronService(cron_store_path)
-
-    if logs:
-        logger.enable("nanobot")
-    else:
-        logger.disable("nanobot")
-    
-    session_manager = SessionManager(config.workspace_path)
-    session_manager.set_identity_mapping(config.master_identities)
-
-    agent_loop = AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=config.workspace_path,
-        model=config.agents.defaults.model,
-        temperature=config.agents.defaults.temperature,
-        max_tokens=config.agents.defaults.max_tokens,
-        max_iterations=config.agents.defaults.max_tool_iterations,
-        memory_window=config.agents.defaults.memory_window,
-        brave_api_key=config.tools.web.search.api_key or None,
-        exec_config=config.tools.exec,
-        cron_service=cron,
-        restrict_to_workspace=config.tools.restrict_to_workspace,
-        session_manager=session_manager,
-        mcp_servers=config.tools.mcp_servers,
-        language=language,
-    )
-    
-    # Show spinner when logs are off (no output to miss); skip when logs are on
+    # Show spinner while local requests are awaiting gateway
+    from contextlib import nullcontext
     def _thinking_ctx():
-        if logs:
-            from contextlib import nullcontext
-            return nullcontext()
-        # Animated spinner is safe to use with prompt_toolkit input handling
-        return console.status("[dim]nanobot is thinking...[/dim]", spinner="dots")
+        return console.status("[dim]nanobot gateway is processing...[/dim]", spinner="dots")
 
     if message:
         # Single message mode
-        async def run_once():
-            with _thinking_ctx():
-                response = await agent_loop.process_direct(message, session_id)
-            _print_agent_response(response, render_markdown=markdown)
-            await agent_loop.close_mcp()
-        
-        asyncio.run(run_once())
+        with _thinking_ctx():
+            response = _send_to_gateway(message)
+        _print_agent_response(response, render_markdown=markdown)
     else:
         # Interactive mode
         _init_prompt_session()
-        console.print(f"{__logo__} Interactive mode (type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit)\n")
+        console.print(f"{__logo__} Interactive Client Mode (type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit)")
+        console.print(f"Connected to Gateway at {host}:{port}\n")
 
         def _exit_on_sigint(signum, frame):
             _restore_terminal()
@@ -574,33 +602,31 @@ def agent(
         signal.signal(signal.SIGINT, _exit_on_sigint)
         
         async def run_interactive():
-            try:
-                while True:
-                    try:
-                        _flush_pending_tty_input()
-                        user_input = await _read_interactive_input_async()
-                        command = user_input.strip()
-                        if not command:
-                            continue
+            while True:
+                try:
+                    _flush_pending_tty_input()
+                    user_input = await _read_interactive_input_async()
+                    command = user_input.strip()
+                    if not command:
+                        continue
 
-                        if _is_exit_command(command):
-                            _restore_terminal()
-                            console.print("\nGoodbye!")
-                            break
-                        
-                        with _thinking_ctx():
-                            response = await agent_loop.process_direct(user_input, session_id)
-                        _print_agent_response(response, render_markdown=markdown)
-                    except KeyboardInterrupt:
+                    if _is_exit_command(command):
                         _restore_terminal()
                         console.print("\nGoodbye!")
                         break
-                    except EOFError:
-                        _restore_terminal()
-                        console.print("\nGoodbye!")
-                        break
-            finally:
-                await agent_loop.close_mcp()
+                    
+                    with _thinking_ctx():
+                        # Run the sync http request in a thread so we don't block the async loop handling Ctrl+C
+                        response = await asyncio.to_thread(_send_to_gateway, user_input)
+                    _print_agent_response(response, render_markdown=markdown)
+                except KeyboardInterrupt:
+                    _restore_terminal()
+                    console.print("\nGoodbye!")
+                    break
+                except EOFError:
+                    _restore_terminal()
+                    console.print("\nGoodbye!")
+                    break
         
         asyncio.run(run_interactive())
 
@@ -1057,53 +1083,32 @@ def _login_github_copilot() -> None:
 
 @app.command()
 def dashboard(
-    config_file: str = typer.Option("config.json", help="Path to config file"),
-    host: str = typer.Option("127.0.0.1", help="Host to bind the dashboard to"),
-    port: int = typer.Option(8000, help="Port to bind the dashboard to")
+    host: str = typer.Option("127.0.0.1", help="Gateway host to connect to"),
+    port: int = typer.Option(18790, help="Gateway port to connect to")
 ):
     """
-    Start the Nanobot Command Center Web Dashboard.
+    Open the Nanobot Command Center Web Dashboard in your browser.
+    
+    The Dashboard connects to the Gateway API (remote mode) and does not
+    run its own AgentLoop. Ensure 'nanobot gateway' is already running.
     """
-    from loguru import logger
-    from nanobot.config.loader import load_config, get_config_path
-    from nanobot.bus.queue import MessageBus
+    import webbrowser
+    from nanobot.config.loader import load_config
     
-    # Try user-provided path, fallback to default
-    config_path = Path(config_file)
-    if not config_path.exists():
-        config_path = get_config_path()
-        
-    logger.info(f"Using config from: {config_path}")
-    config = load_config(config_path)
+    config = load_config()
+    token = config.gateway.token or ""
     
-    # Initialize message bus and start dispatch loop
-    bus = MessageBus()
-    asyncio.run_coroutine_threadsafe(bus.dispatch_outbound(), asyncio.get_event_loop()) \
-        if asyncio.get_event_loop().is_running() else None
+    url = f"http://{host}:{port}/"
+    if token:
+        url += f"?token={token}"
         
-    try:
-        import uvicorn
-        from nanobot.dashboard.app import app as dashboard_app, init_dashboard, broadcast_ws_message, init_event_subscription
-        
-        # Setup global dashboard dependencies
-        init_dashboard(bus, config.workspace_path, token=config.gateway.token)
-        # Phase 22D: Wire domain event broadcasting to Dashboard WebSocket
-        init_event_subscription(bus)
-        
-        # Hook up bus outbound messages to WS broadcast
-        async def _ws_outbound_logger(msg):
-            await broadcast_ws_message("log", {"sender": msg.channel, "message": msg.content})
-            
-        async def _ws_inbound_logger(msg):
-            await broadcast_ws_message("log", {"sender": "User", "message": msg.content})
-        
-        bus.subscribe_global(_ws_outbound_logger)
-        bus.subscribe_inbound_global(_ws_inbound_logger)
-        
-        logger.info(f"Starting dashboard on http://{host}:{port}")
-        uvicorn.run(dashboard_app, host=host, port=port)
-    except ImportError:
-        console.print("[red]Missing dependencies. Please run `pip install fastapi uvicorn`")
+    console.print(f"{__logo__} Nanobot Dashboard (Remote Client)")
+    console.print(f"Connecting to Gateway at {host}:{port}...")
+    console.print(f"Opening browser to: [cyan]{url}[/cyan]\n")
+    console.print("[dim]If the page doesn't load, ensure the gateway is running:[/dim]")
+    console.print("[dim]  python -m nanobot gateway[/dim]")
+    
+    webbrowser.open(url)
 
 if __name__ == "__main__":
     app()

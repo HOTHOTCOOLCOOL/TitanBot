@@ -52,12 +52,13 @@ _FAKE_COMPLETION_PHRASES = [
 
 # Keywords in the LLM response that suggest the workflow failed
 # L3: Removed 'no results' — too generic, causes false negatives in legitimate responses
+# DESIGN-4: Use specific action-failure phrases to reduce false positives in analytical responses
 _FAIL_INDICATORS = [
     "找不到", "没有找到", "未找到", "没找到",
-    "无法找到", "无法获取", "无法访问",
+    "无法找到", "无法获取", "无法访问", "无法完成", "无法执行",
     "error:", "not found", "no emails found",
-    "无法", "失败", "出错",
-    "sorry", "抱歉",
+    "执行失败", "操作失败", "执行出错",
+    "sorry, i", "很抱歉",
 ]
 
 
@@ -137,6 +138,7 @@ class AgentLoop:
         self._mcp_connected = False
         self._dynamic_tool_names: list[str] = []  # Track plugin tools for /reload
         self._config = None  # Cached Config instance
+        self._vlm_provider_cache: dict[str, LLMProvider] = {}  # DESIGN-5: cache VLM providers
 
         # Task Tracker - 任务状态追踪 (用于 /tasks 命令)
         self.task_tracker = TaskTracker(workspace)
@@ -185,7 +187,7 @@ class AgentLoop:
         if self._knowledge_graph is None:
             try:
                 from nanobot.agent.knowledge_graph import KnowledgeGraph
-                self._knowledge_graph = KnowledgeGraph(self.workspace)
+                self._knowledge_graph = KnowledgeGraph(self.workspace, vector_memory=getattr(self.context, 'vector_memory', None))
             except Exception:
                 pass
         return self._knowledge_graph
@@ -277,15 +279,11 @@ class AgentLoop:
                         logger.warning(f"VLM provider config missing for {target_model}, falling back to default model")
                         target_model = self.model
                     else:
-                        from nanobot.providers.litellm_provider import LiteLLMProvider
-                        provider_name = config.get_provider_name(target_model)
-                        provider_for_turn = LiteLLMProvider(
-                            api_key=p_conf.api_key,
-                            api_base=config.get_api_base(target_model),
-                            default_model=target_model,
-                            extra_headers=p_conf.extra_headers,
-                            provider_name=provider_name
-                        )
+                        # DESIGN-5: Cache VLM provider to avoid re-creating per turn
+                        if target_model not in self._vlm_provider_cache:
+                            from nanobot.providers.factory import ProviderFactory
+                            self._vlm_provider_cache[target_model] = ProviderFactory.get_provider(target_model, config)
+                        provider_for_turn = self._vlm_provider_cache[target_model]
 
             # Phase 21E: Check streaming config
             _streaming_enabled = getattr(
@@ -368,8 +366,15 @@ class AgentLoop:
                 )
 
                 # B1: circuit breaker — count consecutive all-exception turns
-                exception_count = sum(1 for r in results if isinstance(r, BaseException))
-                if exception_count == len(results) and len(results) > 0:
+                def _is_error_result(r):
+                    if isinstance(r, BaseException):
+                        return True
+                    if isinstance(r, str) and str(r).strip().startswith("Error:"):
+                        return True
+                    return False
+                    
+                error_count = sum(1 for r in results if _is_error_result(r))
+                if error_count == len(results) and len(results) > 0:
                     consecutive_all_exceptions += 1
                     logger.warning(f"All {len(results)} tools failed (streak: {consecutive_all_exceptions})")
                     if consecutive_all_exceptions >= 3:
@@ -411,7 +416,7 @@ class AgentLoop:
                 _recent_call_sigs.append(_iter_sig)
                 # Keep only last N signatures
                 if len(_recent_call_sigs) > _DUPLICATE_THRESHOLD:
-                    _recent_call_sigs = _recent_call_sigs[-_DUPLICATE_THRESHOLD:]
+                    del _recent_call_sigs[:-_DUPLICATE_THRESHOLD]  # BUG-2: in-place trim preserves reference
                 # Check if last N are ALL identical
                 if (len(_recent_call_sigs) >= _DUPLICATE_THRESHOLD
                         and len(set(_recent_call_sigs[-_DUPLICATE_THRESHOLD:])) == 1):
@@ -549,32 +554,48 @@ class AgentLoop:
         await self._connect_mcp()
         logger.info("Agent loop started")
         
+        # Initialize plugin lifecycles
+        for tool in self.tools._tools.values():
+            try:
+                await tool.setup()
+            except Exception as e:
+                logger.error(f"Failed to setup tool {tool.name}: {e}", exc_info=True)
+        
         # NOTE: idle_checker for automatic memory consolidation is disabled.
         # It was removed because auto-triggering LLM consolidation caused
         # interference with active user tasks. Memory consolidation is now
         # triggered manually by the user (reply "是/好") or via /new command.
 
-        while self._running:
-            try:
-                msg = await asyncio.wait_for(
-                    self.bus.consume_inbound(),
-                    timeout=1.0
-                )
+        try:
+            while self._running:
                 try:
-                    with metrics.timer("message_processing"):
-                        response = await self._process_message(msg)
-                    if response:
-                        await self.bus.publish_outbound(response)
+                    msg = await asyncio.wait_for(
+                        self.bus.consume_inbound(),
+                        timeout=1.0
+                    )
+                    try:
+                        with metrics.timer("message_processing"):
+                            response = await self._process_message(msg)
+                        if response:
+                            await self.bus.publish_outbound(response)
+                    except Exception as e:
+                        logger.error(f"Error processing message: {e}", exc_info=True)
+                        metrics.increment("message_error_count")
+                        await self.bus.publish_outbound(OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content="Sorry, I encountered an internal error. Please try again or contact the administrator."
+                        ))
+                except asyncio.TimeoutError:
+                    continue
+        finally:
+            logger.info("Cleaning up agent resources...")
+            for tool in self.tools._tools.values():
+                try:
+                    await tool.teardown()
                 except Exception as e:
-                    logger.error(f"Error processing message: {e}", exc_info=True)
-                    metrics.increment("message_error_count")
-                    await self.bus.publish_outbound(OutboundMessage(
-                        channel=msg.channel,
-                        chat_id=msg.chat_id,
-                        content="Sorry, I encountered an internal error. Please try again or contact the administrator."
-                    ))
-            except asyncio.TimeoutError:
-                continue
+                    logger.error(f"Failed to teardown tool {tool.name}: {e}", exc_info=True)
+            await self.close_mcp()
     
     async def close_mcp(self) -> None:
         """Close MCP connections."""

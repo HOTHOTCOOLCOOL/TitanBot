@@ -11,6 +11,27 @@
     "vlm": {
       "enabled": true,
       "model": "dashscope/qwen-vl-max"
+    },
+    "browser": {
+      "enabled": true,
+      "headless": true,
+      "executablePath": "",
+      "defaultTimeoutMs": 30000,
+      "viewportWidth": 1920,
+      "viewportHeight": 1080,
+      "maxPages": 5,
+      "sessionTtlHours": 24,
+      "trustedDomains": [],
+      "blockInternalIps": true
+    },
+    "streaming": {
+      "enabled": true
+    },
+    "memoryFeatures": {
+      "reflectionEnabled": true,
+      "knowledgeGraphEnabled": true,
+      "visualMemoryEnabled": true,
+      "experienceEnabled": true
     }
   },
   "providers": {

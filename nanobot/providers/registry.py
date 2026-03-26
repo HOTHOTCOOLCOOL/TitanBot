@@ -249,6 +249,24 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         model_overrides=(),
     ),
 
+    # Volcengine (火山引擎): needs "volcengine/" prefix for LiteLLM routing.
+    ProviderSpec(
+        name="volcengine",
+        keywords=("volcengine", "doubao", "ep-"),
+        env_key="VOLCENGINE_API_KEY",
+        display_name="Volcengine",
+        litellm_prefix="volcengine",
+        skip_prefixes=("volcengine/",),
+        env_extras=(),
+        is_gateway=False,
+        is_local=False,
+        detect_by_key_prefix="",
+        detect_by_base_keyword="",
+        default_api_base="",
+        strip_model_prefix=False,
+        model_overrides=(),
+    ),
+
     # Zhipu: LiteLLM uses "zai/" prefix.
     # Also mirrors key to ZHIPUAI_API_KEY (some LiteLLM paths check that).
     # skip_prefixes: don't add "zai/" when already routed via gateway.

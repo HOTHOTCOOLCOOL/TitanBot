@@ -187,7 +187,7 @@ class TestWebSocketCleanup:
         bad_ws.send_text.side_effect = ConnectionError("dead connection")
 
         original_ws_list = dashboard_app._active_websockets
-        dashboard_app._active_websockets = [good_ws, bad_ws]
+        dashboard_app._active_websockets = {good_ws, bad_ws}
 
         try:
             await dashboard_app.broadcast_ws_message("test", {"hello": "world"})
@@ -209,7 +209,7 @@ class TestWebSocketCleanup:
         bad_ws.send_text.side_effect = ConnectionError("dead")
 
         original_ws_list = dashboard_app._active_websockets
-        dashboard_app._active_websockets = [good_ws, bad_ws]
+        dashboard_app._active_websockets = {good_ws, bad_ws}
 
         mock_event = MagicMock()
         mock_event.to_dict.return_value = {"event_type": "test", "timestamp": "now"}

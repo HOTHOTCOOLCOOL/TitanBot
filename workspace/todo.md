@@ -228,8 +228,22 @@ Nanobot 是一个轻量级 AI Agent 框架，当前架构核心：
 - [ ] PWA Dashboard
 - [ ] Playwright Browser Automation
 
----
+### Phase 30: Weak Model Tool Calling Protection (混合模型与防暴走架构)
 
+**Phase 30A: 事中（阻断）- 核心防护底座 (Simple & High ROI)**
+- [ ] **全局失败配额 (Global Error Budget)**: 设定单次任务(Session)内工具调用累计失败 M 次即触发强行 Halt，拦截盲目遍历。
+- [ ] **同源错误熔断 (Circuit Breaker)**: 实现同一工具单条上下文中连续失败 N 次（`max_consecutive_errors`），立刻没收该工具执行权限。
+- [ ] **敏感工具弹窗 (Human-in-the-loop)**: 对于高危写操作/系统操作工具，拦截 `execute()` 并在 Dashboard 发送审批请求，弱模型无权直接放行。
+
+**Phase 30B: 事后（托底）- 结构化错误与 Escalation (Medium Complexity)**
+- [ ] **结构化异常提示 (Structured Errors)**: 重写 tool 的全局异常捕捉。屏蔽底层 traceback (如 `dll load failed`)，翻译为易懂指令："此为系统级环境错误，请勿重试，立刻报告用户"。
+- [ ] **升级求助机制 (Escalation to Strong Model)**: 当弱模型触发熔断或严重卡壳时，冻结上下文，自动调用强模型（Manager）对失败日志进行诊断并给出行动建议。
+
+**Phase 30C: 事前（预防）- 动态注入与强校验 (Advanced Architecture)**
+- [ ] **动态工具注入 (Tool RAG)**: 根据用户的自然语言 Prompt 进行意图分类，动态注入最相关的 3-5 个 Tool Schema，极大缩小弱模型的幻觉搜索空间。
+- [ ] **Pydantic 预校验检查 (Pre-flight Critic)**: 将执行前的 JSON Schema 强类型校验剥离出来，对于结构错误的 payload，用极轻量的修正模型/规则立刻打回，拒绝触达实际 Tool。
+
+---
 
 ## 📝 关键知识点（供新对话参考）
 

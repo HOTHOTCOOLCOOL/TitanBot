@@ -39,6 +39,25 @@ class Tool(ABC):
         """JSON Schema for tool parameters."""
         pass
     
+    async def setup(self) -> None:
+        """
+        Lifecycle hook called when the agent loop starts or the tool is loaded.
+        Override to initialize connections, browsers, or other resources.
+        """
+        pass
+        
+    async def teardown(self) -> None:
+        """
+        Lifecycle hook called when the agent loop stops or the tool is unloaded.
+        Override to close connections, kill processes, or free resources.
+        """
+        pass
+
+    @property
+    def execution_timeout(self) -> int | None:
+        """Max execution time in seconds for ToolRegistry. None = no timeout. Override per-tool."""
+        return 120
+
     @abstractmethod
     async def execute(self, **kwargs: Any) -> str:
         """

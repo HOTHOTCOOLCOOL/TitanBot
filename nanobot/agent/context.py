@@ -242,7 +242,7 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
                 kg = knowledge_graph  # D2: prefer cached instance
                 if kg is None:
                     from nanobot.agent.knowledge_graph import KnowledgeGraph
-                    kg = KnowledgeGraph(self.workspace)
+                    kg = KnowledgeGraph(self.workspace, vector_memory=self.vector_memory)
                 kq_query = search_query or current_message
                 # KG3: Prefer entity summaries over raw 1-hop triples
                 kg_context = kg.get_entity_context(kq_query)

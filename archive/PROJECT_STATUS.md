@@ -21,7 +21,7 @@
 - `nanobot/agent/tools/`: Core built-in tools (`exec`, Python execution, `outlook.py`, `ssrs`, `attachment_analyzer.py`).
 - `nanobot/plugins/`: **Dynamic plugin directory.** Drop any `.py` file containing a `Tool` subclass here — it will be auto-discovered at startup or via `/reload`. Use `python -m nanobot.onboard <skill>` to install from `resources/`.
 - `nanobot/bus/`: Internal Event/Message Bus handling decoupled asynchronous routing.
-- `nanobot/channels/`: I/O interfaces (`ChannelManager`, Email IMAP/SMTP, Discord, Telegram, Whatsapp, CLI). **Crucial for multi-platform reach.**
+- `nanobot/channels/`: I/O interfaces (`ChannelManager`, CLI, MoChat, Telegram, Discord, Slack, Email, Feishu, DingTalk, WhatsApp, QQ). **Active focus: Feishu + future WeChat.** Other channels maintained but deprioritized.
 - `nanobot/cron/`: Background scheduled task engine (`service.py`). Manages recurrent jobs and triggers the agent automatically.
 - `nanobot/session/`: Chat history management, caching, and state tracking per channel/user.
 - `resources/`: Mature, portable Skills stored here as verifiable backups and templates (e.g., `ssrs-report`, `outlook-email-analysis`). Use `onboard.py` to install into `plugins/`.
@@ -242,141 +242,9 @@ New tests: `test_phase22b_skills.py` (36 tests). **Regression baseline: 847 pass
 
 ### Phase 22C — Multi-Modal & Channel Extension
 
-- [ ] **Multi-Channel Image Support** — Extend image download to MoChat, Slack, DingTalk channels
-- [ ] **Unified speech-to-text pipeline** — extend voice input beyond Telegram to all channels
-- [ ] **Image generation tool** — integrate DALL-E / Stable Diffusion as a built-in creative tool
+> **通道策略 (2026-03-25):** 未来通道开发聚焦 **飞书 (Feishu)** 和新增 **微信 (WeChat)**，其余通道代码保留但不再主动投入。
 
-### Phase 22D — Architecture Evolution ✅
-
-| ID | Item | File(s) | Description |
-|----|------|---------|-------------|
-| AE1 | Event-Driven Architecture Enhancement | `bus/events.py`, `bus/queue.py`, `bus/__init__.py`, `agent/loop.py`, `dashboard/app.py`, `cli/commands.py` | Extended `MessageBus` with typed domain events (`DomainEvent` base + 6 subclasses: `ToolExecutedEvent`, `KnowledgeMatchedEvent`, `MemoryConsolidatedEvent`, `SessionLifecycleEvent`, `SkillTriggeredEvent`, `CronJobEvent`). Topic-based pub/sub via `subscribe_event(topic, cb)` with wildcard `"*"` support. 3 emitters wired in agent loop. Dashboard WebSocket forwarding for real-time observability. Zero overhead — pure in-memory callback dispatch. |
-| AE2 | Session Save Optimization | `session/manager.py`, `agent/loop.py`, `agent/state_handler.py` | Added `_metadata_dirty` flag to `Session`. When only new messages are added (no pending state changes), `SessionManager.save()` uses append-only mode (O(1) per new message) instead of full O(n) rewrite. All metadata mutation points wire `mark_metadata_dirty()`. SQLite migration evaluated and deferred — JSONL is sufficient for current workloads. |
-
-- ~~Consider async generator pattern for streaming LLM responses end-to-end~~ ✅ *Done — Phase 21E*
-
-New tests: `test_phase22d_architecture.py` (35 tests, 1 skipped). **Regression baseline: 847 passed.**
-
-### Phase 24 — Knowledge Graph Evolution (MDER-DR) ✅
-
-> Inspired by MDER-DR paper (arXiv 2603.11223): "Move multi-hop reasoning complexity from query-time to index-time."
-
-| ID | Item | File(s) | Description |
-|----|------|---------|-------------|
-| KG1 | Triple Description Enrichment | `knowledge_graph.py` | `description` field on every triple preserving time/conditions/scope context. Prompt updated to request descriptions. |
-| KG2 | Entity Disambiguation | `knowledge_graph.py` | Substring + length-ratio heuristic. Auto-merges "David" → "David Liu". `aliases` map in `graph.json`. Manual `add_alias()`. |
-| KG3 | Entity-Centric Summaries | `knowledge_graph.py`, `context.py`, `memory_manager.py` | Per-entity LLM summaries in `entities` index. `get_entity_context()` replaces `get_1hop_context()` as primary injection. |
-| KG4 | Query Decomposition (DR) | `knowledge_graph.py` | `_is_complex_query()` heuristic, `decompose_query()`, `resolve_multihop()` for multi-hop Q&A. |
-| KG5 | Semantic Chunking | `knowledge_graph.py` | `_semantic_chunk()` splits long texts at paragraph/sentence boundaries before extraction. |
-
-New tests: `test_phase24_knowledge_graph.py` (31 tests). **Regression: 979 passed** (2 pre-existing env-dependent failures).
-
-### Deferred / Upcoming
-
-#### Phase 26 — Playwright Browser Automation (In Progress)
-
-> **架构决策**: Skill + Tool Hybrid（按需加载）。详见 `implementation_plan.md`。
-
-#### Phase 26A — Plugin Dependency Management ✅
-
-| ID | Item | File(s) | Description |
-|----|------|---------|-------------|
-| DM1 | BrowserConfig Schema | `config/schema.py` | New `BrowserConfig` Pydantic model (10 fields) wired into `AgentsConfig.browser`. |
-| DM2 | `_check_requirements()` pip support | `agent/skills.py` | Extended to check `requires.pip` via `importlib.util.find_spec()`. |
-| DM3 | `_get_missing_requirements()` pip | `agent/skills.py` | Reports missing pip packages as `"PIP: pkg"` in XML `<requires>` tag. |
-| DM4 | `install_dependencies()` | `agent/skills.py` | Reports missing deps without auto-installing. |
-| DM5 | `do_install_dependencies()` | `agent/skills.py` | Runs `pip install` via subprocess (5min timeout). Never silent. |
-
-New tests: `test_phase26a_deps.py` (16 tests). **Regression: 992 passed** (5 pre-existing failures).
-
-| Sub-Phase | Scope | Est. |
-|---|---|---|
-| **26A** | Plugin Dependency Management — SK7 `install_dependencies()` + `BrowserConfig` schema | ✅ |
-| **26B** | Playwright Skill (`skills/browser-automation/`) + `BrowserTool` Plugin (`plugins/browser.py`) — 11 actions, dual-layer SSRF, progressive trust | 1-2d |
-| **26C** | Session encryption (DPAPI) + `TrustManager` + TTL auto-cleanup | 1d |
-
-Design decisions (confirmed):
-- Skill layer for AI trigger/config/hooks + Plugin Tool layer for execution
-- Progressive trust: first navigation prompts user, then remembers permanently; sub-requests pass unless internal IP
-- DPAPI-encrypted cookie/storage persistence with domain isolation and TTL
-- Complements desktop RPA: `browser` for Web apps, `rpa` for Win32 apps
-
-#### Plugin Marketplace *(P3 — after Phase 26)*
-- Browsable registry of community-contributed skills
-- JSON registry + GitHub-hosted skill packages
-
-> **Note:** Tool extensions (SqlQueryTool, CreateExcelTool, etc.) remain deprioritized — `ExecTool` + Knowledge Workflow covers these via Python libraries with automatic skill learning.
-
-> **Note:** **Data Pipeline & Complex Contract Parsing** is an independent project with separate planning.
-
-
-## 9. Phase 23: Security Audit Remediation ✅
-
-> Full-spectrum security/architecture audit identified **16 risk items** across 3 priority levels. All remediated in 3 sub-phases.
-
-### Phase 23A — P0 Security Hardening ✅
-
-| ID | Risk | File(s) | Fix Summary |
-|----|------|---------|-------------|
-| R1 | Dashboard POST no input validation | `dashboard/app.py` | 1 MB body size limit on POST endpoints (HTTP 413) |
-| R2 | hooks.py arbitrary code execution | `skills.py` | Workspace-only path, 50 KB size limit, static scan blocking dangerous imports |
-| R4 | SSRF DNS rebinding bypass | `web.py` | `_SSRFSafeTransport` validates IPs at connect time, closing TOCTOU |
-| R5 | Token logged in plaintext | `dashboard/app.py` | Masked to first 8 chars + `***` |
-
-New tests: 14 passed. **Regression: 924+ passed.**
-
-### Phase 23B — P1 Data Integrity & Architecture ✅
-
-| ID | Risk | File(s) | Fix Summary |
-|----|------|---------|-------------|
-| R3 | Session non-atomic write | `session/manager.py` | Temp file + `os.replace()` for both append and full-rewrite modes |
-| R7 | Cron non-atomic write + truncated UUID | `cron/service.py` | Atomic write + full 36-char UUID |
-| R8 | Config singleton bypass | `context.py` | All call sites use `get_config()` singleton |
-| R9/R15 | WebSocket dead connection accumulation | `dashboard/app.py` | Failed WS removed on send error |
-| R10 | Key extraction cache FIFO not LRU | `knowledge_workflow.py` | `OrderedDict`-based true LRU (cap=128) |
-| R13 | Session key restore breaks on underscores | `session/manager.py` | `original_key` persisted in JSONL metadata |
-
-New tests: 15 passed. **Regression: 948 passed.**
-
-### Phase 23C — P2 Architecture Polish & Edge Hardening ✅
-
-| ID | Risk | File(s) | Fix Summary |
-|----|------|---------|-------------|
-| R11 | Image no size limit | `context.py` | 20 MB cap; oversized files skipped with warning |
-| R6 | Write file no size limit | `filesystem.py` | 10 MB cap; rejects before disk write |
-| R14 | VLM env `setdefault` ignores override | `litellm_provider.py` | Direct assignment for VLM dynamic route |
-| R16 | MD5+12 visual hash collision risk | `context.py` | SHA256+16 chars |
-| R12 | Outlook state shared across sessions | `outlook.py` | Documented per-instance scope; future isolation path noted |
-
-New tests: 7 passed. **Regression: 948 passed** (2 pre-existing failures unrelated).
-
-## 8. Phase 22: Skill System Hardening & Architecture Refinement
-
-> Inspired by @trq212's "Lessons from Building Claude Code: How We Use Skills" (Anthropic). See `ARCHITECTURE_LESSONS.md` for the community article capturing our own lessons.
-
-### Phase 22A — Skill Trigger & Discovery Optimization (P0/P1) ✅
-
-| ID | Item | File(s) | Description |
-|----|------|---------|-------------|
-| SK1 | AI-First Skill Descriptions | All 11 `SKILL.md` files | Rewrote all skill `description` fields as model-optimized trigger specs. Moved "When to use" trigger phrases from body → description. Description is the **only** trigger mechanism — multi-line YAML `>` syntax with both EN/ZH triggers. |
-| SK2 | Skill Taxonomy & Categories | `SKILL.md` frontmatter, `skills.py`, `context.py` | Added standardized `category` field (9 categories: library_api, code_quality, frontend_design, business_workflow, product_verification, content_generation, data_fetching, service_debugging, infra_ops). `build_skills_summary()` now groups skills by category in XML output. New `list_skills_by_category()` method. Improved YAML parser handles multi-line `>` syntax. `save_skill.py` includes `category` parameter for new skills. |
-| SK3 | Skill-Level Memory | `skills.py`, skill dirs | Each skill directory supports `memory/executions.jsonl`. `log_execution()` records input/output/duration/success per execution. `get_recent_executions()` retrieves recent N records. `format_execution_context()` formats for prompt injection. `build_skills_summary()` includes recent execution summary in XML. FIFO cap at 100 entries. |
-
-New tests: `test_phase22a_skills.py` (27 tests). **Regression baseline: 811 passed (2 pre-existing env-dependent failures).**
-
-### Phase 22B — Skill Configurability & Hooks (P2) ✅
-
-| ID | Item | File(s) | Description |
-|----|------|---------|-------------|
-| SK4 | Configurable Skill Behavior | `skills.py`, skill dirs | Per-skill `config.json` overlay system. `load_skill_config()`, `save_skill_config()` (atomic write), `get_effective_config()` merges `config.defaults.json` + `config.json`. XML summary includes `<config_keys>`. SaveSkillTool emits `config.defaults.json`. |
-| SK5 | Dynamic Hooks System | `skills.py` | `pre_execute` / `post_execute` hooks. Sources: SKILL.md frontmatter (`hooks_pre`/`hooks_post`) + `hooks.py` scripts (importlib with error isolation). 3 built-in hooks: `confirm_destructive`, `log_execution`, `notify_completion`. `HookResult` dataclass. |
-| SK6 | Tool Design Audit | `TOOLS.md` | Audit of 18 tools across 6 dimensions. All 18/18 compliant. |
-| SK7 | Skill Registry & Versioning | `skills.py`, `save_skill.py` | `skills_registry.json` tracks version, usage_count, last_used, dependencies. `check_dependencies()` via `importlib.util.find_spec()`. SaveSkillTool adds `version`, `pip_dependencies` params. |
-
-New tests: `test_phase22b_skills.py` (36 tests). **Regression baseline: 847 passed (4 pre-existing env-dependent collection errors).**
-
-### Phase 22C — Multi-Modal & Channel Extension
-
+- [ ] **WeChat 通道** — 新增微信公众号/企业微信原生通道
 - [ ] **Multi-Channel Image Support** — Extend image download to MoChat, Slack, DingTalk channels
 - [ ] **Unified speech-to-text pipeline** — extend voice input beyond Telegram to all channels
 - [ ] **Image generation tool** — integrate DALL-E / Stable Diffusion as a built-in creative tool
@@ -506,3 +374,48 @@ Inspired by the OpenClaw system architecture, but strictly adhering to Nanobot's
 
 ### Phase 28C — Three-Tier Memory Architecture ✅
 - Formalized memory hierarchy (Context Window -> JSONL Session -> Embedded Vector DB + KG), utilizing serverless ChromaDB vector engine to avoid external database deployment overhead. Integrated vector semantic retrieval into Knowledge Graph entity queries.
+
+### Step 8: C-Class Channel Offline Verification ✅ (2026-03-25)
+- **81 offline tests passed** (`test_channels_offline.py`) covering all 9 channels (C2-C10) code logic: message parsing, format conversion, dedup, policy checks, error paths.
+- **通道策略决定**: 未来重点 **飞书 (Feishu)** + 新增 **微信 (WeChat)**，其余通道保留代码但不主动投入。
+- 各通道 API 生产验证待后续按需执行。
+
+### Next Steps
+
+- [ ] Phase 22C — Multi-Modal & WeChat Channel Extension
+- [ ] Documentation cleanup (D1/D5/D8/D10)
+- [ ] Plugin Marketplace
+- [ ] **Phase 30 — Weak Model Tool Calling Protection (混合模型防护底座)**: 3-stage dynamic constraint architecture (In-flight Circuit Breakers, Post-flight Escalation, Pre-flight Tool RAG) to prevent recursive tool hallucination loops.
+
+### Phase 29 — Paper-Inspired Enhancements (论文借鉴)
+
+> 源自 2026-03-25 对 5 篇论文（IndexRAG, OPENDEV, Dual-Tree, QChunker, OpenClaw-RL）的系统性对比分析。
+> 完整分析报告见 AI 辅助生成的 `paper_analysis_report.md`。
+
+| ID | Item | Source Paper | Est. Effort | Priority |
+|----|------|-------------|-------------|----------|
+| P29-1 | **Directive Signal → 修正记忆 & Skill 学习** — 用户纠正时提取 directive，存入 Experience Bank 或 Skill corrections.jsonl；Skill 触发时自动注入历史纠正 | OpenClaw-RL | 1.5-2 天 | **P0** |
+| P29-2 | **System Reminders（事件驱动行为纠偏）** — 长会话中动态注入行为规范提醒，利用 MessageBus 事件系统，防止 Instruction Fade-Out | OPENDEV | 半天 | **P1** |
+| P29-3 | **离线 Bridging Facts 生成** — 空闲时扫描 KG 共享实体，预计算跨文档推理结论存入 Vector DB | IndexRAG | 1-2 天 | **P2** |
+| P29-4 | **Knowledge Completion（知识补全）** — 向量记忆存储前检查并补充缺失上下文（术语定义、背景假设） | QChunker | 1 天 | **P2** |
+| P29-5 | **错误信号 → 自动经验** — 工具执行失败时自动提取错误原因和恢复方式，存为 Experience Bank 条目 | OpenClaw-RL | 半天 | **P2** |
+| P29-6 | **知识溯源链** — Knowledge 条目增加 `derived_from` 字段，记录知识演化路径 | Dual-Tree | 半天 | **P3** |
+
+> **专题讨论待定**：Per-Workflow 模型路由（认知路由）— 不同任务绑定不同模型（小模型做意图识别，大模型做复杂推理）。此话题同时关联 Nanobot 和公司 HENRY 项目，已记录为独立专题，将在后续会话中深入讨论。
+
+### 论文参考更新
+
+| # | 论文 | 核心贡献 | 借鉴项 |
+|---|------|---------|--------|
+| 1 | AutoSkill (ECNU, 2603.01145v2) | 自动化技能学习 | Phase 12 |
+| 2 | XSKILL (HKUST, 2603.12056v1) | 跨任务技能迁移 | Phase 12 |
+| 3 | mem9/AI Memory Survey | 记忆架构分类学 | Phase 20 |
+| 4 | MemGPT | 虚拟内存分页 | Phase 20 L4 |
+| 5 | MDER-DR (arXiv 2603.11223) | 多跳推理索引时前置 | Phase 24 |
+| 6 | OpenClaw Architecture | 系统架构优化 | Phase 28 |
+| 7 | **IndexRAG** (2603.16415v1) | 跨文档桥接事实离线生成 | **Phase 29-3** |
+| 8 | **OPENDEV** (2603.05344v3) | 终端 Agent 上下文工程 | **Phase 29-2** |
+| 9 | **Dual-Tree Agent-RAG** (2603.09192v1) | 方法溯源树 + 抽象树 | **Phase 29-6** |
+| 10 | **QChunker** (2603.11650v1) | 问题感知文本切块 | **Phase 29-4** |
+| 11 | **OpenClaw-RL** (2603.10165v1) | 交互信号在线学习 | **Phase 29-1/5** |
+

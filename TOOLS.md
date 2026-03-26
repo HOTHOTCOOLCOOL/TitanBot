@@ -1,7 +1,7 @@
 # Nanobot Tool Design Audit (Phase 22B — SK6)
 
 > Systematic review of all tool I/O formats for model-friendliness.
-> Last updated: 2026-03-20
+> Last updated: 2026-03-24
 
 ## Audit Criteria
 
@@ -195,17 +195,36 @@
 
 ---
 
+### 16. BrowserTool (`plugins/browser.py`) ✅
+
+> Plugin tool — auto-discovered by `plugin_loader.py` from `nanobot/plugins/`. Phase 26B+C.
+
+| Dimension | Status | Notes |
+|-----------|--------|-------|
+| Error Prefix | ✅ | `"Error: ..."` for missing playwright, SSRF, untrusted domains |
+| Output Format | ✅ | Structured JSON for all 11 actions |
+| Smart Defaults | ✅ | `timeout_ms` defaults to 30s, viewport 1920×1080 |
+| Description | ✅ | Clear action-based design with 11 actions |
+| Security | ✅ | Dual-layer SSRF (DNS + route), progressive trust, JS evaluate whitelist, encrypted sessions (DPAPI/Fernet) |
+| Idempotency | ⚠️ | `click`, `fill`, `type` are not idempotent (expected) |
+
+**Actions**: `navigate`, `click`, `fill`, `type`, `select`, `screenshot`, `content`, `evaluate`, `wait`, `login`, `close`
+
+**Strength**: Graceful degradation — if Playwright not installed, returns helpful install instructions. Zero startup cost.
+
+---
+
 ## Summary
 
 | Status | Count | Percentage |
 |--------|-------|------------|
-| ✅ Compliant | 18/18 | **100%** |
-| ⚠️ Minor notes | 1 | `send_email` non-idempotent (by design) |
+| ✅ Compliant | 19/19 | **100%** |
+| ⚠️ Minor notes | 2 | `send_email` non-idempotent (by design); `click`/`fill`/`type` non-idempotent (expected) |
 | ❌ Non-compliant | 0 | — |
 
 ### Key Findings
 
-1. **Error prefix consistency**: All 18 tools use `"Error: ..."` prefix ✅
+1. **Error prefix consistency**: All 19 tools use `"Error: ..."` prefix ✅
 2. **Output truncation**: Handled globally by `ToolRegistry` (50K char cap) ✅
 3. **Smart defaults**: All tools have sensible defaults reducing model decision load ✅
 4. **Unified action pattern**: `OutlookTool`, `CronTool`, `MemorySearchTool` use action-based design reducing tool count ✅

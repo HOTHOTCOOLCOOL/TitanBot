@@ -15,6 +15,8 @@ def knowledge_graph(workspace):
 
 def test_add_and_load_triple(knowledge_graph, workspace):
     knowledge_graph._add_triple("David", "works for", "Salesforce")
+    # Phase 25: _add_triple no longer auto-saves; callers must call _save() explicitly
+    knowledge_graph._save()
     
     file_path = workspace / "memory" / "graph.json"
     assert file_path.exists()

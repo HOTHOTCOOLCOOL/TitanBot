@@ -297,10 +297,9 @@ Note: Requires Outlook application to be running on Windows."""
         def _sync_find():
             import pythoncom
             outlook, namespace = None, None
+            folder_name = criteria.get("folder", "inbox")
             try:
                 outlook, namespace = OutlookTool._get_outlook()
-                
-                folder_name = criteria.get("folder", "inbox")
                 
                 folder = OutlookTool._get_folder(outlook, namespace, folder_name)
                 

@@ -28,7 +28,11 @@ if TYPE_CHECKING:
 
 
 def setup_all_tools(agent: "AgentLoop") -> None:
-    """Setup default tools and dynamic plugin tools for the agent."""
+    """Setup default tools and dynamic plugin tools for the agent.
+    
+    Called synchronously from AgentLoop.__init__().
+    Lifecycle hooks (setup) are NOT called here — AgentLoop.run() handles that.
+    """
     _register_default_tools(agent)
     _register_dynamic_tools(agent)
 
@@ -91,16 +95,12 @@ def _register_default_tools(agent: "AgentLoop") -> None:
 
 
 def _register_dynamic_tools(agent: "AgentLoop") -> None:
-    """Scan the plugins directory and register discovered tools.
+    """Scan the plugins directory and register discovered tools (sync, no lifecycle hooks).
     
+    Used at startup by setup_all_tools(). Lifecycle hooks (setup) are called
+    later by AgentLoop.run() which iterates all registered tools.
     Tools that conflict with already-registered built-in tools are skipped.
-    Previously loaded dynamic tools are unregistered first (for /reload).
     """
-    # Unload any previously loaded plugins
-    if agent._dynamic_tool_names:
-        unload_plugins(agent.tools, agent._dynamic_tool_names)
-        agent._dynamic_tool_names.clear()
-    
     plugins_dir = agent.workspace / "nanobot" / "plugins"
     if not plugins_dir.exists():
         # Try relative to the package itself
@@ -120,4 +120,51 @@ def _register_dynamic_tools(agent: "AgentLoop") -> None:
     if agent._dynamic_tool_names:
         logger.info(
             f"Dynamic tools registered: {', '.join(agent._dynamic_tool_names)}"
+        )
+
+
+async def _reload_dynamic_tools(agent: "AgentLoop") -> None:
+    """Reload dynamic plugin tools with full lifecycle management.
+    
+    Used by /reload command. Calls teardown() on old plugins before unloading,
+    then scans for new plugins and calls setup() on each.
+    """
+    # Teardown and unload any previously loaded plugins
+    if agent._dynamic_tool_names:
+        for name in agent._dynamic_tool_names:
+            tool = agent.tools.get(name)
+            if tool:
+                try:
+                    await tool.teardown()
+                    logger.info(f"Plugin teardown completed: '{name}'")
+                except Exception as e:
+                    logger.warning(f"Plugin teardown failed for '{name}': {e}")
+        unload_plugins(agent.tools, agent._dynamic_tool_names)
+        agent._dynamic_tool_names.clear()
+    
+    plugins_dir = agent.workspace / "nanobot" / "plugins"
+    if not plugins_dir.exists():
+        # Try relative to the package itself
+        plugins_dir = Path(__file__).parent.parent / "plugins"
+    
+    discovered = scan_plugins(plugins_dir)
+    
+    for tool in discovered:
+        if agent.tools.has(tool.name):
+            logger.warning(
+                f"Plugin '{tool.name}' conflicts with built-in tool, skipping"
+            )
+            continue
+        agent.tools.register(tool)
+        agent._dynamic_tool_names.append(tool.name)
+        # Call setup on newly loaded plugin
+        try:
+            await tool.setup()
+            logger.info(f"Plugin setup completed: '{tool.name}'")
+        except Exception as e:
+            logger.warning(f"Plugin setup failed for '{tool.name}': {e}")
+    
+    if agent._dynamic_tool_names:
+        logger.info(
+            f"Dynamic tools reloaded: {', '.join(agent._dynamic_tool_names)}"
         )

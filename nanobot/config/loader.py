@@ -76,6 +76,7 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     """
     import os
     import tempfile
+    from nanobot.utils.helpers import safe_replace
 
     path = config_path or get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -87,7 +88,7 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
-        os.replace(tmp, str(path))
+        safe_replace(tmp, str(path))
     except Exception:
         try:
             os.unlink(tmp)

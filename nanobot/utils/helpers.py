@@ -1,7 +1,11 @@
 """Utility functions for nanobot."""
 
-from pathlib import Path
+import os
+import time
 from datetime import datetime
+from pathlib import Path
+
+from loguru import logger
 
 
 def ensure_dir(path: Path) -> Path:
@@ -78,3 +82,26 @@ def parse_session_key(key: str) -> tuple[str, str]:
     if len(parts) != 2:
         raise ValueError(f"Invalid session key: {key}")
     return parts[0], parts[1]
+
+
+def safe_replace(src: str | Path, dst: str | Path, max_retries: int = 5, base_delay: float = 0.1) -> None:
+    """
+    Safely replace a file, with retry logic for Windows PermissionError.
+    
+    Anti-virus software (like Windows Defender) often temporarily locks newly created files,
+    causing os.replace() to throw PermissionError on Windows (Phase 27).
+    """
+    src_str, dst_str = str(src), str(dst)
+    for attempt in range(max_retries):
+        try:
+            os.replace(src_str, dst_str)
+            return
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.debug(f"PermissionError on replace '{src_str}' -> '{dst_str}'. Retrying in {delay:.2f}s...")
+                time.sleep(delay)
+            else:
+                logger.error(f"Failed to replace '{src_str}' -> '{dst_str}' after {max_retries} attempts.")
+                raise e
+

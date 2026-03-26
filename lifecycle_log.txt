@@ -1,0 +1,14 @@
+[17:49:02] teardown() called
+[17:49:18] setup() called
+[17:49:32] teardown() called
+[17:49:32] setup() called
+[18:48:01] setup() called
+[18:52:15] teardown() called
+[10:29:23] teardown() called
+[11:29:01] setup() called
+[13:25:23] teardown() called
+[13:25:36] setup() called
+[13:27:37] teardown() called
+[13:27:59] setup() called
+[13:34:50] teardown() called
+[13:35:06] setup() called

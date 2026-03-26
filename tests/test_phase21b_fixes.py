@@ -191,13 +191,15 @@ def test_no_results_not_in_fail_indicators():
 
 
 def test_fail_indicators_still_work():
-    """L3: legitimate fail indicators should still be present."""
+    """L3/DESIGN-4: legitimate fail indicators should still be present."""
     from nanobot.agent.loop import _FAIL_INDICATORS
     assert "找不到" in _FAIL_INDICATORS
     assert "not found" in _FAIL_INDICATORS
     assert "error:" in _FAIL_INDICATORS
-    assert "失败" in _FAIL_INDICATORS
-    assert "sorry" in _FAIL_INDICATORS
+    # DESIGN-4: standalone '失败'/'sorry' replaced with specific phrases
+    assert "执行失败" in _FAIL_INDICATORS
+    assert "操作失败" in _FAIL_INDICATORS
+    assert "sorry, i" in _FAIL_INDICATORS
 
 
 def test_workflow_succeeded_with_no_results_response():

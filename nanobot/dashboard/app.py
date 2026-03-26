@@ -7,6 +7,7 @@ Phase 18A: Added Bearer Token authentication for all endpoints (except /api/stat
 """
 
 import asyncio
+import hmac
 import json
 import os
 import secrets
@@ -44,7 +45,7 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # Global dependencies
 _bus: MessageBus | None = None
 _workspace: Path | None = None
-_active_websockets: list[WebSocket] = []
+_active_websockets: set[WebSocket] = set()
 _dashboard_token: str | None = None
 
 
@@ -114,7 +115,7 @@ async def verify_token(request: Request) -> None:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-    if auth[7:] != _dashboard_token:
+    if not hmac.compare_digest(auth[7:], _dashboard_token):
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
@@ -152,12 +153,12 @@ async def websocket_endpoint(websocket: WebSocket):
     # Verify token before accepting
     if _dashboard_token:
         ws_token = websocket.query_params.get("token", "")
-        if ws_token != _dashboard_token:
+        if not hmac.compare_digest(ws_token, _dashboard_token):
             await websocket.close(code=1008)  # Policy Violation
             return
 
     await websocket.accept()
-    _active_websockets.append(websocket)
+    _active_websockets.add(websocket)
 
     # S3: per-connection rate limiting state
     _ws_msg_timestamps: list[float] = []
@@ -194,13 +195,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 except Exception:
                     pass
     except WebSocketDisconnect:
-        if websocket in _active_websockets:
-            _active_websockets.remove(websocket)
+        _active_websockets.discard(websocket)
     except Exception:
         # F1/Phase 25: catch unexpected errors (e.g. ConnectionClosedError)
         # to prevent stale entries in _active_websockets
-        if websocket in _active_websockets:
-            _active_websockets.remove(websocket)
+        _active_websockets.discard(websocket)
 
 async def broadcast_ws_message(msg_type: str, data: Any):
     """Broadcast an event to all connected dashboard websockets."""
@@ -213,8 +212,7 @@ async def broadcast_ws_message(msg_type: str, data: Any):
             await ws.send_text(payload)
         except Exception:
             # R9: remove dead websocket on failure
-            if ws in _active_websockets:
-                _active_websockets.remove(ws)
+            _active_websockets.discard(ws)
 
 # ====================================================================
 # API Endpoints for Knowledge & Memory
@@ -380,7 +378,7 @@ async def get_background_tasks():
 # Phase 21E: Streaming Response Delivery WebSocket
 # ====================================================================
 
-_stream_websockets: list[WebSocket] = []
+_stream_websockets: set[WebSocket] = set()
 
 
 @app.websocket("/ws/stream")
@@ -393,20 +391,19 @@ async def websocket_stream_endpoint(websocket: WebSocket):
     """
     if _dashboard_token:
         ws_token = websocket.query_params.get("token", "")
-        if ws_token != _dashboard_token:
+        if not hmac.compare_digest(ws_token, _dashboard_token):
             await websocket.close(code=1008)
             return
 
     await websocket.accept()
-    _stream_websockets.append(websocket)
+    _stream_websockets.add(websocket)
 
     try:
         # Keep the connection alive until the client disconnects
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        if websocket in _stream_websockets:
-            _stream_websockets.remove(websocket)
+        _stream_websockets.discard(websocket)
 
 
 async def _broadcast_stream_event(event) -> None:
@@ -425,8 +422,7 @@ async def _broadcast_stream_event(event) -> None:
         try:
             await ws.send_text(payload)
         except Exception:
-            if ws in _stream_websockets:
-                _stream_websockets.remove(ws)
+            _stream_websockets.discard(ws)
 
 
 def init_stream_subscription(bus) -> None:

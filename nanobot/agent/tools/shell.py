@@ -94,34 +94,24 @@ class ExecTool(Tool):
             return guard_error
         
         try:
-            process = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            from nanobot.agent.sandbox import ShellSandbox
+            returncode, stdout_str, stderr_str = await ShellSandbox.execute(
+                command=command,
                 cwd=cwd,
+                timeout=self.timeout
             )
-            
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=self.timeout
-                )
-            except asyncio.TimeoutError:
-                process.kill()
-                return f"Error: Command timed out after {self.timeout} seconds"
             
             output_parts = []
             
-            if stdout:
-                output_parts.append(stdout.decode("utf-8", errors="replace"))
+            if stdout_str:
+                output_parts.append(stdout_str)
             
-            if stderr:
-                stderr_text = stderr.decode("utf-8", errors="replace")
-                if stderr_text.strip():
-                    output_parts.append(f"STDERR:\n{stderr_text}")
+            if stderr_str:
+                if stderr_str.strip():
+                    output_parts.append(f"STDERR:\n{stderr_str}")
             
-            if process.returncode != 0:
-                output_parts.append(f"\nExit code: {process.returncode}")
+            if returncode != 0:
+                output_parts.append(f"\nExit code: {returncode}")
             
             result = "\n".join(output_parts) if output_parts else "(no output)"
             

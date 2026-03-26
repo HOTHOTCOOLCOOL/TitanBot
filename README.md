@@ -4,12 +4,12 @@
   <p>
     <img src="https://img.shields.io/badge/python-≥3.11-blue" alt="Python">
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-    <img src="https://img.shields.io/badge/tests-979%20passed-brightgreen" alt="Tests">
-    <img src="https://img.shields.io/badge/phases-25%20completed-blueviolet" alt="Phases">
-    <img src="https://img.shields.io/badge/papers-6%20referenced-orange" alt="Papers">
+    <img src="https://img.shields.io/badge/tests-1209%20passed-brightgreen" alt="Tests">
+    <img src="https://img.shields.io/badge/phases-30%20completed-blueviolet" alt="Phases">
+    <img src="https://img.shields.io/badge/papers-11%20referenced-orange" alt="Papers">
   </p>
   <p>
-    <em>Built upon <a href="https://github.com/HKUDS/nanobot">nanobot</a> by HKUDS — extended through 25 phases of evolution, 6 academic papers, and 979 tests.</em>
+    <em>Built upon <a href="https://github.com/HKUDS/nanobot">nanobot</a> by HKUDS — extended through 30 phases of evolution, 11 academic papers, and 1209+ tests.</em>
   </p>
 </div>
 
@@ -17,7 +17,7 @@
 
 > **TitanBot** is a derivative work based on [nanobot](https://github.com/HKUDS/nanobot) by [HKUDS](https://github.com/HKUDS), licensed under the [MIT License](./LICENSE).
 >
-> We deeply respect the original nanobot team's work. Starting from their elegant ultra-lightweight foundation (~10 files, ~4,000 lines), we extended the project through **25 major phases** of independent development, incorporating insights from **6 academic papers** to build an enterprise-grade AI agent framework.
+> We deeply respect the original nanobot team's work. Starting from their elegant ultra-lightweight foundation (~10 files, ~4,000 lines), we extended the project through **30 major phases** of independent development, incorporating insights from **11 academic papers** to build an enterprise-grade AI agent framework.
 >
 > All original code is used in compliance with the MIT License. The original copyright notice is preserved in our [LICENSE](./LICENSE) file.
 
@@ -29,15 +29,15 @@ TitanBot started as a fork of nanobot and grew into a significantly enhanced AI 
 
 | Dimension | 🐣 Original nanobot | 🚀 TitanBot | Growth |
 |-----------|---------------------|-------------|--------|
-| **Core source files** | ~10 | **95** | ×9.5 |
-| **Test cases** | 0 | **979+ passed** | 0 → 979 |
-| **Built-in tools** | 3 | **18** | ×6 |
+| **Core source files** | ~10 | **105** | ×10.5 |
+| **Test cases** | 0 | **1209+ passed** | 0 → 1209 |
+| **Built-in tools** | 3 | **19** | ×6 |
 | **Channel adapters** | 2 | **9** | ×4.5 |
 | **Sub-packages** | 2 | **14** | ×7 |
 | **Memory layers** | 1 (single file) | **7-layer architecture** | ×7 |
 | **Knowledge retrieval** | keyword match | **5-layer hybrid pyramid** | 5 strategies |
 | **Security fixes** | 0 | **32 items** | 0 → 32 |
-| **Academic papers referenced** | 0 | **6** | — |
+| **Academic papers referenced** | 0 | **11** | — |
 
 ### 📚 Academic Papers Referenced
 
@@ -58,9 +58,10 @@ Our enhancements were inspired by and implement ideas from the following papers:
 - **5-Layer Hybrid Retrieval** — Exact match → Substring → Jieba tokenization → BM25 → Dense vector retrieval
 - **Knowledge Graph with MDER-DR** — Triple descriptions, entity disambiguation, entity summaries, query decomposition, semantic chunking
 - **RPA & Visual Perception** — 3-layer vision: UIAutomation + PaddleOCR + YOLO UI detection
-- **Enterprise Security** — 32 security fixes across 4 audit phases, including SSRF protection, shell sandboxing, API rate limiting
+- **Enterprise Security** — 32 security fixes across 4 audit phases, including SSRF protection, shell sandboxing, AST Sandboxes, API rate limiting, and weak-model execution safeguards
 - **Event-Driven Architecture** — Typed domain events, topic-based pub/sub, real-time dashboard
-- **Skill System Hardening** — Configurable skills, pre/post hooks, skill registry with versioning
+- **Skill System Hardening** — Configurable skills, pre/post hooks, skill registry with versioning, and unified plugin lifecycle
+- **Agent Tooling** — Advanced Playwright Browser Automation for Web RPA, dual-layer SSRF safeguards, Progressive Trust models
 
 See [EVOLUTION.md](./EVOLUTION.md) for the complete evolution timeline and detailed comparisons.
 
@@ -646,10 +647,10 @@ TitanBot supports [MCP](https://modelcontextprotocol.io/) — connect external t
 |---------|-------------|
 | `nanobot onboard` | Initialize config & workspace |
 | `nanobot agent -m "..."` | Chat with the agent |
-| `nanobot agent` | Interactive chat mode |
+| `nanobot agent` | Interactive chat mode (HTTP Client) |
 | `nanobot agent --no-markdown` | Show plain-text replies |
 | `nanobot agent --logs` | Show runtime logs during chat |
-| `nanobot gateway` | Start the gateway |
+| `nanobot gateway` | Start the gateway (Core Agent + Web UI + Channels) |
 | `nanobot status` | Show status |
 | `nanobot provider login openai-codex` | OAuth login for providers |
 | `nanobot channels login` | Link WhatsApp (scan QR) |
@@ -757,6 +758,7 @@ Feel free to [open an issue](https://github.com/HOTHOTCOOLCOOL/nanobot/issues) o
 | Phase 22C | ⏳ Next | Multi-Modal & Channel Extension |
 | Browser Automation | 📋 Backlog | Playwright for JS-rendered pages |
 | Plugin Marketplace | 📋 Backlog | Community skill repository |
+| Phase 30 | 📋 Backlog | Weak Model Tool Calling Protection (Agent Safety Guardrails) |
 
 ### Contributors
 

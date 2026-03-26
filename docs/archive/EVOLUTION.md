@@ -1,7 +1,7 @@
 # Nanobot 演进全景对比
 
 > 从一个简单的聊天机器人到企业级 AI Agent 框架的蜕变之路  
-> 最后更新: 2026-03-21
+> 最后更新: 2026-03-25
 
 ---
 
@@ -10,13 +10,13 @@
 | 维度 | 🐣 初始 NanoBot | 🚀 当前 Nanobot | 增幅 |
 |------|----------------|----------------|------|
 | **核心源文件** | ~10 | **95** | **×9.5** |
-| **测试文件** | 0 | **73** | 0 → 73 |
-| **测试用例** | 0 | **948+ passed** | 0 → 948+ |
+| **测试文件** | 0 | **87** | 0 → 87 |
+| **测试用例** | 0 | **1209+ passed** | 0 → 1209+ |
 | **子包 (packages)** | 2 (`agent`, `config`) | **14** | **×7** |
-| **内置工具 (Tools)** | 3 (shell, outlook, exec) | **18** | **×6** |
+| **内置工具 (Tools)** | 3 (shell, outlook, exec) | **19** | **×6.3** |
 | **通道适配器 (Channels)** | 2 (CLI, MoChat) | **9** | **×4.5** |
-| **Phase 迭代** | — | **15+ 个大阶段** | — |
-| **论文参考** | 0 | **6** (AutoSkill, XSKILL, mem9, MemGPT, AI Memory Survey, MDER-DR) | — |
+| **Phase 迭代** | — | **20+ 个大阶段** | — |
+| **论文参考** | 0 | **11** (AutoSkill, XSKILL, mem9, MemGPT, AI Memory Survey, MDER-DR, IndexRAG, OPENDEV, Dual-Tree, QChunker, OpenClaw-RL) | — |
 
 ---
 
@@ -45,7 +45,7 @@ graph TB
         A_CORE["Agent Core<br/>loop.py + 12 拆分模块"]
         A_KNOW["知识系统<br/>5 层混合检索"]
         A_MEM["记忆架构<br/>7 层智能记忆"]
-        A_TOOLS["18 个内置工具"]
+        A_TOOLS["19 个内置工具"]
         A_CH["9 个通道 + Gateway"]
         A_SEC["安全体系<br/>32 项审计修复"]
         A_DASH["Web Dashboard<br/>实时监控"]
@@ -122,7 +122,7 @@ graph TB
 
 ### 4. 工具生态
 
-| 🐣 初始（3 个） | 🚀 当前（18 个） | 状态 |
+| 🐣 初始（3 个） | 🚀 当前（19 个） | 状态 |
 |-----------------|-----------------|------|
 | `shell` | `shell.py` — 加固沙箱 + 14 条 deny pattern | **强化** |
 | `outlook` | `outlook.py` — COM 线程隔离 + 异步 | **强化** |
@@ -145,7 +145,7 @@ graph TB
 
 ### 5. 通道 & 连接
 
-| 🐣 初始（2 个） | 🚀 当前（9 个） | 备注 |
+| 🐣 初始（2 个） | 🚀 当前（10 个） | 备注 |
 |-----------------|-----------------|------|
 | CLI | CLI | 基础保留 |
 | MoChat (企业微信) | MoChat — 提取 `mochat_utils.py` | 重构强化 |
@@ -153,12 +153,14 @@ graph TB
 | — | **Discord** — Gateway WebSocket | **新增** |
 | — | **Slack** — Events API | **新增** |
 | — | **Email** — IMAP/SMTP 全双工 | **新增** |
-| — | **飞书 (Feishu)** | **新增** |
+| — | **飞书 (Feishu)** | **新增** ⭐ 重点 |
 | — | **钉钉 (DingTalk)** | **新增** |
 | — | **WhatsApp** | **新增** |
 | — | **QQ** | **新增** |
 | — | **ChannelManager** — 数据驱动注册 + `allowFrom` 白名单 | **新增** |
 | — | **Master Identity** — 跨通道身份统一 + 安全映射 | **新增** |
+
+> **通道策略 (2026-03-25):** 未来重点维护 **飞书 (Feishu)** + 新增 **微信 (WeChat)**，其余通道代码保留但不主动投入。
 
 ### 6. RPA & 视觉感知
 
@@ -204,8 +206,8 @@ graph TB
 
 | 方面 | 🐣 初始 | 🚀 当前 |
 |------|---------|---------|
-| **测试覆盖** | 0 个测试 | **948+ passed** |
-| **测试文件** | 0 | **74** |
+| **测试覆盖** | 0 个测试 | **1209+ passed** |
+| **测试文件** | 0 | **87** |
 | **类型提示** | 无 | 核心模块完整 type hints |
 | **代码审计** | 无 | Phase 18 安全审计 + Phase 21 质量审计（32 项全修复） |
 | **死代码清理** | 未管理 | 多轮清理 — Router/PreAnalyzer/Distiller 移除 |
@@ -281,6 +283,19 @@ gantt
 
     section 知识图谱进化
     Phase 24 KG Evolution (MDER-DR)        :done, p24, after p23c, 2d
+
+    section 浏览器自动化
+    Phase 26A-C Browser Automation         :done, p26, after p24, 3d
+
+    section 安全+沙箱
+    Phase 27 Security Hardening            :done, p27, after p26, 1d
+    Phase 28A-C OpenClaw Optimization      :done, p28, after p27, 3d
+
+    section 通道验证
+    Step 8 Channel Offline Tests           :done, s8, after p28, 1d
+
+    section 模型防护
+    Phase 30 弱模型防护                    :done, p30, after s8, 1d
 ```
 
 ---
@@ -334,7 +349,7 @@ nanobot/
 │   ├── subagent.py          ← 子代理
 │   ├── tool_setup.py        ← 工具注册
 │   ├── i18n.py              ← 国际化 50+ key
-│   ├── tools/               ← 18 个内置工具
+│   ├── tools/               ← 19 个内置工具
 │   │   ├── shell.py         ← 加固沙箱
 │   │   ├── outlook.py       ← COM 线程隔离
 │   │   ├── rpa_executor.py  ← UI 自动化
@@ -382,7 +397,7 @@ nanobot/
 ├── plugin_loader.py         ← 热加载器
 └── onboard.py               ← 技能安装器
 
-tests/                       ← 74 测试文件，811 用例
+tests/                       ← 87 测试文件，1205+ 用例
 ```
 
 ---
@@ -394,15 +409,15 @@ tests/                       ← 74 测试文件，811 用例
 │                  NanoBot → Nanobot                   │
 │                                                      │
 │  源文件:     ~10  →  95     (×9.5)                   │
-│  测试用例:     0  →  811                             │
-│  工具:         3  →  18     (×6)                     │
-│  通道:         2  →  9      (×4.5)                   │
+│  测试用例:     0  →  1209+                          │
+│  工具:         3  →  19     (×6.3)                   │
+│  通道:         2  →  10     (×5)                     │
 │  子包:         2  →  14     (×7)                     │
 │  安全修复:     0  →  32 项全部完成                    │
 │  记忆层级:     1  →  7 层智能架构                    │
 │  检索策略:     1  →  5 层混合金字塔                  │
 │  视觉感知:     0  →  3 层 (UIA+OCR+YOLO)            │
-│  论文参考:     0  →  5 篇                            │
+│  论文参考:     0  →  11 篇                           │
 │                                                      │
 │  "Nano" in name only 😄                              │
 └──────────────────────────────────────────────────────┘
@@ -497,19 +512,122 @@ tests/                       ← 74 测试文件，811 用例
 
 - 无新增测试文件（修复均为防御性改进，已被现有 979 个测试覆盖）。**Regression: 979 passed.**
 
-### Phase 26 — Playwright Browser Automation 🔜 (Planned)
+### Phase 26 — Playwright Browser Automation (In Progress)
 
 > 完整 Web RPA 方案，与桌面 RPA (UIA/OCR/YOLO) 互补。架构：Skill + Tool Hybrid 按需加载。
 
+#### Phase 26A — Plugin Dependency Management ✅
+
+- **BrowserConfig Schema** — New `BrowserConfig` Pydantic model in `config/schema.py` with 10 fields (enabled, headless, timeout, viewport, max_pages, session_ttl, trusted_domains, block_internal_ips). Wired into `AgentsConfig.browser`.
+- **`_check_requirements()` pip support** — Extended to check `requires.pip` packages via `importlib.util.find_spec()`. Skills with unmet pip deps are now correctly filtered from `list_skills()` and shown as `available="false"` in XML summary.
+- **`_get_missing_requirements()` pip reporting** — Extended to report missing pip packages as `"PIP: package_name"` in `<requires>` XML tag.
+- **`install_dependencies(skill_name)`** — New method that checks and reports missing pip deps without auto-installing. Returns `(False, description)` with package list for LLM to present to user.
+- **`do_install_dependencies(packages)`** — New static method that runs `pip install` via subprocess with 5-minute timeout. Never called silently — requires user confirmation.
+- New tests: `test_phase26a_deps.py` (16 tests). **Regression: 992 passed** (5 pre-existing env-dependent failures).
+
 | Sub-Phase | Scope | Status |
 |-----------|-------|--------|
-| **26A** | Plugin Dependency Management — SK7 扩展 + `BrowserConfig` | ❌ |
-| **26B** | Playwright Skill + BrowserTool Plugin — 11 action + 双层 SSRF + 渐进信任域名 | ❌ |
-| **26C** | Session 加密持久化 (DPAPI) + Trust Manager + TTL | ❌ |
+| **26A** | Plugin Dependency Management — SK7 扩展 + `BrowserConfig` | ✅ |
+| **26B** | Playwright Skill + BrowserTool Plugin — 11 action + 双层 SSRF + 渐进信任域名 | ✅ |
+| **26C** | Session 加密持久化 (DPAPI) + Trust Manager + TTL | ✅ |
 
 关键设计：
 - `skills/browser-automation/SKILL.md` (Skill 层) + `plugins/browser.py` (Tool 层)
 - 渐进信任：主导航首次授权 → 永久记住，子请求仅阻断内网 IP
 - DPAPI 加密 Cookie 持久化，域名隔离，TTL 过期
 - `browser` 管 Web 应用，`rpa` 管桌面应用，LLM 自动路由
+
+#### Phase 26B — Playwright Skill + BrowserTool Plugin ✅
+
+- **SKILL.md** — New `skills/browser-automation/SKILL.md` with AI-first EN/ZH triggers, `requires.pip: ["playwright"]`, and guidance on `browser` vs `rpa` vs `web_fetch` tool selection.
+- **BrowserTool Plugin** — New `plugins/browser.py` (~400 lines) with:
+  - 11 actions: navigate, click, fill, type, select, screenshot, content, evaluate, wait, login, close
+  - Graceful degradation: `HAS_PLAYWRIGHT` guard — zero-impact when playwright not installed
+  - Lazy browser launch: Chromium only started on first `navigate`, not at import
+  - Dual-layer SSRF: pre-navigation `socket.getaddrinfo()` IP check + `page.route("**/*")` request interception
+  - Progressive trust: new domain → user confirmation prompt → persist to `~/.nanobot/browser_sessions/trusted_domains.json` with atomic writes
+  - Evaluate whitelist: only 6 pre-approved JS patterns allowed (document.title, querySelector.textContent, etc.)
+  - Page pool with configurable `max_pages` limit
+- **`login` action** — accepts `save_session` param (no-op in 26B, wired in 26C)
+- New tests: `test_phase26b_browser.py` (54 tests). **Regression: 1046 passed** (5 pre-existing env-dependent failures).
+
+#### Phase 26C — Session Encrypted Persistence + Trust Manager ✅
+
+- **BrowserSessionStore** — New `plugins/browser_session.py` (~280 lines):
+  - Three-tier encryption: Windows DPAPI (`win32crypt`) → `cryptography.Fernet` → base64 obfuscation
+  - `save_session(domain, cookies, local_storage)` — serialize + encrypt + atomic-write to `~/.nanobot/browser_sessions/{domain}/session.enc`
+  - `load_session(domain)` — TTL check via metadata + decrypt; returns None if expired
+  - `clear_session(domain)` / `clear_expired(ttl_hours)` — cleanup per-domain or batch expired
+  - `list_sessions()` — enumerate all saved sessions with metadata
+  - Dual-file storage: `session.enc` (encrypted data) + `session.meta.json` (plaintext TTL metadata)
+  - Domain isolation: separate directories per domain, no cross-domain leakage
+- **TrustManager extraction** — New `plugins/trust_manager.py` (~130 lines):
+  - Extracted from inline `_TrustManager` in `browser.py` to standalone public module
+  - New methods: `remove_trusted(domain)`, `clear_all()` for runtime trust management
+  - Same wildcard matching, atomic persistence, and config-level trust support
+- **Browser integration wiring**:
+  - `_action_login` with `save_session=True`: extracts cookies via `context.cookies()` + localStorage via `page.evaluate()`, encrypts and persists
+  - `_action_navigate`: automatically restores saved session cookies before page load via `context.add_cookies()`
+  - Cookie values never appear in LLM-facing tool output (only `"session_saved": true`)
+  - No new hard dependencies — encryption backends gracefully degrade
+- New tests: `test_phase26c_sessions.py` (28 tests). Combined 26B+C: **82 passed**. **Regression: 1074 passed** (5 pre-existing env-dependent collection errors).
+
+### Phase 27 — Security & Stability Hardening ✅
+
+> Critical hardening phase targeting SSRF, Sandbox Escape, and Windows File I/O resilience.
+
+- **SSRF TOCTOU Remediation** — Eradicated Time-of-Check to Time-of-Use race conditions in `web.py` and `browser.py` by implementing dynamic pre-connection DNS resolution pinning via an intercepted `_SSRFSafeTransport` and Playwright route overrides.
+- **Skill Sandbox Escape Fix** — Replaced weak string-matching in `skills.py` with rigorous Abstract Syntax Tree (AST) visitor analysis (`ast.parse`) that statically blocks all dynamic imports (`__import__`, `importlib`) and standard blocklisted modules (`os`, `subprocess`) prior to execution.
+- **Windows Atomic Write Resilience** — Implemented a globally resilient `safe_replace` utility wrapping `os.replace` with a 5-iteration exponential backoff, effectively mitigating common `PermissionError` crashes induced by Windows Defender / Antivirus locks on rapidly replaced SQLite/JSONL and config stores.
+
+### Phase 28A — OpenClaw Optimization: Provider Abstraction & Plugin Lifecycle ✅
+
+> First half of Phase 28 OpenClaw Architectural Optimization targeting dynamic abstractions.
+
+- **ProviderFactory Abstraction** — Replaced direct instantiations of `LiteLLMProvider` for dynamic VLM requests in the main agent loop with a generic `ProviderFactory.get_provider()` interface. Restored deterministic registry-matching precedence.
+- **Formal Plugin Lifecycle** — Implemented natively asynchronous `setup()` and `teardown()` core lifecycle hooks in the `Tool` base class. Rewrote the `AgentLoop.run()` execution boundary with `try/finally` logic to guarantee that all loaded plugins deterministically discover, initialize, and gracefully unload resources across sessions.
+- New tests: Unit tests added for ProviderFactory (`test_provider_factory.py`) and Plugin Lifecycle hook states (`test_plugin_lifecycle.py`). **Regression: 1088 passed.**
+
+### Phase 28B — OpenClaw Optimization: Execution Layer Sandboxing ✅
+
+> Second part of Phase 28 targeting security and isolation boundaries.
+
+- **Python Sandbox (`sandbox.py`, `sandbox_worker.py`)** — Executed Python plugin scripts via `sys.executable -I` with a restricted `sys.addaudithook` to silently block dangerous functions like process spawning (`os.system`), network I/O (`socket.bind`), and out-of-workspace writes.
+- **Shell Sandbox (`shell.py`)** — Re-architected command execution using `asyncio.create_subprocess_shell` with a heavily stripped process environment, removing sensitive keys and blocking potential shell escape vectors. Timeout enforcement added.
+- **Plugin Execution Refactoring (`skills.py`)** — Shifted AST scanning security checks out of the main loop. Python hooks execution now wholly delegated to `PythonSandbox.run_hook`, ensuring crashes/leaks never impact the primary agent thread.
+
+New tests: `test_phase28b_sandbox.py` (5 tests). **Regression: 1093 passed.**
+
+---
+
+## Future Planning (Roadmap)
+
+### Phase 28C: OpenClaw Memory Architecture ✅
+- **Three-Tier Memory Architecture**: Formalized the memory hierarchy (Context Window -> JSONL Session -> Vector DB + KG) by integrating a dedicated Vector Database layer (ChromaDB) into the existing Knowledge Graph. Enabled hybrid exact+semantic search for entity contexts.
+
+New tests: `test_phase28c_knowledge_graph.py` (3 tests). **Regression: 1097 passed.**
+
+### Phase 29: Paper-Inspired Enhancements (论文借鉴) 📋
+
+> 源自 2026-03-25 对 5 篇论文的系统性对比分析。详见 `paper_analysis_report.md`。
+
+| ID | Item | Source | Priority |
+|----|------|--------|----------|
+| P29-1 | Directive Signal → 修正记忆 & Skill 学习 | OpenClaw-RL | P0 |
+| P29-2 | System Reminders（行为纠偏） | OPENDEV | P1 |
+| P29-3 | 离线 Bridging Facts 生成 | IndexRAG | P2 |
+| P29-4 | Knowledge Completion（知识补全） | QChunker | P2 |
+| P29-5 | 错误信号 → 自动经验 | OpenClaw-RL | P2 |
+| P29-6 | 知识溯源链 | Dual-Tree | P3 |
+
+> 📌 **专题讨论待定**：Per-Workflow 模型路由（认知路由）— 同时关联 Nanobot + 公司 HENRY 项目。
+
+### Phase 30: 弱模型防护 (Weak Model Safety Guards) ✅
+
+> Added multi-layered execution safeguards against hallucination loops and context bloat when using weaker language models. Fixed critical medium-priority bugs and enhanced the agent pipeline.
+
+- Fixed Phase 30 medium issues (8 items: E3-E10 testing mocks and logic bugs).
+- Fixed Phase 30 remaining layer bugs (7 items: BUG/SEC/DESIGN items).
+- New tests: 20 new test cases added. **Regression: 1209 passed.**
+
 

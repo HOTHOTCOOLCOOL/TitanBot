@@ -399,9 +399,16 @@
             document.getElementById('sidebar-overlay').classList.remove('open');
         }
 
+        // ── Auth Token ──
+        const _urlParams = new URLSearchParams(window.location.search);
+        const _authToken = _urlParams.get('token') || '';
+        function authHeaders() {
+            return _authToken ? {'Authorization': 'Bearer ' + _authToken} : {};
+        }
+
         // ── WebSocket Setup ──
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws`;
+        const wsUrl = `${protocol}//${window.location.host}/ws` + (_authToken ? `?token=${_authToken}` : '');
         let ws;
 
         function connectWS() {
@@ -440,7 +447,6 @@
             const input = document.getElementById('chat-input');
             const text = input.value.trim();
             if (!text || !ws) return;
-            appendLog('User', text);
             ws.send(JSON.stringify({message: text}));
             input.value = '';
         }
@@ -471,7 +477,7 @@
         // ── Stats ──
         async function fetchStats() {
             try {
-                const res = await fetch('/api/stats');
+                const res = await fetch('/api/stats', {headers: authHeaders()});
                 const data = await res.json();
 
                 // Render summary cards
@@ -499,7 +505,7 @@
 
         // ── Memory ──
         async function fetchMemory() {
-            const res = await fetch('/api/memory');
+            const res = await fetch('/api/memory', {headers: authHeaders()});
             const data = await res.json();
             document.getElementById('memory-editor').value = data.content || '';
         }
@@ -508,7 +514,7 @@
             const content = document.getElementById('memory-editor').value;
             await fetch('/api/memory', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', ...authHeaders()},
                 body: JSON.stringify({content})
             });
             showToast('✅ Memory saved successfully!');
@@ -516,7 +522,7 @@
 
         // ── Knowledge ──
         async function fetchKnowledge() {
-            const res = await fetch('/api/tasks');
+            const res = await fetch('/api/tasks', {headers: authHeaders()});
             const data = await res.json();
             document.getElementById('knowledge-editor').value = JSON.stringify(data.tasks, null, 2);
         }
@@ -527,7 +533,7 @@
                 const tasks = JSON.parse(content);
                 await fetch('/api/tasks', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: {'Content-Type': 'application/json', ...authHeaders()},
                     body: JSON.stringify({tasks})
                 });
                 showToast('✅ Knowledge base saved!');

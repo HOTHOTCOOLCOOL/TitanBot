@@ -36,6 +36,8 @@ def test_atomic_write_kg():
         workspace = Path(tmpdir)
         kg = KnowledgeGraph(workspace)
         kg._add_triple("Alice", "likes", "Python")
+        # Phase 25: _add_triple no longer auto-saves; callers must call _save() explicitly
+        kg._save()
 
         data = json.loads(kg.graph_file.read_text(encoding="utf-8"))
         assert "triples" in data

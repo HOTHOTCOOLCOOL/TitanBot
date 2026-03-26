@@ -15,7 +15,7 @@ from typing import Any
 
 from loguru import logger
 
-from nanobot.utils.helpers import ensure_dir, safe_filename
+from nanobot.utils.helpers import ensure_dir, safe_filename, safe_replace
 
 # I4: UTF-8 encoding constant for cross-platform consistency
 _ENCODING = "utf-8"
@@ -317,7 +317,7 @@ class SessionManager:
                     f.write(json.dumps(msg, ensure_ascii=False) + "\n")
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp, str(path))
+            safe_replace(tmp, str(path))
         except Exception:
             # Clean up temp file on failure
             try:

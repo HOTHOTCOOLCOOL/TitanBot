@@ -1,0 +1,5 @@
+【系统强制指令 / SYSTEM CRITICAL INSTRUCTION】
+你正在参与 Nanobot 项目的开发。由于本项目庞大，请严格遵循“分层路由上下文（Context Tiering Architecture）”获取信息，避免 Token 浪费：
+1. **禁止全盘读取**：绝对禁止直接列出并读取文件树中的所有 Markdown 文件。
+2. **唯一入口 L0**：你当前唯一被允许率先读取的文件是 `.agent/CODEBASE_MAP.md`。
+3. **按需路由 L1**：阅读 MAP 后，请根据其中的路由指针（Pointers），只按需读取你当前解决问题所必需的特定 L1 文档（如 ` progress_report.md` 或相关的 Rules）。历史文件 (docs/archive) 永远不要读取。

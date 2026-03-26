@@ -235,6 +235,31 @@ class VLMFeedbackConfig(Base):
     )
 
 
+class BrowserConfig(Base):
+    """Headless browser automation configuration (Phase 26)."""
+
+    enabled: bool = True                # Master switch
+    headless: bool = True               # Headed mode for debugging
+    executable_path: str = ""           # Path to Chrome/Chromium binary. Empty = Playwright default.
+    default_timeout_ms: int = 30000
+    viewport_width: int = 1920
+    viewport_height: int = 1080
+    max_pages: int = 5                  # Concurrent page limit
+    session_ttl_hours: int = 24         # Cookie/session expiry
+    trusted_domains: list[str] = Field(default_factory=list)  # Pre-trusted domains (supports wildcards)
+    block_internal_ips: bool = True     # SSRF protection
+
+
+class SandboxConfig(Base):
+    """Execution sandbox configuration (Phase 28B)."""
+
+    python_timeout_seconds: int = 300
+    shell_timeout_seconds: int = 60
+    tool_timeout_seconds: int = 120  # Default timeout for all tool executions (BP-3)
+    allow_network: bool = False
+    restrict_workspace: bool = True
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
@@ -244,6 +269,8 @@ class AgentsConfig(Base):
     memory_features: MemoryFeaturesConfig = Field(default_factory=MemoryFeaturesConfig)
     streaming: StreamingConfig = Field(default_factory=StreamingConfig)
     vlm_feedback: VLMFeedbackConfig = Field(default_factory=VLMFeedbackConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
 
 
 class ProviderConfig(Base):
@@ -267,6 +294,7 @@ class ProvidersConfig(Base):
     dashscope: ProviderConfig = Field(default_factory=ProviderConfig)  # 阿里云通义千问
     vllm: ProviderConfig = Field(default_factory=ProviderConfig)
     gemini: ProviderConfig = Field(default_factory=ProviderConfig)
+    volcengine: ProviderConfig = Field(default_factory=ProviderConfig)  # 火山引擎 (Doubao)
     moonshot: ProviderConfig = Field(default_factory=ProviderConfig)
     minimax: ProviderConfig = Field(default_factory=ProviderConfig)
     aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway

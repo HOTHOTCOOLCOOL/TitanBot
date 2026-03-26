@@ -10,6 +10,7 @@
 * **Skill Auto-Sublimation**：必须维持“观察 → 知识积累 → 验证模式 → 固化为 Skill”的自动进化流水线。
 * **分层记忆 (Layered Memory)**：严禁将所有记忆塞入系统提示。必须遵守 7 层架构（L1 Config ~ L7 Graph），且全部上文注入严格限制在 8000 字符内。
 * **验证与评估分离**：在需要评估的场景采用三层验证（L1 代码规则、L2 弱模型打分、L3 强模型校验）。切勿在常规操作中滥用“LLM 自我评估”。
+* **抵制过度工程与滥用 Harness**：严禁构筑多个 Agent 相互对话的复杂 DAG 网络来掩盖模型本身的缺陷。在实现 Phase 31 的验证层时，必须坚持极简闭环架构（L0:前置认知注入 -> L1:刚性拦截 -> L2:小模型事前动作自省 -> L3:事后反思萃取）。并且每一个拦截器组件必须支持“随基础模型变强而可被剥离”。
 * **始终清空 Session**：在解决或调试工具故障时，必须在重试前清空历史（使用 `/new`），否则 LLM 会被历史错误上下文污染，导致它由于产生了“我已经完成”的幻觉而直接跳过执行。
 
 ## 2. 工具与接口戒律 (Tool & API Rules)
@@ -30,6 +31,7 @@
   * 涉及到第三方库返回复杂类型（如 Numpy 数组）时，做分支判断永远使用 `is not None` 和 `len() > 0`，绝对禁止直接利用 `if x` 判断其 truthiness，这会导致 Python 抛出 `ValueError`。
   * Outlook COM API 面向外部 SMTP 地址发信时，必须使用 `Recipients.Add` + `ResolveAll` + 指定 `PR_SMTP_ADDRESS` 属性（`0x39FE001E`），禁止直接赋值 `mail.To`。
 * **配置文件读取与覆盖**：当你需要强制覆盖 VLM provider 等环境变量时，直接使用 `os.environ[key] = value`。禁止使用 `os.environ.setdefault`（它会默默失效并继续使用之前的配置）。
+* **跨平台降级 (Cross-Platform Graceful Degradation)**：引入平台特有 API（如 Windows `uiautomation`，`win32com`）时，**禁止**在模块顶层抛出不可恢复的 `ImportError`，同时**禁止**通过全局字典无脑注销 Tool。必须在核心内部方法处拦截 `sys.platform` / `ImportError` 并返回标准化字符串如 `"Error: This tool/feature is not supported on your OS."` 或激活备选降级方案（如从 UIA 降回 OCR/YOLO）。
 * **防御层移动策略**：在转移防御验证节点（如把 SSRF 判断从外部函数放入 Transport 类中）后，必须 `grep` 并修正旧单元测试中关于此功能的所有 mock 点，并执行端到端回放，以防止测试假阳性。
 
 ## 4. 安全防护戒律 (Security & Defense Rules)

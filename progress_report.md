@@ -26,7 +26,8 @@
 
 | 项目 | 优先级 | 描述 |
 |------|--------|------|
-| Phase 31: Verification Layer | P1 | 三层验证架构 (L1 Rules / L2 Self-Check / L3 External Eval) + Auxiliary Model 动态选型 + Skill `success_criteria` + Harness Necessity Audit |
+| Phase 31: Verification Layer | P1 | 基于漏斗模型的防过度工程架构：L0(前置相似度经验认知路由) -> L1(刚性边界规则拦截) -> L2(事前辅助小模型动作自省) -> L3(事后反思与知识萃取闭环) |
+| Phase 32: Cross-Platform Support | P2 | Windows/macOS 双端架构优化。解决核心依赖痛点：重构 `outlook.py` 脱离 COM 绑定、强化 `ui_anchors.py` 跨平台跨感知 fallback，并分离 `sandbox` & `shell` 的 OS 保护边界。 |
 
 ---
 
@@ -43,17 +44,15 @@
 
 ---
 
-## 🔬 Phase 29 — 论文借鉴增强 (Paper-Inspired)
+## 🔬 Phase 29 — 论文借鉴增强 (Paper-Inspired) ✅ 已完成 (2026-03)
 
-> 源自 5 篇论文对比分析，按 ROI 排序。完整分析见 `paper_analysis_report.md`。
+> 源自 5 篇论文对比分析，已全部集成到现有单智能体循环中，保持了零额外架构成本的原则。
 
-| 优先级 | ID | 借鉴项 | 来源 | 预计工作量 |
-|--------|-----|--------|------|-----------|
-| **P0** | P29-1 | Directive Signal → 修正记忆 & Skill 学习 | OpenClaw-RL | 1.5-2 天 |
-| **P1** | P29-2 | System Reminders（行为纠偏） | OPENDEV | 半天 |
-| **P2** | P29-3 | 离线 Bridging Facts 生成 | IndexRAG | 1-2 天 |
-| **P2** | P29-4 | Knowledge Completion（知识补全） | QChunker | 1 天 |
-| **P2** | P29-5 | 错误信号 → 自动经验 | OpenClaw-RL | 半天 |
-| **P3** | P29-6 | 知识溯源链 | Dual-Tree | 半天 |
-
-> 📌 **专题待讨论**：Per-Workflow 模型路由（认知路由）— 同时关联 Nanobot + 公司 HENRY 项目，将在独立会话中深入讨论。
+| 状态 | ID | 借鉴项 | 实现细节 |
+|------|-----|--------|---------|
+| ✅ | P29-1 | Directive Signal | `outcome_tracker` 检测负面反馈，LLM 提取 Actionable Rule 存入 Experience Bank |
+| ✅ | P29-2 | System Reminders | `loop.py` 长会话检测并注入行为纠偏 prompt；配置支持按 Workflow 路由独立模型 |
+| ✅ | P29-3 | Bridging Facts | `KnowledgeGraph.generate_bridging_facts` 离线推导多跳关联 |
+| ✅ | P29-4 | Knowledge Completion | `VectorMemory.search_with_completion` 检索后缺失验证与补充召回 |
+| ✅ | P29-5 | 自动经验生成 | `loop.py` 错误断路器触发 LLM 分析并存入 Experience Bank |
+| ✅ | P29-6 | 知识溯源链 | `task_knowledge.py` 存入溯源字段 `derived_from` |

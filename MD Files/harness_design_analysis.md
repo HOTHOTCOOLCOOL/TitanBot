@@ -166,7 +166,29 @@ agent 可以在执行后自检这些标准，作为 auto-upgrade 决策的额外
 | 上下文管理 | Context Reset | Compaction + Evicted Context | 增加**健康监控**，按需 reset |
 | 质量保障 | 外部 Evaluator | VLM Feedback Loop | **扩展评估能力**到更多场景 |
 | 任务分解 | Sprint + Contract | Knowledge Workflow | 增加 Skill **验收标准** |
-| 持续优化 | 模型升级时简化 harness | Phase 制度 | 增加**脚手架审计**检查项 |
+| 持续优化 | 模型升级时简化 harness | Phase 31: 漏斗防御大盘 | **实现 L0~L3 闭环且可剥离的防御模块** |
 
 > [!TIP]
 > 文章最有价值的一句话：*"The space of interesting harness combinations doesn't shrink as models improve. Instead, it moves."* — 好的 agent 架构不是静态的，而是随模型能力边界的移动而持续演化的。这与我们的 Phase 迭代哲学完全契合。
+
+---
+
+## 🚀 最终落地指引：Phase 31 (Verification Layer & Cognitive Routing)
+
+基于上述分析及避免过度工程（Over-engineering）的理念，Nanobot 关于大模型“能力幻觉与过分发散”的真正解法被设计为一条**“记忆检索 -> 刚性拦截 -> 动作自省 -> 事后反思”**的闭环漏斗。
+
+### L0：前置认知路由 (Pre-execution Knowledge Injection)
+- **目标**：解决大模型“无知且自信”的通病（例如为了找报告去强行安装依赖连接 SSRS 数据库，而不去查本地目录）。
+- **机制**：指令到达 Agent 前，先通过 Retriever (ChromaDB) 匹配相似度高的历史最佳实践。并在 System Prompt 层面静默注入工作流，用先验成功经验阻断模型不必要的推理发散。
+
+### L1：刚性边界规则 (Rigid Rules / Sandboxing)
+- **目标**：最底线的拦截防线。
+- **机制**：纯代码层面的拦截（快速、无成本），如阻断未得到显式授权的 `pip install`、不可信任的出站网络请求等。
+
+### L2：事前动作自省 (Sanity Self-Check)
+- **目标**：在高危动作执行前，踩下刹车。
+- **机制**：由轻量级的 Auxiliary Model（或当前模型）作为装饰器拦截器执行快速检查。提供 `[最终目标]` 和 `[当前打算执行的工具参数]`。如果小模型认为此规划“南辕北辙或极度危险”，则回绝执行，返回 Error 迫使主模型转向或终止。
+
+### L3：事后审查与经验萃取 (External Eval & Sublimation)
+- **目标**：提炼过往教训，构建记忆飞轮。
+- **机制**：任务终结时，启动独立 Evaluator（强模型）复盘全量思考流。提炼最优执行路径并封装为短小精悍的 Knowledge / Skill 规则，沉淀至知识库，供未来的 L0 匹配读取。

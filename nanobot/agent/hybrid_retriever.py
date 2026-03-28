@@ -105,7 +105,9 @@ def hybrid_retrieve(
                 matched = res.get("metadata", {}).get(match_key_field, "")
                 score = res.get("score", 0.0)
                 if matched:
-                    dense_scores_map[matched.lower()] = score
+                    m_lower = matched.lower()
+                    if m_lower not in dense_scores_map or score > dense_scores_map[m_lower]:
+                        dense_scores_map[m_lower] = score
         except Exception as e:
             logger.warning(f"HybridRetriever: dense search failed: {e}")
 

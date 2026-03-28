@@ -137,6 +137,12 @@ class ChannelManager:
                         await channel.send(msg)
                     except Exception as e:
                         logger.error(f"Error sending to {msg.channel}: {e}")
+                elif msg.channel == "dashboard":
+                    try:
+                        from nanobot.dashboard.app import broadcast_ws_message
+                        await broadcast_ws_message("log", {"sender": "Agent", "message": msg.content})
+                    except Exception as e:
+                        logger.error(f"Error sending to dashboard: {e}")
                 else:
                     logger.warning(f"Unknown channel: {msg.channel}")
                     

@@ -239,7 +239,7 @@ class BrowserConfig(Base):
     """Headless browser automation configuration (Phase 26)."""
 
     enabled: bool = True                # Master switch
-    headless: bool = True               # Headed mode for debugging
+    headless: bool = False              # Headed mode: visible window enables RPA/VLM interaction
     executable_path: str = ""           # Path to Chrome/Chromium binary. Empty = Playwright default.
     default_timeout_ms: int = 30000
     viewport_width: int = 1920
@@ -260,10 +260,30 @@ class SandboxConfig(Base):
     restrict_workspace: bool = True
 
 
+class VerificationConfig(Base):
+    """Phase 31→32: Verification Layer configuration.
+
+    Funnel-shaped verification pipeline (L0→L1→L3).
+    L2 (small-model introspection) removed in Phase 32.
+    Each layer can be independently disabled as base models improve.
+    """
+
+    model_config = ConfigDict(
+        alias_generator=to_camel, populate_by_name=True,
+        extra="ignore",  # Gracefully ignore old l2Enabled/l2Model fields in existing configs
+    )
+
+    l0_enabled: bool = True         # Experience + reflection context enrichment
+    l1_enabled: bool = True         # Rigid rule interception (pre-execution)
+    l3_enabled: bool = True         # Post-reflection & knowledge extraction
+    l3_success_pattern_min_tools: int = 3  # Min tools used to trigger success pattern extraction
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    workflow_models: dict[str, str] = Field(default_factory=dict)  # Phase 29: Per-Workflow Model Routing (e.g. {"key_extraction": "gpt-4o-mini"})
     vlm: VLMConfig = Field(default_factory=VLMConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
     memory_features: MemoryFeaturesConfig = Field(default_factory=MemoryFeaturesConfig)
@@ -271,6 +291,7 @@ class AgentsConfig(Base):
     vlm_feedback: VLMFeedbackConfig = Field(default_factory=VLMFeedbackConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    verification: VerificationConfig = Field(default_factory=VerificationConfig)
 
 
 class ProviderConfig(Base):

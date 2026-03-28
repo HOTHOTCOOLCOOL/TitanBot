@@ -5,6 +5,7 @@
 """
 
 from openai import OpenAI
+import openai
 import json
 import requests
 import sys

@@ -21,7 +21,7 @@ class ContextBuilder:
     into a coherent prompt for the LLM.
     """
     
-    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md", "KNOWLEDGE.md"]
+    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md", "KNOWLEDGE.md", "docs/rules/ARCHITECTURE.md"]
     
     def __init__(self, workspace: Path, language: str = "zh", provider=None, model=None,
                  embedding_model: str | None = None):
@@ -367,7 +367,9 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         user_multimodal_message = None
 
         # Intercept special screenshot payload: tool returns `__IMAGE__:/path/to/image.jpg`
-        if isinstance(result, str) and result.startswith("__IMAGE__:"):
+        # Phase 33: Also handles dual-prefix format `"Error: ...\n__IMAGE__:..."` from
+        # diagnostic screenshots. Scan for __IMAGE__: anywhere in the result string.
+        if isinstance(result, str) and "__IMAGE__:" in result:
             path_part = result.split("__IMAGE__:", 1)[1]
             path = path_part.split(" | ANCHORS:", 1)[0].strip()
             anchor_text = ""
@@ -475,7 +477,7 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
                             logger.error(f"Failed to persist visual memory: {e}")
             # ------------------------------------------
         else:
-            msg["content"] = None
+            msg["content"] = ""
 
         if tool_calls:
             msg["tool_calls"] = tool_calls

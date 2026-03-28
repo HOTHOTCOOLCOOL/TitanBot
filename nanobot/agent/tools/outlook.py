@@ -19,7 +19,7 @@ import asyncio
 
 from loguru import logger
 
-from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.base import Tool, RiskTier
 
 
 # Outlook item class constants
@@ -58,6 +58,7 @@ class OutlookTool(Tool):
     def __init__(self):
         self._current_folder_name = "inbox"
         self._last_search_results = []
+        self._lock = asyncio.Lock()  # Phase 31 Retro: protect COM shared state
     
     @property
     def name(self) -> str:
@@ -125,7 +126,19 @@ Note: Requires Outlook application to be running on Windows."""
             "required": ["action"]
         }
     
+    def get_risk_tier(self, args: dict[str, Any]) -> RiskTier:
+        action = args.get("action", "find_emails")
+        if action in ["send_email"]:
+            return RiskTier.MUTATE_EXTERNAL
+        elif action in ["delete_email"]:
+            return RiskTier.DESTRUCTIVE
+        return RiskTier.READ_ONLY
+    
     async def execute(self, **kwargs: Any) -> str:
+        async with self._lock:
+            return await self._execute_impl(**kwargs)
+
+    async def _execute_impl(self, **kwargs: Any) -> str:
         action = kwargs.get("action", "find_emails")
         
         try:

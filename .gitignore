@@ -27,6 +27,7 @@ pytest_out.txt
 test_all.txt
 test_out.txt
 tmp_*.py
+temp_print.txt
 test_browser_dns.py
 openclaw_*.txt
 openclaw_*.html
@@ -165,4 +166,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+chrome/
 chrome-win64/
+chrome-mac/
+chrome-linux/

@@ -422,4 +422,38 @@ Nanobot 的记忆模式核心思想：
 
 ---
 
+## 问题 9: 第三方框架 (如 Browser-Use) 集成时的“秒退”与配置不兼容
+
+### 问题描述
+引入 `browser-use` 库并包装为 `browser_use_worker` 工具后，大模型调用该工具时在日志中显示 `completed in 0.0s` 并直接返回失败提示，没有触发任何框架层的 Exception traceback。系统看似正常工作，实则是死循环报错。
+
+### 根本原因
+代码犯了三个致命错误：
+1. **配置属性名乱用**：在实例化大模型时，错误使用了 `provider_cfg.base_url`（系统实际定义的属性叫 `api_base`），导致隐式的 `AttributeError`。
+2. **大模型名称带有系统级别前缀**：Nanobot 默认把路由前缀附在名字上（如 `volcengine/doubao-seed...`），而 `browser-use` 底层实例化的是 `langchain_openai.ChatOpenAI`，它不认识这种 LiteLLM 专用的路由前缀，预期是一个纯净的名称。
+3. **最严重的：用外层 Return 彻底吞噬了异常堆栈 (Swallowed Exceptions)**：在工具捕获初始化错误时写了 `except Exception as e: return f"Error: ... {e}"`。这导致 `AttributeError` 被当成普通的对话文本塞给了 Agent 模型，而系统日志中 **完全没有打印红色的 ERROR**，看起来就像工具光速执行完。
+
+### 解决方案
+```python
+# 1. 统一获取配置，认准正确的内部属性或 Getter 方法
+base_url = cfg.get_api_base(model_name)
+
+# 2. 清洗系统特有前缀，适配外部的 LangChain 框架
+bare_model = model_name.split("/", 1)[-1] if "/" in model_name else model_name
+
+try:
+    llm = ChatOpenAI(model=bare_model, base_url=base_url, ...)
+except Exception as e:
+    # 3. 必须先写 Error Log 记录堆栈，再 return 简短报错
+    logger.error(f"BrowserUseWorker: LLM init failed: {e}")
+    return f"Error: Failed to init LLM: {e}"
+```
+
+### 经验教训
+> **绝不要在 Tool 的外层用纯字符串 return 吞没底层框架的异常堆栈！**
+> 当你集成庞大的第三方库时，外层一定要加上 `logger.error(..., exc_info=True)` 或详尽的 `logger.exception`，然后才返回给 Agent LLM 可以消化的 `Error:` 短文本。没有日志就没有调试线索。
+> **跨框架传递模型参数时，务必考虑名与值的映射清洗！** `api_base` vs `base_url`、带前缀 vs 不带前缀的裸名称，强行跨体系透传直接导致全线崩溃。
+
+---
+
 *本文档应持续更新，记录更多经验教训。*

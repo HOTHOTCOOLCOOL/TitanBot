@@ -103,10 +103,12 @@ class TestMatchWithStats:
             key="search weather",
             rate=str(stats["rate"]),
             count=str(stats["use_count"]),
+            score="0.95",
             lang="en",
         )
         assert "100" in prompt
         assert "search weather" in prompt
+        assert "0.95" in prompt
 
     def test_stats_prompt_zh(self, kw: KnowledgeWorkflow):
         """Chinese version of stats prompt works."""
@@ -117,9 +119,11 @@ class TestMatchWithStats:
             key="search weather",
             rate=str(stats["rate"]),
             count=str(stats["use_count"]),
+            score="0.88",
             lang="zh",
         )
         assert "成功率" in prompt
+        assert "相似度" in prompt
 
 
 # ── last_task_key Setting ──

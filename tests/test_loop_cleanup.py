@@ -58,5 +58,5 @@ class TestLoopCleanup:
         from nanobot.agent.loop import _FAIL_INDICATORS
         assert isinstance(_FAIL_INDICATORS, list)
         assert len(_FAIL_INDICATORS) > 0
-        assert "error:" in _FAIL_INDICATORS
-        assert "not found" in _FAIL_INDICATORS
+        assert "执行出错" in _FAIL_INDICATORS
+        assert "运行失败" in _FAIL_INDICATORS

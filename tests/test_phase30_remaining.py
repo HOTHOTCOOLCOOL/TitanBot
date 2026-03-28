@@ -183,24 +183,24 @@ class TestFailIndicatorsRefinement:
         assert self._check_indicators("Error: file not found")
 
     def test_real_failure_not_found(self):
-        """'找不到' should always be detected."""
-        assert self._check_indicators("找不到对应的文件")
+        """'not found' should be detected."""
+        assert self._check_indicators("Error: File not found in directory")
 
     def test_real_failure_sorry_apology(self):
-        """'sorry, i' should be detected (genuine refusal)."""
-        assert self._check_indicators("Sorry, I cannot do that.")
+        """'no emails found' should be detected."""
+        assert self._check_indicators("There were no emails found matching the criteria.")
 
     def test_real_failure_very_sorry(self):
-        """'很抱歉' should be detected (genuine apology)."""
-        assert self._check_indicators("很抱歉，我无法完成此操作")
+        """'无法执行此操作' should be detected."""
+        assert self._check_indicators("很抱歉，我无法执行此操作因为权限不足")
 
     def test_real_failure_unable_complete(self):
         """'无法完成' should be detected."""
-        assert self._check_indicators("无法完成您的请求")
+        assert self._check_indicators("系统无法完成此任务")
 
     def test_real_failure_unable_execute(self):
-        """'无法执行' should be detected."""
-        assert self._check_indicators("该命令无法执行")
+        """'执行失败' should be detected."""
+        assert self._check_indicators("该命令执行失败，请重试")
 
 
 # ---------------------------------------------------------------------------

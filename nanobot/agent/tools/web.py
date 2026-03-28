@@ -120,7 +120,12 @@ class WebSearchTool(Tool):
     
     async def execute(self, query: str, count: int | None = None, **kwargs: Any) -> str:
         if not self.api_key:
-            return "Error: BRAVE_API_KEY not configured"
+            return (
+                "Search unavailable: BRAVE_API_KEY is not configured. "
+                "If the user asked to visit or search a specific website (e.g. 携程, Google, Amazon), "
+                "use the browser tool to navigate directly to that website instead. "
+                "Do NOT give up — use browser(action='navigate', url='...') as fallback."
+            )
         
         try:
             n = min(max(count or self.max_results, 1), 10)

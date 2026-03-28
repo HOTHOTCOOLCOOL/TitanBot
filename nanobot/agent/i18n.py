@@ -122,13 +122,17 @@ MESSAGES: dict[str, dict[str, str]] = {
     # --- Knowledge Match with Stats ---
     "knowledge_match_with_stats": {
         "zh": (
-            "💡 发现相似任务「{key}」（成功率 {rate}%, 已执行 {count} 次）\n"
+            "💡 发现相似任务「{key}」（相似度 {score} | 成功率 {rate}%, 已执行 {count} 次）\n"
             "回复 **直接用** 使用知识库结果，或回复 **重新执行** 让 AI 重新处理。"
         ),
         "en": (
-            "💡 Found similar task '{key}' (success rate: {rate}%, executed {count} times)\n"
+            "💡 Found similar task '{key}' (similarity: {score} | success rate: {rate}%, executed {count} times)\n"
             "Reply **use** to reuse the saved result, or **redo** to re-execute."
         ),
+    },
+    "knowledge_auto_adapt": {
+        "zh": "🔄 发现相似任务「{key}」（相似度 {score}），正在参考其经验自动执行...",
+        "en": "🔄 Found similar task '{key}' (similarity: {score}), auto-executing with adapted reference...",
     },
 
     # --- Knowledge Base Management (/kb) ---

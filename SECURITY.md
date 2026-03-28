@@ -211,7 +211,7 @@ If you suspect a security breach:
 - 14+ dangerous command deny patterns (network exfiltration, encoded PowerShell, reverse shells — Phase 18A)
 - Input length limits on HTTP requests
 - SSRF protection blocking RFC1918/loopback/link-local/metadata IPs in `web_fetch` (Phase 18B)
-- Weak Model Pre-execution Validation (Payload/Schema checks — Phase 30)
+- Phase 32 L1 Rigid Rule Interception (R01-R09 deterministic pre-execution checks)
 
 ✅ **Authentication**
 - Allow-list based access control per channel
@@ -272,7 +272,7 @@ Before deploying TitanBot:
 
 ## Updates
 
-**Last Updated**: 2026-03-21 (Phase 23A security fixes, config cleanup)
+**Last Updated**: 2026-03-27 (Phase 32: L2 removal, L1/L3 strengthening, HITL framework)
 
 For the latest security updates and announcements, check:
 - GitHub Security Advisories: https://github.com/HOTHOTCOOLCOOL/nanobot/security/advisories

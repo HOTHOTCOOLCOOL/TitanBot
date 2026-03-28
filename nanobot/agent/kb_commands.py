@@ -1,5 +1,6 @@
 """Knowledge Base Management Commands for knowledge workflow."""
 
+from typing import Any
 from loguru import logger
 from nanobot.agent.i18n import msg
 from nanobot.agent.task_knowledge import TaskKnowledgeStore, tokenize_key
@@ -30,17 +31,21 @@ def format_kb_list(knowledge_store: TaskKnowledgeStore | None, lang: str | None 
     return "\n".join(lines)
 
 
-def delete_knowledge(knowledge_store: TaskKnowledgeStore | None, key: str, lang: str | None = None) -> str:
+def delete_knowledge(knowledge_store: TaskKnowledgeStore | None, key: str, lang: str | None = None, vector_memory: Any = None) -> str:
     """Delete a knowledge base entry by key. Returns user-facing message."""
     if not knowledge_store:
         return msg("kb_delete_not_found", lang=lang, key=key)
     if knowledge_store.delete_task(key):
+        if vector_memory:
+            vector_memory.delete_by_source(f"knowledge:{key}")
         logger.info(f"KnowledgeWorkflow: deleted knowledge entry '{key}'")
         return msg("kb_delete_success", lang=lang, key=key)
     return msg("kb_delete_not_found", lang=lang, key=key)
 
 
-def cleanup_knowledge(knowledge_store: TaskKnowledgeStore | None, lang: str | None = None) -> str:
+from typing import Any
+
+def cleanup_knowledge(knowledge_store: TaskKnowledgeStore | None, lang: str | None = None, vector_memory: Any = None) -> str:
     """Find and merge duplicate/similar knowledge base entries.
 
     Returns a user-facing message with cleanup stats.
@@ -82,6 +87,9 @@ def cleanup_knowledge(knowledge_store: TaskKnowledgeStore | None, lang: str | No
                     f"KnowledgeWorkflow cleanup: merged '{discard.get('key')}' "
                     f"into '{keep.get('key')}'"
                 )
+
+    if merged_count > 0 and vector_memory:
+        vector_memory.ingest_knowledge_tasks()
 
     return msg(
         "kb_cleanup_result", lang=lang,

@@ -139,8 +139,19 @@ class VectorMemory:
             return self._collection is not None
         self._init_done = True
         try:
+            import os
+            os.environ["ANONYMIZED_TELEMETRY"] = "False"
+            
             import chromadb
             from chromadb.config import Settings
+            
+            # Monkeypatch to forcefully disable PostHog telemetry
+            try:
+                from chromadb.telemetry.product import posthog
+                posthog.Posthog.capture = lambda *args, **kwargs: None
+            except Exception:
+                pass
+
 
             self._db_path.mkdir(parents=True, exist_ok=True)
             client = chromadb.PersistentClient(
@@ -262,6 +273,7 @@ class VectorMemory:
         text: str,
         source: str,
         metadata: dict[str, Any] | None = None,
+        clear_old_source: bool = False,
     ) -> int:
         """Chunk and ingest text into the vector store.
 
@@ -275,6 +287,12 @@ class VectorMemory:
         """
         if not self._ensure_init():
             return 0
+
+        if clear_old_source:
+            try:
+                self._collection.delete(where={"source": source})
+            except Exception as e:
+                logger.warning(f"VectorMemory: clear_old_source failed: {e}")
 
         chunks = self._chunk_text(text)
         if not chunks:
@@ -359,6 +377,51 @@ class VectorMemory:
         logger.info(f"VectorMemory: ingested daily logs — {total} total chunks")
         return total
 
+    # -- Public: ingest knowledge base tasks --------------------------------
+    
+    def ingest_knowledge_tasks(self) -> int:
+        """Parse and ingest workspace/memory/tasks.json."""
+        tasks_file = self.memory_dir / "tasks.json"
+        if not tasks_file.exists():
+            return 0
+
+        try:
+            import json
+            data = json.loads(tasks_file.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.error(f"VectorMemory: failed to read tasks.json: {e}")
+            return 0
+            
+        total = 0
+        tasks = data.get("tasks", [])
+        for task in tasks:
+            key = task.get("key", "")
+            if not key:
+                continue
+            desc = task.get("description", "")
+            triggers = task.get("triggers", [])
+            tags = task.get("tags", [])
+            text_parts = [f"Key: {key}"]
+            if desc: text_parts.append(f"Description: {desc}")
+            if triggers: text_parts.append(f"Triggers: {', '.join(triggers)}")
+            if tags: text_parts.append(f"Tags: {', '.join(tags)}")
+            
+            content = "\n".join(text_parts)
+            source = f"knowledge:{key}"
+            total += self.ingest_text(content, source=source, metadata={"key": key}, clear_old_source=True)
+            
+        experiences = data.get("experiences", [])
+        for exp in experiences:
+            trigger = exp.get("trigger", "")
+            if not trigger:
+                continue
+            prompt = exp.get("prompt", "")
+            content = f"Trigger: {trigger}\nPrompt: {prompt}"
+            total += self.ingest_text(content, source=f"knowledge_experience:{trigger}", metadata={"trigger": trigger}, clear_old_source=True)
+            
+        logger.info(f"VectorMemory: ingested knowledge tasks — {total} total chunks")
+        return total
+
     # -- Public: full reindex -----------------------------------------------
 
     def full_reindex(self) -> int:
@@ -385,8 +448,23 @@ class VectorMemory:
         total = 0
         total += self.ingest_history_file()
         total += self.ingest_daily_logs()
+        total += self.ingest_knowledge_tasks()
         logger.info(f"VectorMemory: full reindex complete — {total} chunks")
         return total
+
+    # -- Public: delete by source -------------------------------------------
+
+    def delete_by_source(self, source: str) -> bool:
+        """Delete all documents matching the exact source."""
+        if not self._ensure_init():
+            return False
+        try:
+            self._collection.delete(where={"source": source})
+            logger.info(f"VectorMemory: deleted documents for source '{source}'")
+            return True
+        except Exception as e:
+            logger.error(f"VectorMemory: failed to delete source '{source}': {e}")
+            return False
 
     # -- Public: semantic search --------------------------------------------
 
@@ -489,6 +567,67 @@ class VectorMemory:
         except Exception as e:
             logger.error(f"VectorMemory search failed (non-fatal): {e}")
             return []
+
+    async def search_with_completion(
+        self,
+        query: str,
+        top_k: int = 5,
+        source_filter: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """P29-4: Knowledge Completion (QChunker inspired).
+        
+        Performs an initial semantic search. If a lightweight LLM check determines
+        that the retrieved context is missing critical sub-entities referenced in the query,
+        it synthesizes a supplementary query and retrieves additional context chunks.
+        """
+        initial_results = self.search(query, top_k=top_k, source_filter=source_filter)
+        
+        if not initial_results or not self.provider or not self.model:
+            return initial_results
+
+        # Evaluate if context is complete relative to query
+        ctx_texts = "\n---\n".join([r.get("text", "") for r in initial_results[:3]])
+        prompt = f"""You are a RAG context evaluator.
+User Query: "{query}"
+
+Retrieved Context:
+{ctx_texts}
+
+Does the retrieved context fully cover the entities or technical specifics asked in the query? 
+If it mentions an entity but is missing the definition or secondary required information, return a supplementary search query to find the missing piece.
+If the context is sufficient, or if it's completely irrelevant, return an empty string.
+
+Return ONLY the supplementary search query string, or nothing."""
+
+        try:
+            response = await self.provider.chat(
+                messages=[
+                    {"role": "system", "content": "You are a context gap analyzer. Return only the missing query string."},
+                    {"role": "user", "content": prompt},
+                ],
+                model=self.model,
+                temperature=0.1,
+                max_tokens=50
+            )
+            supplement_query = (response.content or "").strip()
+            if supplement_query and len(supplement_query) > 3 and not supplement_query.lower().startswith("no"):
+                logger.info(f"P29-4: Context gap detected. Executing supplementary query: '{supplement_query}'")
+                extra_results = self.search(supplement_query, top_k=2, source_filter=source_filter)
+                
+                # Merge without duplicates
+                seen_texts = {r.get("text", "") for r in initial_results}
+                for er in extra_results:
+                    if er.get("text", "") not in seen_texts:
+                        initial_results.append(er)
+                        seen_texts.add(er.get("text", ""))
+                
+                # Sort merged results by score descending
+                initial_results.sort(key=lambda x: x["score"], reverse=True)
+                
+        except Exception as e:
+            logger.error(f"Knowledge Completion evaluation failed: {e}")
+
+        return initial_results[:top_k * 2]
 
     # -- Public: stats ------------------------------------------------------
 

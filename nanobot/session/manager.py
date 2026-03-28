@@ -42,6 +42,7 @@ class Session:
     pending_knowledge: dict[str, Any] | None = None  # Awaiting user reply on knowledge match
     pending_save: dict[str, Any] | None = None  # Awaiting user confirmation to save
     pending_upgrade: dict[str, Any] | None = None  # Awaiting user confirmation to upgrade skill
+    pending_approval_task: dict[str, Any] | None = None  # Awaiting human-in-the-loop High-Risk approval
     last_task_key: str | None = None  # Last completed task key (for implicit feedback tracking)
     last_tool_calls: list[dict[str, Any]] | None = None  # Last tool calls (for silent steps update)
     message_count_since_consolidation: int = 0  # Auto-consolidation trigger counter
@@ -64,7 +65,7 @@ class Session:
         """Get recent messages in LLM format, preserving tool metadata."""
         out: list[dict[str, Any]] = []
         for m in self.messages[-max_messages:]:
-            entry: dict[str, Any] = {"role": m["role"], "content": m.get("content", "")}
+            entry: dict[str, Any] = {"role": m["role"], "content": m.get("content") or ""}
             for k in ("tool_calls", "tool_call_id", "name"):
                 if k in m:
                     entry[k] = m[k]
@@ -78,6 +79,7 @@ class Session:
         self.pending_knowledge = None
         self.pending_save = None
         self.pending_upgrade = None
+        self.pending_approval_task = None
         self.last_tool_calls = None
         self.message_count_since_consolidation = 0
         self.evicted_context = None
@@ -90,6 +92,7 @@ class Session:
         self.pending_knowledge = None
         self.pending_save = None
         self.pending_upgrade = None
+        self.pending_approval_task = None
         self._metadata_dirty = True
 
     def mark_metadata_dirty(self) -> None:
@@ -191,6 +194,7 @@ class SessionManager:
             pending_knowledge = None
             pending_save = None
             pending_upgrade = None
+            pending_approval_task = None
             msg_count_since_consolidation = 0
             last_task_key = None
             last_tool_calls = None
@@ -219,6 +223,7 @@ class SessionManager:
                         pending_knowledge = data.get("pending_knowledge")
                         pending_save = data.get("pending_save")
                         pending_upgrade = data.get("pending_upgrade")
+                        pending_approval_task = data.get("pending_approval_task")
                         msg_count_since_consolidation = data.get("message_count_since_consolidation", 0)
                         last_task_key = data.get("last_task_key")
                         last_tool_calls = data.get("last_tool_calls")
@@ -236,6 +241,7 @@ class SessionManager:
                 pending_knowledge=pending_knowledge,
                 pending_save=pending_save,
                 pending_upgrade=pending_upgrade,
+                pending_approval_task=pending_approval_task,
                 last_task_key=last_task_key,
                 last_tool_calls=last_tool_calls,
                 message_count_since_consolidation=msg_count_since_consolidation,
@@ -307,6 +313,7 @@ class SessionManager:
                     "pending_knowledge": session.pending_knowledge,
                     "pending_save": session.pending_save,
                     "pending_upgrade": session.pending_upgrade,
+                    "pending_approval_task": session.pending_approval_task,
                     "last_task_key": session.last_task_key,
                     "last_tool_calls": session.last_tool_calls,
                     "message_count_since_consolidation": session.message_count_since_consolidation,

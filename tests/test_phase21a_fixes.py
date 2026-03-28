@@ -141,23 +141,23 @@ async def test_circuit_breaker_breaks_after_3_consecutive_all_exceptions():
              patch("nanobot.agent.tool_setup.setup_all_tools"):
             agent = AgentLoop(bus=bus, provider=provider, workspace=workspace)
 
-        # Mock get_definitions so the provider.chat receives tools
-        agent.tools.get_definitions = MagicMock(return_value=[{
-            "type": "function",
-            "function": {
-                "name": "failing_tool",
-                "description": "always fails",
-                "parameters": {"type": "object", "properties": {}}
-            }
-        }])
-        # Make execute always raise
-        agent.tools.execute = AsyncMock(side_effect=RuntimeError("boom"))
+            # Mock get_definitions so the provider.chat receives tools
+            agent.tools.get_definitions = MagicMock(return_value=[{
+                "type": "function",
+                "function": {
+                    "name": "failing_tool",
+                    "description": "always fails",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            }])
+            # Make execute always raise
+            agent.tools.execute = AsyncMock(side_effect=RuntimeError("boom"))
 
-        messages = [{"role": "system", "content": "test"}, {"role": "user", "content": "test"}]
-        final_content, tools_used, _ = await agent._run_agent_loop(messages)
+            messages = [{"role": "system", "content": "test"}, {"role": "user", "content": "test"}]
+            final_content, tools_used, _ = await agent._run_agent_loop(messages)
 
-        # After 3 consecutive all-exception turns, it should break with a warning
-        assert final_content is not None
+            # After 3 consecutive all-exception turns, it should break with a warning
+            assert final_content is not None
         assert "tool failures" in final_content.lower() or "⚠️" in final_content
 
 

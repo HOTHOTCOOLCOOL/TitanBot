@@ -2,6 +2,14 @@
 
 from abc import ABC, abstractmethod
 from typing import Any
+from enum import Enum
+
+class RiskTier(Enum):
+    """Risk tiers for categorizing safety of tool operations."""
+    READ_ONLY = 0
+    MUTATE_LOCAL = 1
+    MUTATE_EXTERNAL = 2
+    DESTRUCTIVE = 3
 
 
 class Tool(ABC):
@@ -38,6 +46,13 @@ class Tool(ABC):
     def parameters(self) -> dict[str, Any]:
         """JSON Schema for tool parameters."""
         pass
+    
+    def get_risk_tier(self, args: dict[str, Any]) -> RiskTier:
+        """
+        Determine the risk tier of this tool invocation based on its arguments.
+        Defaults to MUTATE_LOCAL (1). Override in specific tools for finer granularity.
+        """
+        return RiskTier.MUTATE_LOCAL
     
     async def setup(self) -> None:
         """

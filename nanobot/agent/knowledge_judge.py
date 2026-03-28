@@ -202,8 +202,9 @@ async def adapt_knowledge(
 ) -> str:
     """Adapt a retrieved knowledge entry into a tailored few-shot prompt for the current context.
 
-    Uses a lightweight LLM call to rewrite the generic steps from the knowledge
-    base into a specific, actionable reference for the current request.
+    Uses a lightweight LLM call to rewrite the concrete tool call sequence from
+    the knowledge base, replacing only the parameter values (dates, destinations,
+    URLs, etc.) while preserving the exact tool names, call order, and approach.
 
     Args:
         match: The matched knowledge entry dict.
@@ -225,32 +226,35 @@ async def adapt_knowledge(
     if not steps_detail and not steps:
         return ""
 
-    generic_prompt = format_few_shot_prompt(match)
+    # Build raw tool call data for the LLM to adapt
+    raw_steps = steps_detail if steps_detail else steps
+    steps_json = json.dumps(raw_steps[:15], ensure_ascii=False, indent=2)[:3000]
 
     prompt_parts = [
-        f"You are given a previously successful workflow for the task: '{key}'.\n",
-        "Adapt this generic workflow to fit the NEW current user request.\n",
-        "Rules:\n",
-        "- Extract specific parameters (paths, names, URLs, etc.) from the new request or history.\n",
-        "- Replace the old parameters in the generic workflow with the new ones.\n",
-        "- Keep the output concise, focusing purely on the modified steps.\n",
-        "- Output a markdown formatted reference list of steps.\n\n",
+        f"A previously successful task '{key}' used the following tool call sequence:\n\n",
+        f"```json\n{steps_json}\n```\n\n",
+        "Your job: adapt this EXACT tool call sequence for a NEW user request.\n\n",
+        "CRITICAL RULES:\n",
+        "1. PRESERVE the exact same tool names and call order (e.g. browser→browser_use_worker).\n",
+        "2. PRESERVE URL construction patterns — only replace parameter values (dates, cities, etc.).\n",
+        "3. Output the adapted tool calls as a numbered list with tool name and key arguments.\n",
+        "4. If the original used a direct URL approach, keep it. Do NOT switch to web_search.\n",
+        "5. Be concrete — include actual URLs, dates, and parameter values for the new request.\n\n",
     ]
 
     if history:
-        prompt_parts.append("Recent conversation history (for additional context):\n")
-        for m in history[-5:]:
+        prompt_parts.append("Recent conversation context:\n")
+        for m in history[-3:]:
             role = m.get("role", "unknown")
             content = m.get("content", "")
             if isinstance(content, str):
-                prompt_parts.append(f"[{role}]: {content[:500]}\n")
+                prompt_parts.append(f"[{role}]: {content[:300]}\n")
             elif isinstance(content, list):
                 text_parts = [b.get("text", "") for b in content if b.get("type") == "text"]
-                text_content = " ".join(text_parts)
-                prompt_parts.append(f"[{role}]: {text_content[:500]}\n")
+                prompt_parts.append(f"[{role}]: {' '.join(text_parts)[:300]}\n")
 
-    prompt_parts.append(f"\nUser request: {current_request}\n")
-    prompt_parts.append(f"\nGeneric workflow to adapt:\n{generic_prompt}\n\nAdapted workflow:")
+    prompt_parts.append(f"\nNEW user request: {current_request}\n")
+    prompt_parts.append("\nOutput the adapted tool call sequence:")
     prompt = "".join(prompt_parts)
 
     try:
@@ -258,7 +262,7 @@ async def adapt_knowledge(
             messages=[{"role": "user", "content": prompt}],
             model=model,
             temperature=0.1,
-            max_tokens=300,
+            max_tokens=1500,
         )
         content = response.content or ""
         from nanobot.utils.think_strip import strip_think_tags
@@ -266,8 +270,12 @@ async def adapt_knowledge(
         adapted = content.strip()
         if adapted:
             logger.info(f"knowledge_judge: successfully adapted knowledge for '{key}'")
-            return f"## Contextual Reference: Adapted from '{key}'\n\n{adapted}"
+            return (
+                f"## MANDATORY Execution Reference (adapted from '{key}')\n\n"
+                f"You MUST follow this tool call sequence. Do NOT deviate or use "
+                f"alternative tools unless a step fails.\n\n{adapted}"
+            )
     except Exception as e:
         logger.warning(f"knowledge_judge: adaptation failed: {e}")
 
-    return generic_prompt
+    return format_few_shot_prompt(match)

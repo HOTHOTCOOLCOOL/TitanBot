@@ -106,6 +106,8 @@ class RPAExecutorTool(Tool):
 
     def __init__(self):
         super().__init__()
+        import asyncio
+        self._lock = asyncio.Lock()  # Phase 31 Retro: serialize physical device ops
 
     def _get_vlm_feedback_loop(self):
         """Lazy-create a VLMFeedbackLoop if VLM feedback is enabled.
@@ -223,6 +225,10 @@ class RPAExecutorTool(Tool):
         return None, None
 
     async def execute(self, **kwargs) -> str:
+        async with self._lock:
+            return await self._execute_impl(**kwargs)
+
+    async def _execute_impl(self, **kwargs) -> str:
         if not HAS_RPA_DEPS:
             return "Error: Missing dependencies for RPA. Please run: pip install pyautogui pydirectinput"
 

@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.base import Tool, RiskTier
 
 
 class ExecTool(Tool):
@@ -86,6 +86,9 @@ class ExecTool(Tool):
             },
             "required": ["command"]
         }
+    
+    def get_risk_tier(self, args: dict[str, Any]) -> RiskTier:
+        return RiskTier.DESTRUCTIVE
     
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
         cwd = working_dir or self.working_dir or os.getcwd()

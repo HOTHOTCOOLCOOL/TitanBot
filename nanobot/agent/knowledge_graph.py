@@ -506,6 +506,78 @@ Do not include markdown fences."""
             logger.error(f"Entity summary generation failed: {e}")
             return 0
 
+    async def generate_bridging_facts(self, provider: LLMProvider, model: str) -> int:
+        """P29-3: Offline Bridging Facts.
+        
+        Analyzes the graph's entities and triples to discover implicit, multi-hop
+        relationships (e.g., A works with B, B works on C -> A might know about C).
+        Saves these insights as new 'bridge' triples to speed up future multi-hop queries.
+        
+        Returns:
+            Number of new bridging facts generated.
+        """
+        if len(self._triples) < 5:
+            return 0
+
+        # Sample up to 100 recent triples to avoid massive prompts
+        sample_triples = self._triples[-100:]
+        facts_text = "\n".join([f"- {t.get('subject')} {t.get('predicate')} {t.get('object')} ({t.get('description', '')})" for t in sample_triples])
+
+        prompt = f"""You are a Knowledge Graph Reasoning Engine.
+Analyze the following graph facts and deduce up to 5 implicit "bridging facts" (multi-hop relationships between entities that are indirectly connected).
+Focus on meaningful connections (e.g., transitive organizational relationships, shared project contexts, or dependencies).
+
+Facts:
+{facts_text}
+
+Return ONLY a valid JSON array of objects representing the new bridging facts.
+Each object must have "subject", "predicate", "object", and "description". 
+Use predicates like "is indirectly linked to", "shares context with".
+
+Example:
+[
+  {{"subject": "David", "predicate": "shares context with", "object": "Project X", "description": "David works with Anna, who is the lead for Project X."}}
+]
+Do not include markdown fences. If no meaningful bridging facts can be deduced, return []."""
+
+        try:
+            response = await provider.chat(
+                messages=[
+                    {"role": "system", "content": "You are a bridging fact extractor. Return only JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                model=model,
+                temperature=0.2,
+            )
+            resp_text = (response.content or "").strip()
+            from nanobot.utils.think_strip import strip_think_tags
+            resp_text = strip_think_tags(resp_text)
+            if resp_text.startswith("```"):
+                resp_text = resp_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            
+            result = json_repair.loads(resp_text)
+            added = 0
+            if isinstance(result, list):
+                for item in result:
+                    if isinstance(item, dict) and "subject" in item and "predicate" in item and "object" in item:
+                        desc = str(item.get("description", ""))
+                        self._add_triple(
+                            str(item["subject"]),
+                            str(item["predicate"]),
+                            str(item["object"]),
+                            description=f"Bridging Fact: {desc}",
+                            confidence=0.8
+                        )
+                        added += 1
+            if added > 0:
+                self.rebuild_entity_index()
+                self._save()
+                logger.info(f"P29-3: Generated {added} bridging facts.")
+            return added
+        except Exception as e:
+            logger.error(f"Bridging facts generation failed: {e}")
+            return 0
+
     def get_entity_context(self, query: str) -> str:
         """KG3: Return matching entity summaries for the query.
 

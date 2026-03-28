@@ -82,10 +82,20 @@ class KnowledgeWorkflow:
             logger.debug(f"Key extraction cache hit: '{cache_key[:40]}'")
             return _key_extraction_cache[cache_key]
 
+        # P29-2: Workflow Model Routing
+        from nanobot.config.loader import get_config
+        config = get_config()
+        wf_models = getattr(config.agents, 'workflow_models', {})
+        ext_model = wf_models.get('key_extraction', self.model)
+        ext_provider = self.provider
+        if ext_model != self.model:
+            from nanobot.providers.factory import ProviderFactory
+            ext_provider = ProviderFactory.get_provider(ext_model, config) or self.provider
+
         result = await key_ext.extract_key(
             user_request,
-            provider=self.provider,
-            model=self.model,
+            provider=ext_provider,
+            model=ext_model,
             history=history,
         )
 
@@ -286,7 +296,7 @@ class KnowledgeWorkflow:
         result_summary: str = "",
     ) -> bool:
         """Save or update a task in the knowledge base."""
-        return await kj.save_to_knowledge(
+        success = await kj.save_to_knowledge(
             key=key,
             steps=steps,
             user_request=user_request,
@@ -295,15 +305,47 @@ class KnowledgeWorkflow:
             model=self.model,
             result_summary=result_summary,
         )
+        if success and self.vector_memory and self.knowledge_store:
+            task = self.knowledge_store.find_task(key)
+            if not task:
+                task = self.knowledge_store.find_similar_task(key)
+            if task:
+                target_key = task.get("key", key)
+                desc = task.get("description", "")
+                triggers = task.get("triggers", [])
+                tags = task.get("tags", [])
+                text_parts = [f"Key: {target_key}"]
+                if desc: text_parts.append(f"Description: {desc}")
+                if triggers: text_parts.append(f"Triggers: {', '.join(triggers)}")
+                if tags: text_parts.append(f"Tags: {', '.join(tags)}")
+                content = "\n".join(text_parts)
+                self.vector_memory.ingest_text(
+                    content,
+                    source=f"knowledge:{target_key}",
+                    metadata={"key": target_key},
+                    clear_old_source=True,
+                )
+        return success
 
     async def evaluate_and_structure_knowledge(
         self, key: str, request: str, steps: list[dict], result: str,
     ) -> dict[str, Any]:
         """Evaluate new knowledge using LLM and structure it into formal fields."""
+        
+        # P29-2: Workflow Model Routing
+        from nanobot.config.loader import get_config
+        config = get_config()
+        wf_models = getattr(config.agents, 'workflow_models', {})
+        eval_model = wf_models.get('knowledge_evaluation', self.model)
+        eval_provider = self.provider
+        if eval_model and eval_model != self.model:
+            from nanobot.providers.factory import ProviderFactory
+            eval_provider = ProviderFactory.get_provider(eval_model, config) or self.provider
+
         return await kj.evaluate_and_structure_knowledge(
             key, request, steps, result,
-            provider=self.provider,
-            model=self.model,
+            provider=eval_provider,
+            model=eval_model,
         )
 
     def get_knowledge_result(self, match: dict, lang: str | None = None) -> str:
@@ -323,6 +365,75 @@ class KnowledgeWorkflow:
         """Record task outcome (success or failure) in knowledge base."""
         out_trk.record_outcome(self.knowledge_store, key, success)
 
+    async def extract_and_save_directive(self, session: Any, user_feedback: str) -> None:
+        """P29-1: Extract 'Directive Signal' from user corrections and save to Experience Bank.
+        
+        This translates a specific user correction (e.g., 'wrong, use X instead of Y')
+        into an action-level tactical prompt to be injected next time.
+        """
+        if not self.knowledge_store or not self.provider:
+            return
+
+        recent_messages = session.get_history(max_messages=4)
+        conv_text = ""
+        for m in recent_messages:
+            content = m.get("content", "")
+            if isinstance(content, list):
+                content = " ".join([str(b.get("text", "")) for b in content if b.get("type") == "text"])
+            conv_text += f"{m['role'].upper()}: {content}\n"
+
+        prompt = f'''Analyze the user's negative feedback alongside the recent conversation.
+Extract a concise, actionable "Directive Signal" (a tactical rule) to avoid this mistake in the future.
+
+Recent Conversation:
+{conv_text}
+
+User's Corrective Feedback:
+{user_feedback}
+
+Return ONLY a valid JSON object:
+{{
+  "trigger": "A short phrase describing the context or action that was wrong (e.g., 'When calculating revenue')",
+  "prompt": "The specific tactical instruction to follow next time (e.g., 'Always exclude taxes from revenue calculations')"
+}}
+No markdown fences.'''
+
+        try:
+            response = await self.provider.chat(
+                messages=[
+                    {"role": "system", "content": "You are a metacognitive component. Respond ONLY in strict JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                model=self.model,
+                temperature=0.1,
+            )
+            import json_repair
+            text = (response.content or "").strip()
+            from nanobot.utils.think_strip import strip_think_tags
+            text = strip_think_tags(text)
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            
+            result = json_repair.loads(text)
+            if isinstance(result, dict) and "trigger" in result and "prompt" in result:
+                # Save to Experience Bank
+                self.knowledge_store.add_experience(
+                    context_trigger=result["trigger"],
+                    tactical_prompt=f"USER DIRECTIVE: {result['prompt']}",
+                    action_type="correction"
+                )
+                if self.vector_memory:
+                    content = f"Trigger: {result['trigger']}\nPrompt: {result['prompt']}"
+                    self.vector_memory.ingest_text(
+                        content,
+                        source=f"knowledge_experience:{result['trigger']}",
+                        metadata={"trigger": result['trigger']},
+                        clear_old_source=True
+                    )
+                logger.info(f"P29-1: Extracted and saved directive for '{result['trigger']}'")
+        except Exception as e:
+            logger.error(f"Failed to extract directive signal: {e}")
+
     # ----------------------------------------------------------------
     # 7. Few-shot Prompt Generation (delegates to prompt_formatter / knowledge_judge)
     # ----------------------------------------------------------------
@@ -335,11 +446,22 @@ class KnowledgeWorkflow:
         self, match: dict, current_request: str, history: list[dict] | None = None,
     ) -> str:
         """Adapt a retrieved knowledge entry into a tailored few-shot prompt."""
+        
+        # P29-2: Workflow Model Routing
+        from nanobot.config.loader import get_config
+        config = get_config()
+        wf_models = getattr(config.agents, 'workflow_models', {})
+        adapt_model = wf_models.get('knowledge_adaptation', self.model)
+        adapt_provider = self.provider
+        if adapt_model and adapt_model != self.model:
+            from nanobot.providers.factory import ProviderFactory
+            adapt_provider = ProviderFactory.get_provider(adapt_model, config) or self.provider
+
         return await kj.adapt_knowledge(
             match=match,
             current_request=current_request,
-            provider=self.provider,
-            model=self.model,
+            provider=adapt_provider,
+            model=adapt_model,
             history=history,
         )
 
@@ -386,8 +508,8 @@ class KnowledgeWorkflow:
 
     def delete_knowledge(self, key: str, lang: str | None = None) -> str:
         """Delete a knowledge base entry by key. Returns user-facing message."""
-        return kb_cmd.delete_knowledge(self.knowledge_store, key, lang)
+        return kb_cmd.delete_knowledge(self.knowledge_store, key, lang, self.vector_memory)
 
     def cleanup_knowledge(self, lang: str | None = None) -> str:
         """Find and merge duplicate/similar knowledge base entries."""
-        return kb_cmd.cleanup_knowledge(self.knowledge_store, lang)
+        return kb_cmd.cleanup_knowledge(self.knowledge_store, lang, self.vector_memory)

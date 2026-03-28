@@ -89,6 +89,7 @@ class TaskKnowledgeStore:
         tags: list[str] | None = None,
         anti_patterns: list[str] | None = None,
         confidence: float = 1.0,
+        derived_from: str | None = None,  # P29-6: Provenance tracking
     ) -> None:
         """添加新任务到知识库"""
         task = {
@@ -98,6 +99,7 @@ class TaskKnowledgeStore:
             "tags": tags or [],
             "anti_patterns": anti_patterns or [],
             "confidence": confidence,
+            "derived_from": derived_from,
             "steps": steps,
             "params": params,
             "last_run": datetime.now().strftime("%Y-%m-%d"),
@@ -275,6 +277,7 @@ class TaskKnowledgeStore:
         new_tags: list[str] | None = None,
         new_anti_patterns: list[str] | None = None,
         new_confidence: float | None = None,
+        derived_from: str | None = None,  # P29-6: Provenance tracking
     ) -> bool:
         """Merge new execution data into an existing task entry.
 
@@ -305,6 +308,8 @@ class TaskKnowledgeStore:
                     task["anti_patterns"] = list(set(task.get("anti_patterns", []) + new_anti_patterns))
                 if new_confidence is not None:
                     task["confidence"] = new_confidence
+                if derived_from:
+                    task["derived_from"] = derived_from
 
                 self._save()
                 return True

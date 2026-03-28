@@ -607,20 +607,19 @@ New tests: `test_phase28b_sandbox.py` (5 tests). **Regression: 1093 passed.**
 
 New tests: `test_phase28c_knowledge_graph.py` (3 tests). **Regression: 1097 passed.**
 
-### Phase 29: Paper-Inspired Enhancements (论文借鉴) 📋
+### Phase 29: Paper-Inspired Enhancements (论文借鉴) ✅
 
-> 源自 2026-03-25 对 5 篇论文的系统性对比分析。详见 `paper_analysis_report.md`。
+> 源自 2026-03-25 对 5 篇前沿顶会论文的系统性对比分析，成功通过 1210 项回归测试，正式集成。详见 `paper_analysis_report.md`。
 
-| ID | Item | Source | Priority |
-|----|------|--------|----------|
-| P29-1 | Directive Signal → 修正记忆 & Skill 学习 | OpenClaw-RL | P0 |
-| P29-2 | System Reminders（行为纠偏） | OPENDEV | P1 |
-| P29-3 | 离线 Bridging Facts 生成 | IndexRAG | P2 |
-| P29-4 | Knowledge Completion（知识补全） | QChunker | P2 |
-| P29-5 | 错误信号 → 自动经验 | OpenClaw-RL | P2 |
-| P29-6 | 知识溯源链 | Dual-Tree | P3 |
+| ID | Item | Source | Details |
+|----|------|--------|---------|
+| P29-1 | Directive Signal → 修正记忆 | OpenClaw-RL | `outcome_tracker` 检测反馈，生成 Tactical Prompt 存入战术经验库 |
+| P29-2 | System Reminders & 模型认知路由 | OPENDEV | `loop.py` 动态诸如对话总结提醒；支持配置 `workflow_models` 独立字典 |
+| P29-3 | 离线 Bridging Facts 生成 | IndexRAG | `generate_bridging_facts` 于图谱闲时生成多跳隐式关联事实 |
+| P29-4 | Knowledge Completion（知识补全） | QChunker | `VectorMemory.search_with_completion` 实时补全 Context 盲区 |
+| P29-5 | 错误信号 → 自动经验 | OpenClaw-RL | 连续工具失败时自动提取并存储 Error Recovery Experience |
+| P29-6 | 知识溯源链 | Dual-Tree | `task_knowledge.py` 支持树状 `derived_from` 血缘追踪 |
 
-> 📌 **专题讨论待定**：Per-Workflow 模型路由（认知路由）— 同时关联 Nanobot + 公司 HENRY 项目。
 
 ### Phase 30: 弱模型防护 (Weak Model Safety Guards) ✅
 

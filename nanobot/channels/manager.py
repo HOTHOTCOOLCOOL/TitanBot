@@ -54,7 +54,6 @@ class ChannelManager:
         self.config = config
         self.bus = bus
         self.channels: dict[str, BaseChannel] = {}
-        self._dispatch_task: asyncio.Task | None = None
         
         self._init_channels()
     
@@ -88,8 +87,14 @@ class ChannelManager:
             logger.warning("No channels enabled")
             return
         
-        # Start outbound dispatcher
-        self._dispatch_task = asyncio.create_task(self._dispatch_outbound())
+        # Subscribe channels to the message bus to listen for outbound messages
+        for name, channel in self.channels.items():
+            async def _send(msg: OutboundMessage, ch: BaseChannel = channel) -> None:
+                try:
+                    await ch.send(msg)
+                except Exception as e:
+                    logger.error(f"Error sending to {ch.name}: {e}")
+            self.bus.subscribe_outbound(name, _send)
         
         # Start channels
         tasks = []
@@ -103,15 +108,6 @@ class ChannelManager:
     async def stop_all(self) -> None:
         """Stop all channels and the dispatcher."""
         logger.info("Stopping all channels...")
-        
-        # Stop dispatcher
-        if self._dispatch_task:
-            self._dispatch_task.cancel()
-            try:
-                await self._dispatch_task
-            except asyncio.CancelledError:
-                pass
-        
         # Stop all channels
         for name, channel in self.channels.items():
             try:
@@ -120,36 +116,7 @@ class ChannelManager:
             except Exception as e:
                 logger.error(f"Error stopping {name}: {e}")
     
-    async def _dispatch_outbound(self) -> None:
-        """Dispatch outbound messages to the appropriate channel."""
-        logger.info("Outbound dispatcher started")
-        
-        while True:
-            try:
-                msg = await asyncio.wait_for(
-                    self.bus.consume_outbound(),
-                    timeout=1.0
-                )
-                
-                channel = self.channels.get(msg.channel)
-                if channel:
-                    try:
-                        await channel.send(msg)
-                    except Exception as e:
-                        logger.error(f"Error sending to {msg.channel}: {e}")
-                elif msg.channel == "dashboard":
-                    try:
-                        from nanobot.dashboard.app import broadcast_ws_message
-                        await broadcast_ws_message("log", {"sender": "Agent", "message": msg.content})
-                    except Exception as e:
-                        logger.error(f"Error sending to dashboard: {e}")
-                else:
-                    logger.warning(f"Unknown channel: {msg.channel}")
-                    
-            except asyncio.TimeoutError:
-                continue
-            except asyncio.CancelledError:
-                break
+
     
     def get_channel(self, name: str) -> BaseChannel | None:
         """Get a channel by name."""

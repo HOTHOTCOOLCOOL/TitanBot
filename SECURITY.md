@@ -255,6 +255,26 @@ If you suspect a security breach:
 10. ~~**JSON File Concurrent Write**~~ — ✅ **Resolved in Phase 21C (S5)**: Temp file + `os.replace()` atomic write in `reflection.py` and `knowledge_graph.py`.
 11. ~~**Weak Model Hallucination Loops**~~ — ✅ **Resolved in Phase 30**: Added multi-layered execution safeguards (pre-execution validation, circuit breakers, duplicate tool detection) to isolate and prevent infinite loops when interacting with weaker LLMs.
 
+### 12. Browser-Use Worker — Inner LLM Agent Threat Model (Phase 33 Retro)
+
+⚠️ **Current Risk**: The `browser_use_worker` tool delegates DOM interaction to the `browser-use` library, which runs its own internal LLM agent. This inner agent:
+
+- **Bypasses L1 rule interception** — its tool calls are dispatched by `browser-use`, not by Nanobot's `AgentLoop`.
+- **Bypasses HITL approval** — no human-in-the-loop gate exists for the inner agent's actions.
+- **Bypasses circuit breaker** — inner execution is bounded only by `max_steps` and `task_timeout`.
+
+**Attack Vector (Indirect Prompt Injection)**:
+1. Agent navigates to a page containing hidden attacker-controlled text in the DOM.
+2. `browser(action='content')` or `browser_use_worker` ingests this text into the LLM context.
+3. The injected text instructs the outer LLM to write a malicious `.py` script via `write_file`, then execute it via `exec python script.py`.
+4. If `exec` has an "Always Approve" whitelist rule, the script runs without human review.
+
+**Mitigations (Planned/Active)**:
+- **Context Sandwiching** (Active): Wrap `browser_use_worker` output in `[UNTRUSTED_CONTENT_START/END]` boundary markers with system-level warning.
+- **Forced-HITL for Script Execution** (Active): AgentLoop will forcibly inject `hitl_suspended=True` for `exec` tool running scripts (`.py`, `.sh`, etc.), forcing human review even when "Always Approve" is set.
+- **Inner Agent Containment** (Active): The inner agent is limited to browser-scoped actions only (no filesystem, no shell). `max_steps=3` and `task_timeout` cap its runaway risk.
+- **SSRF Protection** (Active): Both the outer `BrowserTool` (dual-layer SSRF) and the inner `browser-use` session are configured with `enable_default_extensions=False`.
+
 ## Security Checklist
 
 Before deploying TitanBot:
@@ -272,7 +292,7 @@ Before deploying TitanBot:
 
 ## Updates
 
-**Last Updated**: 2026-03-27 (Phase 32: L2 removal, L1/L3 strengthening, HITL framework)
+**Last Updated**: 2026-03-31 (Phase 33 Retro: browser-use threat model, HITL broadcast fix, Forced-HITL for script execution)
 
 For the latest security updates and announcements, check:
 - GitHub Security Advisories: https://github.com/HOTHOTCOOLCOOL/nanobot/security/advisories

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.base import Tool, RiskTier
 
 
 def _resolve_path(path: str, allowed_dir: Path | None = None) -> Path:
@@ -23,6 +23,11 @@ class ReadFileTool(Tool):
     @property
     def name(self) -> str:
         return "read_file"
+    
+    _MAX_READ_BYTES = 5 * 1024 * 1024  # 5 MB
+
+    def get_risk_tier(self, arguments: dict) -> RiskTier:
+        return RiskTier.READ_ONLY
     
     @property
     def description(self) -> str:
@@ -48,6 +53,10 @@ class ReadFileTool(Tool):
                 return f"Error: File not found: {path}"
             if not file_path.is_file():
                 return f"Error: Not a file: {path}"
+            
+            if file_path.stat().st_size > self._MAX_READ_BYTES:
+                content = file_path.read_text(encoding="utf-8")[:self._MAX_READ_BYTES]
+                return f"{content}\n\n[CONTENT TRUNCATED: file exceeds 5MB limit]"
             
             content = file_path.read_text(encoding="utf-8")
             return content
@@ -176,6 +185,11 @@ class ListDirTool(Tool):
     def name(self) -> str:
         return "list_dir"
     
+    _MAX_ITEMS = 500
+
+    def get_risk_tier(self, arguments: dict) -> RiskTier:
+        return RiskTier.READ_ONLY
+    
     @property
     def description(self) -> str:
         return "List the contents of a directory."
@@ -208,6 +222,11 @@ class ListDirTool(Tool):
             
             if not items:
                 return f"Directory {path} is empty"
+            
+            if len(items) > self._MAX_ITEMS:
+                truncated = len(items) - self._MAX_ITEMS
+                items = items[:self._MAX_ITEMS]
+                items.append(f"... and {truncated} more items")
             
             return "\n".join(items)
         except PermissionError as e:

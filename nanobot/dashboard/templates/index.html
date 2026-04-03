@@ -411,10 +411,35 @@
         const wsUrl = `${protocol}//${window.location.host}/ws` + (_authToken ? `?token=${_authToken}` : '');
         let ws;
 
+        function setOnlineStatus(online) {
+            const pill = document.querySelector('.status-pill');
+            const dot = pill.querySelector('.status-dot');
+            if (!pill || !dot) return;
+            
+            if (online) {
+                pill.style.color = 'var(--success)';
+                dot.style.background = 'var(--success)';
+                dot.style.animation = 'pulse 2s ease infinite';
+                pill.lastChild.nodeValue = ' Online';
+            } else {
+                pill.style.color = 'var(--danger)';
+                dot.style.background = 'var(--danger)';
+                dot.style.animation = 'none';
+                dot.style.opacity = '1';
+                pill.lastChild.nodeValue = ' Offline';
+            }
+        }
+
         function connectWS() {
             ws = new WebSocket(wsUrl);
+            ws.onopen = function() {
+                setOnlineStatus(true);
+            };
             ws.onmessage = function(event) {
                 const payload = JSON.parse(event.data);
+                if (payload.error) {
+                    showToast('⚠️ ' + payload.error);
+                }
                 if (payload.type === 'log') {
                     appendLog(payload.data.sender, payload.data.message);
                 }
@@ -423,7 +448,11 @@
                 }
             };
             ws.onclose = function() {
+                setOnlineStatus(false);
                 setTimeout(connectWS, 2000);
+            };
+            ws.onerror = function() {
+                setOnlineStatus(false);
             };
         }
         connectWS();
@@ -447,6 +476,14 @@
             const input = document.getElementById('chat-input');
             const text = input.value.trim();
             if (!text || !ws) return;
+            
+            // Prevent oversized messages at the frontend
+            const encoder = new TextEncoder();
+            if (encoder.encode(text).length > 10240) { // 10KB limit matching backend
+                showToast('⚠️ Message too large to send (max 10KB).');
+                return;
+            }
+
             ws.send(JSON.stringify({message: text}));
             input.value = '';
         }

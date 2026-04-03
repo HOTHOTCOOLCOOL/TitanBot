@@ -32,8 +32,7 @@ from nanobot.agent import key_extractor as key_ext
 from nanobot.agent import knowledge_judge as kj
 
 
-# E1/R10: LRU cache for key extraction results (OrderedDict for true LRU semantics)
-_key_extraction_cache: OrderedDict[str, str] = OrderedDict()
+# _KEY_CACHE_MAX defines the maximum size of the key extraction cache.
 _KEY_CACHE_MAX = 128
 
 
@@ -61,6 +60,8 @@ class KnowledgeWorkflow:
         self.workspace = workspace
         self.knowledge_store = TaskKnowledgeStore(workspace) if workspace else None
         self.vector_memory = vector_memory  # P3: optional ChromaDB semantic fallback
+        # DEBT-KB-2: move cache to instance level to avoid cross-tenant leakage
+        self._key_extraction_cache: OrderedDict[str, str] = OrderedDict()
 
     # ----------------------------------------------------------------
     # 1. Key Extraction (delegates to key_extractor)
@@ -77,10 +78,10 @@ class KnowledgeWorkflow:
         """
         # E1/R10: Check LRU cache first
         cache_key = user_request.strip()[:200]
-        if cache_key in _key_extraction_cache:
-            _key_extraction_cache.move_to_end(cache_key)  # R10: LRU touch
+        if cache_key in self._key_extraction_cache:
+            self._key_extraction_cache.move_to_end(cache_key)  # R10: LRU touch
             logger.debug(f"Key extraction cache hit: '{cache_key[:40]}'")
-            return _key_extraction_cache[cache_key]
+            return self._key_extraction_cache[cache_key]
 
         # P29-2: Workflow Model Routing
         from nanobot.config.loader import get_config
@@ -100,9 +101,9 @@ class KnowledgeWorkflow:
         )
 
         # E1/R10: Store in cache (evict LRU if over limit)
-        if len(_key_extraction_cache) >= _KEY_CACHE_MAX:
-            _key_extraction_cache.popitem(last=False)  # R10: evict oldest (LRU)
-        _key_extraction_cache[cache_key] = result
+        if len(self._key_extraction_cache) >= _KEY_CACHE_MAX:
+            self._key_extraction_cache.popitem(last=False)  # R10: evict oldest (LRU)
+        self._key_extraction_cache[cache_key] = result
         return result
 
 
@@ -216,6 +217,8 @@ class KnowledgeWorkflow:
             return None
 
         # Hybrid Retrieval (Dense + BM25) for Experiences
+        # DEBT-KB-1: Raised threshold (0.4→0.65) and lowered no_dense_penalty
+        # (1.0→0.5) to reduce false-positive matches in small knowledge bases.
         best_match, best_score = hybrid_retrieve(
             query=action_context,
             candidates=experiences,
@@ -224,8 +227,8 @@ class KnowledgeWorkflow:
             match_key_field="trigger",
             vector_memory=self.vector_memory if self.knowledge_store else None,
             vector_source_filter="knowledge_experience",
-            threshold=0.4,
-            no_dense_penalty=1.0,
+            threshold=0.65,
+            no_dense_penalty=0.5,
         )
 
         if best_match:

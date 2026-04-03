@@ -261,7 +261,8 @@ class AgentLoop:
         self._mcp_connected = False
         self._dynamic_tool_names: list[str] = []  # Track plugin tools for /reload
         self._config = None  # Cached Config instance
-        self._vlm_provider_cache: dict[str, LLMProvider] = {}  # DESIGN-5: cache VLM providers
+        from collections import OrderedDict
+        self._vlm_provider_cache: OrderedDict[str, LLMProvider] = OrderedDict()  # DESIGN-5: cache VLM providers
         _VLM_CACHE_MAX = 4  # Phase 31 Retro: bound cache to prevent slow leak
 
         # Task Tracker - 任务状态追踪 (用于 /tasks 命令)
@@ -463,12 +464,14 @@ class AgentLoop:
                     else:
                         # DESIGN-5: Cache VLM provider to avoid re-creating per turn
                         if target_model not in self._vlm_provider_cache:
-                            # Phase 31 Retro: evict oldest if cache full
+                            # Phase 31 Retro: evict oldest if cache full (LRU)
                             if len(self._vlm_provider_cache) >= 4:
-                                oldest_key = next(iter(self._vlm_provider_cache))
-                                del self._vlm_provider_cache[oldest_key]
+                                self._vlm_provider_cache.popitem(last=False)
                             from nanobot.providers.factory import ProviderFactory
                             self._vlm_provider_cache[target_model] = ProviderFactory.get_provider(target_model, config)
+                        else:
+                            # B-2 fix: LRU semantics - move to end on hit
+                            self._vlm_provider_cache.move_to_end(target_model)
                         provider_for_turn = self._vlm_provider_cache[target_model]
                 else:
                     logger.debug(f"No images in recent {_VLM_RECENCY_WINDOW} messages. Using main model: {target_model}")
@@ -563,36 +566,59 @@ class AgentLoop:
                         tier = tool_impl.get_risk_tier(tc.arguments)
                         if tier.value >= RiskTier.MUTATE_EXTERNAL.value:
                             approval_store = self._get_approval_store()
-                            if approval_store and not approval_store.is_approved(tc.name, tc.arguments):
+                            
+                            # Phase 33 SEC-BUW-1: Forced-HITL for Script Execution
+                            forced_hitl = False
+                            if tc.name == "exec" and "command" in tc.arguments:
+                                cmd = str(tc.arguments["command"]).lower()
+                                if any(x in cmd for x in [".py", ".sh", ".ps1", "python -c", "node -e"]):
+                                    forced_hitl = True
+                                    logger.warning(f"Forced-HITL triggered for script execution: {cmd[:50]}")
+
+                            is_approved = approval_store.is_approved(tc.name, tc.arguments) if approval_store else False
+                            if forced_hitl or not is_approved:
                                 logger.info(f"HITL: Suspending loop for {tc.name} approval")
                                 if channel and chat_id:
                                     session_key = self.sessions.resolve_key(f"{channel}:{chat_id}")
                                     session = self.sessions._cache.get(session_key)
                                     if session:
+                                        # Generate a short ID based on the task ID
+                                        short_id = tc.id[-4:].upper()
+                                        
                                         session.pending_approval_task = {
                                             "tool": tc.name,
                                             "arguments": tc.arguments,
-                                            "id": tc.id
+                                            "id": tc.id,
+                                            "short_id": short_id
                                         }
                                         self.sessions.save(session)
+                                        self.sessions.register_approval(short_id, session.key)
+                                        
                                         hitl_msg = (
                                             f"⚠️ **Action Required!**\n\n"
                                             f"The agent is attempting a High-Risk operation:\n"
                                             f"- **Tool**: `{tc.name}`\n"
                                             f"- **Args**: `{json.dumps(tc.arguments, ensure_ascii=False)}`\n\n"
                                             f"Please reply with:\n"
-                                            f"1. `Approve` (allow this time)\n"
-                                            f"2. `Always` (allow this and future identical actions)\n"
-                                            f"3. `Reject` (block the action)"
+                                            f"1. `Approve {short_id}` (allow this time)\n"
+                                            f"2. `Always {short_id}` (allow this and future identical actions)\n"
+                                            f"3. `Reject {short_id}` (block the action)\n\n"
+                                            f"*(You can also just reply 'Approve' if approving from the origin channel)*"
                                         )
-                                        from nanobot.bus.events import OutboundMessage
-                                        await self.bus.publish_outbound(OutboundMessage(
-                                            channel=channel,
-                                            chat_id=chat_id,
-                                            content=hitl_msg
-                                        ))
+                                        
+                                        # Broadcast remote approval prompt to all master identities
+                                        for target in self._get_config().master_identities.keys():
+                                            if ":" in target:
+                                                t_chan, t_chat = target.split(":", 1)
+                                                # Prevent double sending if the master is the current session
+                                                if f"{t_chan}:{t_chat}" != session_key:
+                                                    b_msg = f"🔔 **Remote Approval Request [{short_id}]**\nOrigin: `{session_key}`\n\n{hitl_msg}"
+                                                    asyncio.create_task(self.bus.publish_outbound(OutboundMessage(
+                                                        channel=t_chan, chat_id=t_chat, content=b_msg
+                                                    )))
+
                                         hitl_suspended = True
-                                        final_content = "Execution suspended pending human approval."
+                                        final_content = hitl_msg
                                         break
                 if hitl_suspended:
                     break
@@ -762,7 +788,7 @@ class AgentLoop:
                 _content_str = (final_content or "").lower()
                 
                 # If it contains wait phrases
-                if len(_content_str) < 500 and any(p in _content_str for p in _WAIT_PHRASES):
+                if len(_content_str) < 150 and any(p in _content_str for p in _WAIT_PHRASES):
                     _matched_wait = [p for p in _WAIT_PHRASES if p in _content_str]
                     logger.warning(f"Wait-phrase detected {_matched_wait}, pushing for tool usage: {final_content[:80]}")
                     
@@ -785,7 +811,7 @@ class AgentLoop:
                     continue
                 
                 # If it contains fake completion phrases
-                if len(_content_str) < 500 and any(p in _content_str for p in _FAKE_COMPLETION_PHRASES):
+                if len(_content_str) < 150 and any(p in _content_str for p in _FAKE_COMPLETION_PHRASES):
                     _matched_fake = [p for p in _FAKE_COMPLETION_PHRASES if p in _content_str]
                     logger.warning(f"Fake-completion detected {_matched_fake}, pushing for tool usage: {final_content[:80]}")
                     
@@ -1003,9 +1029,31 @@ class AgentLoop:
             session.last_tool_calls = None
             session.mark_metadata_dirty()
 
-        # ── Step 0: Awaiting Smart HITL Approval ──
+        # ── Intercept Remote HITL Approval ──
+        content_lower = user_input.lower()
+        if content_lower.startswith(("approve ", "reject ", "always ", "1 ", "2 ", "3 ")):
+            parts = user_input.split()
+            if len(parts) == 2:
+                short_id = parts[1].upper()
+                target_session_key = self.sessions.get_approval_session(short_id)
+                if target_session_key:
+                    resolved_key = self.sessions.resolve_key(f"{msg.channel}:{msg.chat_id}")
+                    if resolved_key.startswith("master:"):
+                        target_session = self.sessions.get_or_create(target_session_key)
+                        if target_session.pending_approval_task:
+                            self.sessions.remove_approval(short_id)
+                            # Execute on the target session but return the result to THIS admin's channel
+                            if response := await self.state_handler.handle_pending_approval(target_session, msg, parts[0]):
+                                response.content = f"*[任务发起端: {target_session_key}]*\n\n{response.content}"
+                                return response
+
+        # ── Step 0: Awaiting Smart HITL Approval (Local to session) ──
         if session.pending_approval_task:
             if response := await self.state_handler.handle_pending_approval(session, msg, user_input):
+                # Always remove mapped short_id on any local action
+                short_id = session.pending_approval_task.get("short_id") if isinstance(session.pending_approval_task, dict) else None
+                if short_id:
+                    self.sessions.remove_approval(short_id)
                 return response
 
         # ── Step 1: Awaiting user reply to knowledge match ──
@@ -1239,9 +1287,12 @@ class AgentLoop:
             # used and no tool errors occurred, treat as quoting.
             _ANALYSIS_TOOLS = {"attachment_analyzer", "web_fetch", "web_search"}
             _is_analytical = bool(set(tools_used) & _ANALYSIS_TOOLS)
+            # B-3 fix: Check final_content for error indicators instead of
+            # tc["args"] (which is always a dict, never a str starting with "Error:").
+            # Also check if the last tool result text contains error markers.
             _had_tool_errors = any(
-                isinstance(tc.get("args"), str) and tc["args"].startswith("Error:")
-                for tc in tool_calls_with_args
+                ind in _content_lower
+                for ind in ["error:", "⚠️ action failed:", "执行失败", "操作失败"]
             )
             if _is_analytical and not _had_tool_errors:
                 _workflow_succeeded = True

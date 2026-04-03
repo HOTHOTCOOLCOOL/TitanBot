@@ -5,15 +5,19 @@ from nanobot.agent.hitl_store import ApprovalStore
 def test_approval_store_basic(tmp_path):
     store = ApprovalStore(tmp_path)
     
+    # Test V-1: Reject empty action for exec
+    with pytest.raises(ValueError, match="Cannot globally approve all actions for the 'exec' tool"):
+        store.add_approval("exec", "", {"command": "rm -rf /tmp/*"})
+    
     # Initially not approved
-    assert not store.is_approved("exec", {"action": "", "command": "rm -rf /"})
+    assert not store.is_approved("exec", {"action": "run", "command": "rm -rf /"})
     
     # Add an approval match
-    store.add_approval("exec", "", {"command": "rm -rf /tmp/*"})
+    store.add_approval("exec", "run", {"command": "rm -rf /tmp/*"})
     
     # Test strict match
-    assert not store.is_approved("exec", {"action": "", "command": "rm -rf /"})
-    assert store.is_approved("exec", {"action": "", "command": "rm -rf /tmp/*"})
+    assert not store.is_approved("exec", {"action": "run", "command": "rm -rf /"})
+    assert store.is_approved("exec", {"action": "run", "command": "rm -rf /tmp/*"})
 
 def test_approval_store_wildcard(tmp_path):
     store = ApprovalStore(tmp_path)

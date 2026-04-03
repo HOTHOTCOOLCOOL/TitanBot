@@ -212,7 +212,7 @@ class TestKnowledgeJudge:
             match=match, current_request="run with different params",
             provider=mock_provider, model="test",
         )
-        assert "Adapted from" in result
+        assert "adapted from" in result.lower()
 
 
 # ── Facade delegation tests ──

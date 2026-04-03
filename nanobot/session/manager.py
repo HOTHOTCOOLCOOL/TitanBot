@@ -116,6 +116,7 @@ class SessionManager:
         self.legacy_sessions_dir = Path.home() / ".nanobot" / "sessions"
         self._cache: dict[str, Session] = {}
         self.identity_mapping: dict[str, str] = {}
+        self.pending_approvals: dict[str, str] = {}  # short_id -> session_key
     
     def set_identity_mapping(self, mapping: dict[str, str]) -> None:
         """Set the master identities mapping to resolve raw keys to master keys."""
@@ -124,6 +125,18 @@ class SessionManager:
     def resolve_key(self, raw_key: str) -> str:
         """Resolve a raw channel-specific key to a master identity if mapped."""
         return self.identity_mapping.get(raw_key, raw_key)
+        
+    def register_approval(self, short_id: str, session_key: str) -> None:
+        """Register a high-risk operation's short ID to its origin session."""
+        self.pending_approvals[short_id] = session_key
+
+    def get_approval_session(self, short_id: str) -> str | None:
+        """Retrieve the origin session for a pending remote approval."""
+        return self.pending_approvals.get(short_id)
+        
+    def remove_approval(self, short_id: str) -> None:
+        """Remove a remote approval mapping after handling."""
+        self.pending_approvals.pop(short_id, None)
     
     def _get_session_path(self, key: str) -> Path:
         """Get the file path for a session."""

@@ -195,11 +195,18 @@ class StateHandler:
             if m.get("role") == "user" and not m.get("content", "").startswith("[System:"):
                 original_request = m["content"]
                 break
-        resume_msg = (
-            f"[System: HITL confirmation completed. Tool '{tool_name}' returned: {result_str[:200]}]\n"
-            f"Original user request: {original_request[:500]}\n"
-            f"Continue executing the original task."
-        )
+        if approved:
+            resume_msg = (
+                f"[System: HITL confirmation completed. Tool '{tool_name}' returned: {result_str[:200]}]\n"
+                f"Original user request: {original_request[:500]}\n"
+                f"Continue executing the original task."
+            )
+        else:
+            resume_msg = (
+                f"[System: HITL confirmation completed. Tool '{tool_name}' was REJECTED by the user.]\n"
+                f"Original user request: {original_request[:500]}\n"
+                f"DO NOT retry the exact same or similar tool call. Please ask the user for clarification or alternative approaches."
+            )
         initial_messages = self.agent.context.build_messages(
             history=history,
             current_message=resume_msg,
@@ -210,6 +217,11 @@ class StateHandler:
         final_content, tools_used, tc_args = await self.agent._run_agent_loop(
             initial_messages, channel=msg.channel, chat_id=msg.chat_id
         )
+        
+        # B-1: Guard against final_content being None (e.g., max iterations
+        # reached without LLM producing a non-tool response).
+        if final_content is None:
+            final_content = "Task processing completed."
         
         session.add_message("assistant", final_content)
         if tools_used:

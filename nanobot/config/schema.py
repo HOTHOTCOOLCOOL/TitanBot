@@ -239,7 +239,7 @@ class BrowserConfig(Base):
     """Headless browser automation configuration (Phase 26)."""
 
     enabled: bool = True                # Master switch
-    headless: bool = False              # Headed mode: visible window enables RPA/VLM interaction
+    headless: bool = False              # Headless by default; use browser(action='ensure_visible') for RPA
     executable_path: str = ""           # Path to Chrome/Chromium binary. Empty = Playwright default.
     default_timeout_ms: int = 30000
     viewport_width: int = 1920

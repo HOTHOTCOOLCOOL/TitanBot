@@ -3,6 +3,8 @@ ApprovalStore for Smart HITL authorization memory.
 Records which high-risk tool actions the user has chosen to "Always Approve".
 """
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 import fnmatch
@@ -28,8 +30,22 @@ class ApprovalStore:
     def _save(self):
         self.filepath.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self.filepath, 'w', encoding='utf-8') as f:
-                json.dump(self._rules, f, indent=2, ensure_ascii=False)
+            # BUG-HITL-2: Atomic write — write to temp file then os.replace()
+            # to prevent file corruption if process crashes mid-write.
+            fd, tmp_path = tempfile.mkstemp(
+                dir=str(self.filepath.parent), suffix=".tmp"
+            )
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(self._rules, f, indent=2, ensure_ascii=False)
+                os.replace(tmp_path, str(self.filepath))
+            except BaseException:
+                # Clean up temp file on failure
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         except Exception as e:
             logger.error(f"Failed to save approvals: {e}")
             
@@ -39,6 +55,15 @@ class ApprovalStore:
         match_context can contain partial argument matching.
         A tool-level rule (action="") matches ALL actions for that tool.
         """
+        # V-1: Reject empty action for exec tool
+        if tool_name == "exec" and not action:
+            raise ValueError("Cannot globally approve all actions for the 'exec' tool. Action must be specified.")
+            
+        # V-1: Enforce rule limit
+        if len(self._rules) >= 50:
+            logger.warning("SmartHITL: Rule limit reached (50). Ignoring new rule.")
+            return
+            
         # Dedup: skip if an equivalent or broader rule already exists
         for existing in self._rules:
             if existing["tool"] != tool_name:

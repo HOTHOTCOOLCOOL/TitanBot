@@ -4,12 +4,12 @@
   <p>
     <img src="https://img.shields.io/badge/python-≥3.11-blue" alt="Python">
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-    <img src="https://img.shields.io/badge/tests-1209%20passed-brightgreen" alt="Tests">
-    <img src="https://img.shields.io/badge/phases-30%20completed-blueviolet" alt="Phases">
-    <img src="https://img.shields.io/badge/papers-11%20referenced-orange" alt="Papers">
+    <img src="https://img.shields.io/badge/tests-1271%20passed-brightgreen" alt="Tests">
+    <img src="https://img.shields.io/badge/phases-33%20completed-blueviolet" alt="Phases">
+    <img src="https://img.shields.io/badge/papers-12%20referenced-orange" alt="Papers">
   </p>
   <p>
-    <em>Built upon <a href="https://github.com/HKUDS/nanobot">nanobot</a> by HKUDS — extended through 30 phases of evolution, 11 academic papers, and 1209+ tests.</em>
+    <em>Built upon <a href="https://github.com/HKUDS/nanobot">nanobot</a> by HKUDS — extended through 33 phases of evolution, 11 academic papers, and 1271+ tests.</em>
   </p>
 </div>
 
@@ -17,7 +17,7 @@
 
 > **TitanBot** is a derivative work based on [nanobot](https://github.com/HKUDS/nanobot) by [HKUDS](https://github.com/HKUDS), licensed under the [MIT License](./LICENSE).
 >
-> We deeply respect the original nanobot team's work. Starting from their elegant ultra-lightweight foundation (~10 files, ~4,000 lines), we extended the project through **30 major phases** of independent development, incorporating insights from **11 academic papers** to build an enterprise-grade AI agent framework.
+> We deeply respect the original nanobot team's work. Starting from their elegant ultra-lightweight foundation (~10 files, ~4,000 lines), we extended the project through **33 major phases** of independent development, incorporating insights from **11 academic papers** to build an enterprise-grade AI agent framework.
 >
 > All original code is used in compliance with the MIT License. The original copyright notice is preserved in our [LICENSE](./LICENSE) file.
 
@@ -37,7 +37,7 @@ TitanBot started as a fork of nanobot and grew into a significantly enhanced AI 
 | **Memory layers** | 1 (single file) | **7-layer architecture** | ×7 |
 | **Knowledge retrieval** | keyword match | **5-layer hybrid pyramid** | 5 strategies |
 | **Security fixes** | 0 | **32 items** | 0 → 32 |
-| **Academic papers referenced** | 0 | **11** | — |
+| **Academic papers referenced** | 0 | **12** | — |
 
 ### 📚 Academic Papers Referenced
 
@@ -51,6 +51,7 @@ Our enhancements were inspired by and implement ideas from the following papers:
 | **MemGPT** | Virtual memory paging and context eviction |
 | **AI Memory Survey** | Comprehensive memory system design patterns |
 | **MDER-DR** (arXiv 2603.11223) | Knowledge graph evolution — "move multi-hop complexity from query-time to index-time" |
+| **BubbleRAG** (arXiv 2603.20309) | KG retrieval enhancement — semantic anchor grouping, coverage penalty, schema relaxation |
 
 ### 🏗️ Key Enhancements Over Original
 
@@ -755,10 +756,13 @@ Feel free to [open an issue](https://github.com/HOTHOTCOOLCOOL/nanobot/issues) o
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Phase 22C | ⏳ Next | Multi-Modal & Channel Extension |
-| Browser Automation | 📋 Backlog | Playwright for JS-rendered pages |
+| Phase 34 | ⏳ Next | KG Retrieval Enhancement (BubbleRAG-inspired: semantic anchor grouping, coverage penalty, schema relaxation) |
+| Phase 22C | ⏳ Planned | Multi-Modal & Channel Extension |
+| Phase 36 | 📋 Backlog | Execution Trace Archive for L3 Reflection (Meta-Harness inspired) |
 | Plugin Marketplace | 📋 Backlog | Community skill repository |
-| Phase 30 | 📋 Backlog | Weak Model Tool Calling Protection (Agent Safety Guardrails) |
+| Cross-Platform | 📋 Backlog | macOS/Linux parity (decouple COM, cross-OS sandbox) |
+
+> **Recently Completed**: Browser Automation (Phase 26B+C ✅), Weak Model Protection (Phase 30 ✅), Verification Layer L0→L1→L3 (Phase 31/32 ✅), Browser-RPA Degradation (Phase 33 ✅)
 
 ### Contributors
 
@@ -775,7 +779,7 @@ This project follows open source best practices:
 
 - **License**: [MIT License](./LICENSE) — original nanobot copyright preserved
 - **Attribution**: Based on [nanobot](https://github.com/HKUDS/nanobot) by HKUDS
-- **Changes documented**: All 25 phases of evolution are documented in [EVOLUTION.md](./EVOLUTION.md)
+- **Changes documented**: All 33 phases of evolution are documented in [EVOLUTION.md](./EVOLUTION.md)
 - **Original features preserved**: Core nanobot functionality maintained and enhanced
 - **Independent development**: All enhancements are original work by HOTHOTCOOLCOOL
 

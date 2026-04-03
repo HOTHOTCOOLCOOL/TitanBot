@@ -323,13 +323,10 @@ Note: Requires Outlook application to be running on Windows."""
                 has_attachments = criteria.get("has_attachments", False)
                 
                 has_date_filter = bool(criteria.get("received_after") or criteria.get("received_before"))
-                if not has_date_filter:
-                    today = datetime.now().strftime("%Y-%m-%d")
-                    criteria["received_after"] = today
                 
                 results = []
                 count = 0
-                max_check = min(100, items.Count)
+                max_check = min(max(500, max_results * 10), items.Count)
                 
                 for i in range(max_check):
                     item = None
@@ -365,10 +362,11 @@ Note: Requires Outlook application to be running on Windows."""
                                 continue
                         
                         sender = OutlookTool._safe_get_property(item, 'SenderEmailAddress', '') or ''
+                        sender_name = OutlookTool._safe_get_property(item, 'SenderName', '') or ''
                         
                         from_keyword = criteria.get("from_email")
                         if from_keyword:
-                            if from_keyword.lower() not in sender.lower():
+                            if from_keyword.lower() not in sender.lower() and from_keyword.lower() not in sender_name.lower():
                                 continue
                         
                         to_keyword = criteria.get("to_email")

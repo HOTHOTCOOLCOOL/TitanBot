@@ -58,6 +58,8 @@ class ExecTool(Tool):
             # Only block truly dangerous interpreter patterns:
             r"\bruby\s+-e\b",               # ruby -e (eval Ruby)
             r"\bperl\s+-e\b",               # perl -e (eval Perl)
+            # --- Phase 33 L1: Python obfuscation bypass ---
+            r"\bpython\s+-c\s+[\"'].*(?:exec|eval|__import__|base64\.b64decode).*",
         ]
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace

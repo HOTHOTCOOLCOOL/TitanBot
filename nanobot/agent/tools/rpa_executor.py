@@ -28,6 +28,7 @@ except ImportError:
     HAS_RPA_DEPS = False
 
 from nanobot.agent.tools.base import Tool
+from loguru import logger
 
 
 class RPAExecutorTool(Tool):
@@ -163,6 +164,8 @@ class RPAExecutorTool(Tool):
     def _load_monitor_context(self) -> dict | None:
         """Load monitor_context.json for boundary checking."""
         import json
+        import os
+        import time
         from nanobot.config.loader import load_config
         config = load_config()
         ctx_path = config.workspace_path / "tmp" / "monitor_context.json"
@@ -170,7 +173,13 @@ class RPAExecutorTool(Tool):
             return None
         try:
             with open(ctx_path, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                
+            mtime = os.path.getmtime(ctx_path)
+            if time.time() - mtime > 60:
+                data["stale"] = True
+                
+            return data
         except Exception:
             return None
 
@@ -179,13 +188,18 @@ class RPAExecutorTool(Tool):
         ctx = self._load_monitor_context()
         if not ctx:
             return None
+            
+        warnings = []
+        if ctx.get("stale"):
+            warnings.append("⚠️ Monitor context is >60s old. Run screen_capture again if the window has moved.")
+            
         ox, oy = ctx.get("offset_x", 0), ctx.get("offset_y", 0)
         r, b = ctx.get("right", 99999), ctx.get("bottom", 99999)
         if x < ox or x > r or y < oy or y > b:
-            return (f"⚠️ WARNING: Target ({x},{y}) is OUTSIDE the captured monitor area "
+            warnings.append(f"⚠️ WARNING: Target ({x},{y}) is OUTSIDE the captured monitor area "
                     f"(monitor {ctx.get('monitor_index')}: {ox},{oy} → {r},{b}). "
                     f"The click may land on the wrong screen.")
-        return None
+        return "\n".join(warnings) if warnings else None
 
     def _find_by_name(self, mapping: dict, target_name: str) -> tuple:
         """
@@ -243,6 +257,22 @@ class RPAExecutorTool(Tool):
         wait_after = float(kwargs.get("wait_after", 1.0))
         verify = kwargs.get("verify", False)
         expected_outcome = kwargs.get("expected_outcome", "")
+
+        # Headless Block: If the agent has an active headless browser,
+        # we CANNOT auto-switch to visible mode because Playwright requires
+        # restarting the browser context which destroys game/page state (e.g. 2048 tiles).
+        # We must aggressively block and fail the test if the browser isn't visible.
+        try:
+            from nanobot.plugins.browser import BrowserTool
+            browser_inst = BrowserTool._active_instance
+            if browser_inst and browser_inst._headless:
+                return (
+                    "Error: 物理 RPA 操作被强制拦截！当前的浏览器处于 Headless (不可见) 模式。\n"
+                    "在此模式下，你模拟的物理键盘/鼠标动作会打空或者击中桌面！\n"
+                    "请检查系统配置，确保整个测试阶段浏览器以 visible/有头模式启动。"
+                )
+        except Exception as e:
+            pass
 
         # Resolve verify flag from string if needed
         if isinstance(verify, str):
@@ -307,11 +337,21 @@ class RPAExecutorTool(Tool):
                         print(f"[RPA Debug] ERROR: Index {ui_index} NOT FOUND in anchors.json.")
                         return f"Error: UI index {ui_index} not found in recent anchors."
                 
-                # Reject raw x,y if anchors are available
-                elif x is not None and y is not None and mapping:
-                    print(f"[RPA Debug] REJECTING raw x/y because anchors are available.")
-                    return ("Error: UI anchors are available. Use 'ui_name' (recommended) or 'ui_index' "
-                            "instead of raw x/y coordinates to avoid errors.")
+                # Allow raw x,y if provided directly (VLM visual grounding fallback if OCR missed it)
+                elif x is not None and y is not None:
+                    raw_x, raw_y = x, y
+                    ctx = self._load_monitor_context()
+                    if ctx:
+                        scale_ratio = float(ctx.get("scale_ratio", 1.0))
+                        ox = int(ctx.get("offset_x", 0))
+                        oy = int(ctx.get("offset_y", 0))
+                        x = int((raw_x / scale_ratio) + ox)
+                        y = int((raw_y / scale_ratio) + oy)
+                        print(f"[RPA Debug] Transformed VLM coordinates ({raw_x}, {raw_y}) -> Physical ({x}, {y}) [scale={scale_ratio:.2f}, offset=({ox},{oy})]")
+                        result_prefix = f"[Coordinate Match: VLM({raw_x}, {raw_y}) -> Physical({x}, {y})] "
+                    else:
+                        print(f"[RPA Debug] Using raw coordinates: ({x}, {y}).")
+                        result_prefix = f"[Coordinate Match: ({x}, {y})] "
                 
                 if x is None or y is None:
                     print(f"[RPA Debug] ERROR: Target coordinates are missing (action: {action}).")

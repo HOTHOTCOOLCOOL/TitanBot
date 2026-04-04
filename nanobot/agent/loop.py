@@ -365,7 +365,7 @@ class AgentLoop:
         await connect_mcp_servers(self._mcp_servers, self.tools, self._mcp_stack)
 
     # Names of tools that need channel/chat_id routing context set per message
-    _CONTEXTUAL_TOOLS = ("message", "spawn", "cron")
+    _CONTEXTUAL_TOOLS = ("message", "spawn", "cron", "draw_image")
 
     def _set_tool_context(self, channel: str, chat_id: str) -> None:
         """Update context for all tools that support routing info (duck-typed)."""
@@ -495,6 +495,7 @@ class AgentLoop:
         channel: str | None = None,
         chat_id: str | None = None,
         injection_used: int = 0,
+        target_model_override: str | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """
         Run the agent iteration loop.
@@ -555,7 +556,24 @@ class AgentLoop:
             
             provider_for_turn = self.provider
 
-            if config.agents.vlm.enabled and config.agents.vlm.model:
+            if target_model_override:
+                target_model = target_model_override
+                logger.debug(f"Target model overridden to: {target_model}")
+                p_conf = config.get_provider(target_model)
+                if not p_conf:
+                    logger.warning(f"Provider config missing for override {target_model}, falling back to default")
+                    target_model = self.model
+                else:
+                    if target_model not in self._vlm_provider_cache:
+                        if len(self._vlm_provider_cache) >= 4:
+                            self._vlm_provider_cache.popitem(last=False)
+                        from nanobot.providers.factory import ProviderFactory
+                        self._vlm_provider_cache[target_model] = ProviderFactory.get_provider(target_model, config)
+                    else:
+                        self._vlm_provider_cache.move_to_end(target_model)
+                    provider_for_turn = self._vlm_provider_cache[target_model]
+
+            if not target_model_override and config.agents.vlm.enabled and config.agents.vlm.model:
                 has_image = False
                 recent_msgs = messages[-_VLM_RECENCY_WINDOW:] if len(messages) > _VLM_RECENCY_WINDOW else messages
                 for msg in recent_msgs:
@@ -1230,6 +1248,53 @@ class AgentLoop:
             if response:
                 return response
 
+        # ── Step 3.5: Fast Intent Routing (Chit-Chat Bypass) ──
+        # Phase 39 v2: Use a fast LLM call to classify and instantly reply to casual chat.
+        current_msg_text = msg.content.strip()
+        if len(current_msg_text) > 0 and len(current_msg_text) <= 50:
+            try:
+                import time
+                config = self._get_config()
+                fast_model = config.agents.fast_model.model if (hasattr(config.agents, 'fast_model') and config.agents.fast_model.enabled and config.agents.fast_model.model) else self.model
+                
+                _router_prompt = (
+                    "判断用户输入是否为纯粹的日常问候或无指令的极短闲聊（例如'你好'、'在吗'、'最近好么'）。\n"
+                    "如果是，请以 '[CHAT]' 开头，回复一句简短友好的纯文本问候语（必须带有[CHAT]前缀）。\n"
+                    "如果用户表述了任何具体意图、任务、问题、或者需要您产生实际回答（例如'今天天气'、'总结一下'、'写代码'），请严格且仅回复 '[TASK]'。"
+                )
+                
+                _router_start = time.time()
+                _router_res = await self.provider.chat(
+                    messages=[
+                        {"role": "system", "content": _router_prompt},
+                        {"role": "user", "content": current_msg_text}
+                    ],
+                    model=fast_model,
+                    temperature=0.3,
+                    max_tokens=60,
+                )
+                _router_text = (_router_res.content or "").strip()
+                logger.debug(f"Fast intent routing (took {time.time()-_router_start:.2f}s): {_router_text}")
+
+                if _router_text.startswith("[CHAT]"):
+                    chitchat_reply = _router_text.replace("[CHAT]", "", 1).strip()
+                    logger.info(f"L0 Fast Routing triggered. Replying instantly: {chitchat_reply}")
+                    
+                    # Log message to session
+                    media_to_pass = msg.media if getattr(msg, 'media', None) else None
+                    session.add_message("user", current_msg_text, media=media_to_pass)
+                    session.add_message("assistant", chitchat_reply)
+                    session.message_count_since_consolidation += 2
+                    self.sessions.save(session)
+
+                    return OutboundMessage(
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        content=chitchat_reply,
+                    )
+            except Exception as e:
+                logger.warning(f"Fast router failed: {e}. Falling back to standard pipeline.")
+
         # ── Step 4: Extract Key → Match Knowledge Base ──
         try:
             history = session.get_history(max_messages=10)
@@ -1328,6 +1393,8 @@ class AgentLoop:
 
         self._set_tool_context(msg.channel, msg.chat_id)
 
+        target_model_override = None
+        
         # P13/Phase 34: Async query rewriting and anchor extraction
         search_query = request_text
         query_anchors = []
@@ -1337,6 +1404,38 @@ class AgentLoop:
                 search_query, query_anchors = await self.context.vector_memory.rewrite_query_with_anchors(request_text, history)
         except Exception as e:
             logger.debug(f"Query rewriting skipped: {e}")
+
+        # Phase 39: Async decouple contextual data pre-fetching
+        pre_fetched_rag = None
+        pre_fetched_kg = None
+        try:
+            import asyncio
+            kg_instance = self._get_knowledge_graph()
+            
+            def _sync_fetch_both():
+                r = None
+                k = None
+                try:
+                    r = self.context.vector_memory.search(search_query, top_k=3)
+                except Exception:
+                    pass
+                try:
+                    if kg_instance:
+                        from nanobot.config.loader import get_config
+                        if get_config().agents.memory_features.knowledge_graph_enabled:
+                            k = kg_instance.get_entity_context(
+                                search_query,
+                                prefetch_rag=r,
+                                anchors=query_anchors
+                            )
+                except Exception:
+                    pass
+                return r, k
+                
+            loop = asyncio.get_running_loop()
+            pre_fetched_rag, pre_fetched_kg = await loop.run_in_executor(None, _sync_fetch_both)
+        except Exception as e:
+            logger.debug(f"Async pre-fetch skipped: {e}")
 
         initial_messages = self.context.build_messages(
             history=session.get_history(max_messages=self.memory_window),
@@ -1348,6 +1447,8 @@ class AgentLoop:
             query_anchors=query_anchors,
             evicted_context=session.evicted_context,
             knowledge_graph=self._get_knowledge_graph(),  # D2: cached instance
+            pre_fetched_rag=pre_fetched_rag,
+            pre_fetched_kg=pre_fetched_kg,
         )
 
         # Inject few-shot reference into system prompt if available
@@ -1377,6 +1478,7 @@ class AgentLoop:
         final_content, tools_used, tool_calls_with_args = await self._run_agent_loop(
             initial_messages, channel=msg.channel, chat_id=msg.chat_id,
             injection_used=injection_used,
+            target_model_override=target_model_override,
         )
 
         # Phase 31 L3: Post-reflection & knowledge extraction (fire-and-forget)

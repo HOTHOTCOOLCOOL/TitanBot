@@ -22,6 +22,19 @@
 
 
 
+### 🔜 Phase 39 — 延迟优化与智能分层降级 (Latency Optimization — Finalized)
+
+> 经由三模型 Harness 碰撞论证产出的闭环降级方案。核心目标是打破 LLM 网络 TTFT 刚性下限，并解决异步本地 RAG 的 GIL 阻塞问题。详见 `docs/phase_39_latency_optimization.md`。
+
+| 状态 | ID | 功能维度 | 优先级 | 估计工作量 |
+|------|-----|---------|--------|------------|
+| ⏳ | P39-1 | **L0 极简正则拦截 (Strict Regex)** | P1 | 在 `_execute_with_llm` 实现高效正则白名单，跳过 Rewriter。 |
+| ⏳ | P39-2 | **动态模型轮切 (Dynamic Routing)** | P1 | 配合 `chitchat_safe` 意图，自动切换至 `fast_model` 并保留全量工具定义。 |
+| ⏳ | P39-3 | **非侵入式 Context 并行拉取** | P1 | 将同步检索外置化，利用独立 ThreadPoolExecutor 异步并发抓取 RAG/KG。 |
+| ⏳ | P39-4 | **熵密度反思注入 (Entropy Reflection)** | P2 | 优化 L3 反思层 Prompt，利用语义过滤闲聊垃圾数据，保留微观偏好。 |
+
+---
+
 ### ❌ Phase 35 — Context & Skill Hardening (CC-Mini Inspired) [已取消]
 
 > 深度逆向 `cc-mini` (Claude Code极简实现版) 提取出的效能架构范式。核心目标是以最小的代码代价解决大模型上下文冗余，并对特定工作流执行进行精准控制。详细分析见 `docs/cc_mini_analysis.md`。经过内部 Harness 审计，判定 ROI 极低，不符合 Nanobot 初衷，予以取消。

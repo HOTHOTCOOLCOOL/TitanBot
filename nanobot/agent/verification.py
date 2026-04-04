@@ -524,9 +524,10 @@ class VerificationLayer:
 
         min_tools = self.config.l3_success_pattern_min_tools
 
-        # Only extract success patterns for non-trivial workflows
-        if len(tools_used) < min_tools:
-            return
+        # Phase 39: Removed early return (min_tools or chitchat drops) to allow high-entropy
+        # conversational preferences to reach reflection.
+        # if len(tools_used) < min_tools:
+        #     return
 
         # Check if the workflow succeeded (no fail indicators)
         from nanobot.agent.loop import _FAIL_INDICATORS
@@ -541,18 +542,20 @@ class VerificationLayer:
         # Success path: extract a success pattern
         try:
             # Build a compact summary of the successful workflow
-            tool_sequence = " → ".join(tools_used[:10])
+            tool_sequence = " → ".join(tools_used[:10]) if tools_used else "None (Conversational/Chitchat)"
             prompt = (
                 f"The user requested: {request_text[:300]}\n\n"
-                f"The agent successfully completed the task using these tools: "
+                f"The agent generated this response using these tools: "
                 f"{tool_sequence}\n\n"
                 f"Result summary: {final_content[:300]}\n\n"
-                "Extract a concise, reusable \"Success Pattern\" for similar future "
+                "⚠️ 熵密度约束 (ENTROPY DENSITY CONSTRAINT):\n"
+                "仅当内容携带高密度的信息熵（例如明确的个人偏好、业务逻辑设定、关键知识点）时才执行写入。绝对忽略日常闲聊、早午安问候或无逻辑价值的短句。如果你认为内容无价值，请输出空对象的JSON: {}\n\n"
+                "Extract a concise, reusable \"Success Pattern\" or \"Preference\" for similar future "
                 "requests. Return ONLY a valid JSON object:\n"
                 "{\n"
                 '  "trigger": "A short phrase describing the type of request '
                 '(e.g., \'Send sales report email\')",\n'
-                '  "prompt": "The recommended tool sequence and key parameters '
+                '  "prompt": "The recommended tool sequence or key preference '
                 '(e.g., \'Use outlook.read_email → attachment_analyzer → message\')"\n'
                 "}\n"
                 "No markdown fences."

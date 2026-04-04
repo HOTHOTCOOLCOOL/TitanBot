@@ -197,6 +197,8 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         context_limit: int = 120_000,
         evicted_context: str | None = None,
         knowledge_graph: "KnowledgeGraph | None" = None,
+        pre_fetched_rag: Any | None = None,
+        pre_fetched_kg: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call.
@@ -212,6 +214,8 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
                 If None, uses current_message directly.
             context_limit: Max estimated character budget for all messages
                 (default 120K chars ≈ 30K tokens).  History is trimmed to fit.
+            pre_fetched_rag: Pre-executed RAG search results (Phase 39 optimization).
+            pre_fetched_kg: Pre-executed Knowledge string (Phase 39 optimization).
 
         Returns:
             List of messages including system prompt.
@@ -223,8 +227,10 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         
         # Inject VectorMemory RAG context
         try:
-            rag_query = search_query or current_message
-            rag_results = self.vector_memory.search(rag_query, top_k=3)
+            rag_results = pre_fetched_rag
+            if rag_results is None:
+                rag_query = search_query or current_message
+                rag_results = self.vector_memory.search(rag_query, top_k=3)
             if rag_results:
                 rag_context = self.vector_memory.format_results_for_context(rag_results)
                 if rag_context:
@@ -240,19 +246,23 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
             from nanobot.config.loader import get_config
             _mem_feat = get_config().agents.memory_features
             if _mem_feat.knowledge_graph_enabled:
-                kg = knowledge_graph  # D2: prefer cached instance
-                if kg is None:
-                    from nanobot.agent.knowledge_graph import KnowledgeGraph
-                    kg = KnowledgeGraph(self.workspace, vector_memory=self.vector_memory)
-                kq_query = search_query or current_message
-                # KG3/Phase 34: Pass anchors and prefetch_rag
-                kg_context = kg.get_entity_context(
-                    kq_query, 
-                    prefetch_rag=rag_results if 'rag_results' in locals() else None, 
-                    anchors=query_anchors
-                )
-                if kg_context:
-                    system_prompt += f"\n\n{kg_context}"
+                if pre_fetched_kg is not None:
+                    if pre_fetched_kg:
+                        system_prompt += f"\n\n{pre_fetched_kg}"
+                else:
+                    kg = knowledge_graph  # D2: prefer cached instance
+                    if kg is None:
+                        from nanobot.agent.knowledge_graph import KnowledgeGraph
+                        kg = KnowledgeGraph(self.workspace, vector_memory=self.vector_memory)
+                    kq_query = search_query or current_message
+                    # KG3/Phase 34: Pass anchors and prefetch_rag
+                    kg_context = kg.get_entity_context(
+                        kq_query, 
+                        prefetch_rag=rag_results if 'rag_results' in locals() else None, 
+                        anchors=query_anchors
+                    )
+                    if kg_context:
+                        system_prompt += f"\n\n{kg_context}"
         except Exception as e:
             from loguru import logger
             logger.debug(f"Knowledge Graph lookup skipped: {e}")

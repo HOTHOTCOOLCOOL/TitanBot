@@ -1,28 +1,31 @@
 """Tool for generating images (DALL-E, Seedance)."""
 
-from typing import Any, ClassVar
+from typing import Any, Callable, Awaitable
 from loguru import logger
 
-from nanobot.agent.tools.base import BaseTool, ProcessContext
+from nanobot.agent.tools.base import Tool, RiskTier
 from nanobot.bus.events import OutboundMessage
 from nanobot.config.loader import get_config
 from nanobot.agent.i18n import msg as i18n_msg
 
 
-class DrawImageTool(BaseTool):
+class DrawImageTool(Tool):
     """
     Generate an image based on a prompt and send it directly to the user.
     Uses OpenAI DALL-E or Volcengine Seedance based on configuration.
     """
     
-    # We assign RiskTier.READ_ONLY here because the impact is local cost,
-    # no system destruction. Could be RESOURCE_CONSUMING.
-    # To keep it from constantly nagging the user, READ_ONLY is fine.
-    
-    _config_schema: ClassVar[dict[str, Any]] = {
-        "name": "draw_image",
-        "description": "Generate an image based on a prompt and send it to the user. Use this when the user asks you to literally 'draw', 'paint', or 'generate an image' of something.",
-        "parameters": {
+    @property
+    def name(self) -> str:
+        return "draw_image"
+        
+    @property
+    def description(self) -> str:
+        return "Generate an image based on a prompt and send it to the user. Use this when the user asks you to literally 'draw', 'paint', or 'generate an image' of something."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
             "type": "object",
             "properties": {
                 "prompt": {
@@ -36,20 +39,29 @@ class DrawImageTool(BaseTool):
                 }
             },
             "required": ["prompt"],
-        },
-    }
+        }
 
-    def __init__(self, **kwargs: Any):
-        super().__init__(**kwargs)
-        # Store a callback to let us inject outbound messages to the bus
-        self._send_callback = kwargs.get("send_callback")
+    def __init__(
+        self, 
+        send_callback: Callable[[OutboundMessage], Awaitable[None]] | None = None,
+        default_channel: str = "",
+        default_chat_id: str = ""
+    ):
+        self._send_callback = send_callback
+        self._default_channel = default_channel
+        self._default_chat_id = default_chat_id
 
-    def _get_schema_impl(self) -> dict[str, Any]:
-        return self._config_schema
+    def set_context(self, channel: str, chat_id: str) -> None:
+        """Set the current message context."""
+        self._default_channel = channel
+        self._default_chat_id = chat_id
 
-    async def _execute_impl(self, args: dict[str, Any], context: ProcessContext | None = None) -> Any:
-        prompt = args.get("prompt", "")
-        aspect_ratio = args.get("aspect_ratio", "1:1")
+    def get_risk_tier(self, args: dict[str, Any]) -> RiskTier:
+        return RiskTier.READ_ONLY
+
+    async def execute(self, **kwargs: Any) -> str:
+        prompt = kwargs.get("prompt", "")
+        aspect_ratio = kwargs.get("aspect_ratio", "1:1")
         
         if not prompt:
             return "Error: no prompt provided."
@@ -62,28 +74,26 @@ class DrawImageTool(BaseTool):
             return "Error: No image generation provider configured."
             
         logger.info(f"Generating image for prompt: {prompt}")
-        
-        # We start typing to let user know we are doing long work
-        if self._send_callback and context:
-            # We don't have a direct start_typing callback here, but AgentLoop auto-acks on progress.
-            pass
 
-        image_path = await provider.generate_image(prompt, aspect_ratio)
-        
-        if not image_path:
-            return "Error: Image generation failed."
+        try:
+            image_path = await provider.generate_image(prompt, aspect_ratio)
+            
+            if not image_path:
+                return "Error: Image generation failed."
 
-        if self._send_callback and context:
-            # Send the image directly as an outbound media message bypass
-            out_msg = OutboundMessage(
-                channel=context.channel,
-                chat_id=context.chat_id,
-                content="",  # Just the image
-                media=[str(image_path)],
-                metadata={}
-            )
-            await self._send_callback(out_msg)
-            return "Success: Image generated and sent to the user successfully. (You do not need to include any image output in your final message, only acknowledge it)."
-        
-        # If no callback (e.g. testing), just return the path
-        return f"Image generated successfully at {image_path}"
+            if self._send_callback and self._default_channel and self._default_chat_id:
+                # Send the image directly as an outbound media message bypass
+                out_msg = OutboundMessage(
+                    channel=self._default_channel,
+                    chat_id=self._default_chat_id,
+                    content="",  # Just the image
+                    media=[str(image_path)],
+                    metadata={}
+                )
+                await self._send_callback(out_msg)
+                return "Success: Image generated and sent to the user successfully. (You do not need to include any image output in your final message, only acknowledge it)."
+            
+            # If no callback (e.g. testing), just return the path
+            return f"Image generated successfully at {image_path}. Please use the 'message' tool to send this image path to the user."
+        except Exception as e:
+            return f"Error communicating with image provider: {e}"

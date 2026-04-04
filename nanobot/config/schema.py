@@ -278,6 +278,18 @@ class VerificationConfig(Base):
     l3_enabled: bool = True         # Post-reflection & knowledge extraction
     l3_success_pattern_min_tools: int = 3  # Min tools used to trigger success pattern extraction
 
+    # Phase 35v2: Configurable path deny patterns (Glob syntax via fnmatch).
+    # These supplement the hardcoded _SENSITIVE_PATHS in verification.py.
+    # Users can add project-specific deny rules in config.json.
+    # Example: ["*.env", "**/.git/*", "/secrets/*"]
+    path_deny_patterns: list[str] = Field(default_factory=list)
+
+    # Phase 37: Execution Trace Archive — enriched post-mortem extraction
+    # on circuit breaker / loop detection.  When enabled, failed complex
+    # tasks get LLM-analyzed post-mortems stored in Experience Bank,
+    # plus optional raw debug traces saved to memory/traces/.
+    trace_archive_enabled: bool = True
+
 
 class AgentsConfig(Base):
     """Agent configuration."""

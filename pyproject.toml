@@ -55,7 +55,7 @@ dev = [
 ssrs = [
     "requests>=2.31.0",
     "requests-ntlm>=1.2.0",
-    "requests-negotiate-sspi>=0.5.2",  # SSPI透传，直接用Windows登录态（推荐）
+    "requests-negotiate-sspi>=0.5.2; sys_platform == 'win32'",  # SSPI透传，直接用Windows登录态（推荐）
     "keyring>=24.0.0",                  # Windows Credential Manager安全存储
     "beautifulsoup4>=4.12.0",
 ]

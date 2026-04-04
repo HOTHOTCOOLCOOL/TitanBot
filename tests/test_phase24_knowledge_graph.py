@@ -239,63 +239,39 @@ class TestKG3EntitySummaries:
         assert context == ""
 
 
-# ── KG4: Query Decomposition ────────────────────────────────────────
+# ── Phase 34: Coverage Penalty & Schema Relaxation ──────────────────
 
 
-class TestKG4QueryDecomposition:
-    """KG4: Decompose complex queries for multi-hop resolution."""
+class TestPhase34RetrievalEnhancements:
+    """Tests for Phase 34 KG Retrieval Enhancements (Coverage Penalty & Schema Relaxation)."""
 
-    def test_is_complex_query_chinese(self):
-        """Chinese multi-hop patterns detected."""
-        assert KnowledgeGraph._is_complex_query("David的同事的邮箱是什么？")
-        assert not KnowledgeGraph._is_complex_query("David的邮箱是什么？")
-
-    def test_is_complex_query_english(self):
-        """English multi-hop patterns detected."""
-        assert KnowledgeGraph._is_complex_query("what is the email of the manager of David")
-        assert not KnowledgeGraph._is_complex_query("What is David's email?")
-
-    @pytest.mark.asyncio
-    async def test_decompose_query(self, kg):
-        """decompose_query returns sub-query chain."""
-        mock_provider = AsyncMock(spec=LLMProvider)
-        mock_response = MagicMock()
-        mock_response.content = json.dumps([
-            {"query": "Who is David's colleague?", "target": "X"},
-            {"query": "What is X's email?", "target": "Y"}
-        ])
-        mock_provider.chat.return_value = mock_response
-
-        result = await kg.decompose_query(mock_provider, "test_model", "David同事的邮箱？")
-        assert len(result) == 2
-        assert result[0]["target"] == "X"
-
-    @pytest.mark.asyncio
-    async def test_decompose_query_fallback_on_error(self, kg):
-        """On LLM error, returns single-element passthrough."""
-        mock_provider = AsyncMock(spec=LLMProvider)
-        mock_provider.chat.side_effect = Exception("API error")
-
-        result = await kg.decompose_query(mock_provider, "test_model", "simple query")
-        assert len(result) == 1
-        assert result[0]["query"] == "simple query"
-
-    @pytest.mark.asyncio
-    async def test_resolve_multihop_simple_query(self, kg):
-        """Simple query (single step) uses entity context directly."""
-        kg._add_triple("David", "email is", "david@example.com", description="Work email")
+    def test_coverage_penalty(self, kg):
+        """Coverage penalty applies a soft multiplier based on anchor hits."""
+        kg._add_triple("Project A", "uses", "Python")
         kg.rebuild_entity_index()
-        kg._entities["David"]["summary"] = "David's work email is david@example.com."
-
-        mock_provider = AsyncMock(spec=LLMProvider)
-        mock_response = MagicMock()
-        mock_response.content = json.dumps([
-            {"query": "What is David's email?", "target": "answer"}
-        ])
-        mock_provider.chat.return_value = mock_response
-
-        result = await kg.resolve_multihop(mock_provider, "test_model", "What is David's email?")
-        assert "David" in result
+        kg._entities["Project A"] = {"summary": "Project A is a backend system written in Python and deployed on AWS."}
+        
+        # 3 anchors: "Python", "AWS" hit, "React" misses -> coverage = 2/3
+        # Even with penalty, score > 0, so it should still be returned
+        context = kg.get_entity_context("What is Project A?", prefetch_rag=None, anchors=["Python", "AWS", "React"])
+        assert "Project A" in context
+        
+    def test_schema_relaxation(self, kg):
+        """Schema relaxation boosts isolated entities if they appear in RAG chunks."""
+        kg._add_triple("IsolatedEntity", "is", "alone")
+        kg.rebuild_entity_index()
+        kg._entities["IsolatedEntity"] = {"summary": "An entity with no natural matches to keyword query."}
+        
+        # Query has no token overlap with "IsolatedEntity" or its summary.
+        context_no_rag = kg.get_entity_context("tell me about that strange process", prefetch_rag=None, anchors=None)
+        assert context_no_rag == ""
+        
+        # Provide prefetch_rag that mentions "IsolatedEntity"
+        prefetch_rag = [{"text": "The strange process is handled by the isolatedentity module."}]
+        context_with_rag = kg.get_entity_context("tell me about that strange process", prefetch_rag=prefetch_rag, anchors=None)
+        
+        # Schema relaxation should boost the score to 1.0
+        assert "IsolatedEntity" in context_with_rag
 
 
 # ── KG5: Semantic Chunking ──────────────────────────────────────────

@@ -20,6 +20,7 @@ from nanobot.agent.tools.task_memory import TaskMemoryTool
 from nanobot.agent.tools.memory_search_tool import MemorySearchTool
 from nanobot.agent.tools.screen_capture import ScreenCaptureTool
 from nanobot.agent.tools.rpa_executor import RPAExecutorTool
+from nanobot.agent.tools.draw import DrawImageTool
 from nanobot.agent.memory import MemoryStore
 from nanobot.plugin_loader import scan_plugins, unload_plugins
 
@@ -60,6 +61,10 @@ def _register_default_tools(agent: "AgentLoop") -> None:
     # Message tool
     message_tool = MessageTool(send_callback=agent.bus.publish_outbound)
     agent.tools.register(message_tool)
+    
+    # Draw Image tool
+    draw_image_tool = DrawImageTool(send_callback=agent.bus.publish_outbound)
+    agent.tools.register(draw_image_tool)
     
     # Spawn tool (for subagents)
     spawn_tool = SpawnTool(manager=agent.subagents)

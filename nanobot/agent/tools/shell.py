@@ -3,6 +3,7 @@
 import asyncio
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,18 @@ class ExecTool(Tool):
         ]
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace
+        
+        # Phase 36: macOS-specific deny patterns
+        if sys.platform == "darwin":
+            self.deny_patterns.extend([
+                r"\bsudo\b",                          # privilege escalation
+                r"\bosascript\b",                      # AppleScript execution
+                r"\bdefaults\s+write\b",              # system defaults manipulation
+                r"\blaunchctl\b",                      # LaunchAgent/Daemon manipulation
+                r"\bsecurity\b.*\bunlock-keychain\b",  # keychain access
+                r"\bdscl\b",                           # directory service command line
+                r"\bkmutil\b",                         # kernel management utility
+            ])
     
     @property
     def name(self) -> str:

@@ -31,7 +31,10 @@ class ShellSandbox:
 
         # Strip environment variables
         # On Windows, keep essential variables required for basic process execution
-        essential_vars = {"PATH", "SYSTEMROOT", "SYSTEMDRIVE", "COMSPEC", "WINDIR", "TEMP", "TMP"}
+        if sys.platform == "darwin":
+            essential_vars = {"PATH", "HOME", "TMPDIR", "SHELL", "LANG", "USER", "LOGNAME"}
+        else:
+            essential_vars = {"PATH", "SYSTEMROOT", "SYSTEMDRIVE", "COMSPEC", "WINDIR", "TEMP", "TMP"}
         env = {k: v for k, v in os.environ.items() if k.upper() in essential_vars}
 
         try:
@@ -98,7 +101,10 @@ class PythonSandbox:
         }
         
         # Same environment stripping as shell (SEC-3: PYTHONPATH removed — -I flag handles isolation)
-        essential_vars = {"PATH", "SYSTEMROOT", "SYSTEMDRIVE"}
+        if sys.platform == "darwin":
+            essential_vars = {"PATH", "HOME", "TMPDIR"}
+        else:
+            essential_vars = {"PATH", "SYSTEMROOT", "SYSTEMDRIVE"}
         env = {k: v for k, v in os.environ.items() if k.upper() in essential_vars}
         
         try:

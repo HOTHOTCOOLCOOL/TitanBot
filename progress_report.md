@@ -1,6 +1,6 @@
 # Nanobot 项目进度总览
 
-> 截至 2026-03-31 （长期维护文档）
+> 截至 2026-04-04 （长期维护文档）
 
 ---
 
@@ -10,9 +10,9 @@
 
 ---
 
-## 🏁 当前位置：Phase 33 ✅（Browser-RPA 降级链路优化 + 安全审计）
+## 🏁 当前位置：Phase 37 ✅（Execution Trace Archive — Meta-Harness Inspired）
 
-已完成 **20+ 个大阶段**，从 10 文件聊天机器人发展到 106 文件、14 子包、19 工具、9 通道的企业级 AI Agent。回归测试：**1271 passed, 0 failed, 1 skipped**（排除 gemini/skill 可选依赖）。
+已完成 **20+ 个大阶段**，从 10 文件聊天机器人发展到 106 文件、14 子包、19 工具、9 通道的企业级 AI Agent。回归测试：**1264 passed, 0 failed, 1 skipped**（排除 gemini/skill 可选依赖）。
 
 ---
 
@@ -20,19 +20,7 @@
 
 ## ⏳ 待做阶段
 
-### Phase 34 — KG 检索增强 (BubbleRAG-Inspired)
 
-> 源自 BubbleRAG (arXiv 2603.20309) 论文对比分析，提取 3 项可在零架构成本内集成的检索增强技术。完整分析见 `paper_analysis_report.md`。
-
-| 状态 | ID | 借鉴项 | 优先级 | 改动文件 | 估计工作量 |
-|------|-----|--------|--------|---------|------------|
-| ⏳ | P34-1 | **Semantic Anchor Grouping** — 查询隐式概念推理 + 多候选锚 | P0 | `knowledge_graph.py`, `hybrid_retriever.py` | 2-3 天 |
-| ⏳ | P34-2 | **Coverage Penalty** — 检索结果结构完整性惩罚（Concept Weight + 指数衰减） | P1 | `hybrid_retriever.py` | 1 天 |
-| ⏳ | P34-3 | **Schema Relaxation** — 利用 Vector DB 预览结果放宽后续匹配条件 | P2 | `knowledge_graph.py` | 1 天 |
-
-**已评估但不采纳的论文方案**：Bubble Expansion 图算法（需图数据库，违反零架构原则）、CEG Discovery/Fusion（Nanobot 不是大规模 KG 场景）、Reasoning-Aware Expansion（现有 KG4 已够用）。
-
----
 
 ### ❌ Phase 35 — Context & Skill Hardening (CC-Mini Inspired) [已取消]
 
@@ -43,24 +31,38 @@
 | ❌ | P35-1 | **Auto-Compaction** — 在触发 L4 Token 截断前，主动利用小模型进行多轮对话上下文滚动摘要压缩，保留核心决策树 | 已降级为 Hotfix | `memory.py`, `context.py` | 1-2 天 |
 | ❌ | P35-2 | **First-Class CLI Skills** — 引入原生 `/review`, `/simplify` 级指令，绕开通用路由推断，建立专用隔离的执行 loop | 暂缓/搁置 | `cli/` & `skills/` | 1 天 |
 
-**结论**：Nanobot 存量的 `memory_manager` (深层合并) 与 `evicted_context` 已能满足上下文承载需求；Skill 的 CLI 分离通道复用价值低。取消独立 Phase 发版，开发重心全面回调至 **Phase 34 (KG 检索增强)**。
+**结论**：Nanobot 存量的 `memory_manager` (深层合并) 与 `evicted_context` 已能满足上下文承载需求；Skill 的 CLI 分离通道复用价值低。取消独立 Phase 发版，开发重心全面回调至 **Phase 34 (KG 检索增强)** 以及 **Phase 35v2 (Hook 机制)**。
 
 ---
 
-### Phase 22C — Multi-Modal & Channel Extension
+### ✅ Phase 35v2 — Tool Hook & Sandbox (OpenHarness Inspired)
 
-| 项目 | 优先级 | 描述 |
+> 基于对 `HKUDS/OpenHarness` 的架构分析，提取符合 "单智能体/零基础设施" 原则的高 ROI 安全增强机制。完整分析见 `docs/openharness_analysis.md`。
+> **经三模型 Harness 审议 (2026-04-04)**：Draft V1 的 3 项中 2 项被 Critic 否决（Hook 过度工程 / LLM 审计重蹈 L2 覆辙），仅 P35v2-3 以精简形态保留。
+
+| 状态 | ID | 借鉴项 | 优先级 | 估计工作量 |
+|------|-----|--------|--------|------------|
+| ❌ | ~~P35v2-1~~ | ~~生命周期 Hook 机制 (PreToolUse/PostToolUse 事件流)~~ | 取消 | `_L1_RULES` 列表已是 Hook 管线，Pub/Sub 总线过度工程 |
+| ❌ | ~~P35v2-2~~ | ~~大模型双重确认 (LLM-based 动态安全审计)~~ | 取消 | 与 L2 移除决策冲突，见 `docs/L2_VERIFICATION_RETHINK.md` L272 |
+| ✅ | P35v2-3 | **可配置路径沙盒** — 扩展 L1 `_check_rule_sensitive_path()` 支持 `fnmatch` Glob deny patterns | P1 | 已完成 (2026-04-04) |
+| ❌ | ~~P35v2-4~~ | ~~Swarm Coordinator 子代理协同~~ | 放弃 | 不符合架构初衷 |
+| ✅ | P35v2-5 | **edit_file 路径盲区修复** — R07 规则补全 `edit_file` 工具的敏感路径检查 | P1 | 与 P35v2-3 合并完成 |
+
+---
+
+### ✅ Phase 22C — Multi-Modal & Channel Extension (2026-04)
+
+| 状态 | 优先级 | 描述 |
 |------|--------|------|
-| Multi-Channel Image Support | P1 | 扩展图片下载到 MoChat, Slack, DingTalk |
-| Unified Speech-to-Text | P2 | 统一语音输入管道（目前仅 Telegram） |
-| Image Generation Tool | P2 | 集成 DALL-E / Stable Diffusion |
+| ✅ | P1 | Multi-Channel Image Support (Feishu 原子交付与交互卡片无缝拼接) |
+| ✅ | P2 | Unified Speech-to-Text (解耦频道下载与通用 STT 工厂) |
+| ✅ | P2 | Pluggable Text-to-Speech (EdgeTTS 异步指令化合成与回传) |
+| ✅ | P2 | Image Generation Tool (集成 DALL-E / Seedance 并跳过 Loop 自行发信) |
 
 ### 长期 Backlog
 
 | 项目 | 优先级 | 描述 |
 |------|--------|------|
-| Phase 36: Cross-Platform & OS Sandbox | P2 | Windows/macOS 双端架构优化。重构 `outlook.py` 脱离 COM 绑定。受 `cc-mini` 启发，引入 **Bubblewrap OS 级沙盒** 机制，彻底分离 `sandbox` & `shell` 的操作边界，从根本防御 RCE。 |
-| Phase 37: Execution Trace Archive | P1 | 受 Meta-Harness 论文启发。对于高复杂度任务（RPA/浏览器等）提供降级错误归档。记录原始完整错误上下文存入 `archive`，实现复杂的长期试错与推理溯源。 |
 | Phase 38: Coordinator Mode | P2 | 受 `cc-mini` 启发，引入基于 Actor 的后台并行动作组。赋予 Agent 衍生独立 Worker 子进程的能力，探索不阻塞主会话（Chat）的高并发异步任务委派系统。 |
 | Experience 检索阈值隐患修复 | P1 | `KnowledgeWorkflow` 中 `match_experience` 的相似度阈值偏低（**实际值 0.4**，且 `no_dense_penalty=1.0` 使纯 BM25 不打折），需提高至 0.65 并将 penalty 调至 0.5，避免干扰大模型上下文。 |
 
@@ -72,13 +74,43 @@
 |------|------|------|
 | `SECURITY.md` L248-254 | 5 项标记 "pending fix" 但 Phase 21 已全部修复 | [x] ✅ 2026-03-24 已修复 |
 | `SECURITY.md` | 新增 browser-use Worker 威胁模型章节 | ✅ 2026-03-31 已补充 |
-| `ARCHITECTURE_LESSONS.md` L273 | "Phase 22" 说明已过时 | 低优先级 |
+| `ARCHITECTURE_LESSONS.md` L273 | "Phase 22" 说明已过时 | ✅ 2026-04-04 文件已归档/删除 |
 | `TEST_TRACKER.md` | Phase 33 更新完毕，含缺陷追踪表 | ✅ 2026-03-31 已更新 |
 | `README.md` | Badge (1271/33→12 papers), Roadmap 修正, Phase 34 加入 | ✅ 2026-03-31 已修正 |
 | `paper_analysis_report.md` | BubbleRAG 论文对比分析完整报告 | ✅ 2026-03-31 新建 |
 | `docs/cc_mini_analysis.md` | CC-Mini 与 Claude Code 架构提取分析及高 ROI 方案 | ✅ 2026-04-02 新建 |
+| `docs/openharness_analysis.md` | OpenHarness 架构借鉴分析与 Harness 审计策略 | ✅ 2026-04-03 新建 |
+| `.agent/workflows/harness.md` | 混合模型碰撞工作流 (Planner/Critic) 初始化 | ✅ 2026-04-03 新建 |
 
 ---
+
+---
+
+<details>
+<summary><b>历史完结阶段归档 (Phase 29 - Phase 36)</b></summary>
+<br>
+
+## 🛡️ Phase 36 — Cross-Platform & OS Sandbox ✅ 已完成 (2026-04)
+
+> 深度采纳 Harness (Planner/Critic) 碰撞意见。摒弃庞大重构，零基建下实现跨平台优雅降级与沙箱自适应加固。
+
+| 状态 | ID | 模块 | 实现细节 |
+|------|-----|--------|---------|
+| ✅ | P36-1 | Outlook 平台降级 | `outlook.py` 执行时检查 `sys.platform`，跨平台实现 Graceful Degradation，放弃高成本重构。 |
+| ✅ | P36-2 | 智能沙箱感知 | `sandbox.py` 根据 macOS/Win 发放对应基础环节环境变 (如 macOS 独有 `$TMPDIR` / `$HOME`)。 |
+| ✅ | P36-3 | L1 OS 黑名单补强 | 赋予 `shell.py` L1 Guard 包含 `osascript` / `launchctl` 等专属 macOS deny patterns。 |
+
+---
+
+## 🔬 Phase 34 — KG 检索增强 (BubbleRAG-Inspired) ✅ 已完成 (2026-04)
+
+> 源自 BubbleRAG (arXiv 2603.20309) 论文对比分析，提取并集成 3 项在零架构成本内的检索增强技术。
+
+| 状态 | ID | 借鉴项 | 实现细节 |
+|------|-----|--------|---------|
+| ✅ | P34-1 | **Semantic Anchor Grouping** | `vector_store.py` 中 `rewrite_query_with_anchors` 抽取纯 JSON Anchors。 |
+| ✅ | P34-2 | **Coverage Penalty** | 基于 Anchor 命中率，在 `get_entity_context` 给候选实体计算软底线惩罚。 |
+| ✅ | P34-3 | **Schema Relaxation** | `get_entity_context` 将得分为 0 若在 `prefetch_rag` 出现的实体拯救为 1.0。 |
 
 ---
 
@@ -149,3 +181,5 @@
 | 🟠 Medium | DEBT-KB-1 | `match_experience` 阈值=0.4, `no_dense_penalty=1.0` | 小语料库误召回噪音注入 | ✅ 已修复：提高至 0.65, penalty 降至 0.5 |
 | 🟠 Medium | SEC-BUW-1 | `browser_use_worker` 内层 Agent 绕过 L1/HITL | 间接 Prompt Injection 风险 | ✅ 已修复：Context Sandwiching + Forced-HITL |
 | 🟡 Low | DEBT-KB-2 | `_key_extraction_cache` 模块级全局状态 | 多租户数据泄露 | ✅ 已修复：迁移至实例级 |
+
+</details>

@@ -91,6 +91,27 @@ class CommandHandler:
             return self.handle_kb_command(cmd, msg, kw)
         if cmd.startswith("/memory"):
             return self.handle_memory_command(cmd, msg)
+        if cmd.startswith("/voice"):
+            parts = cmd.split(maxsplit=1)
+            action = parts[1].lower() if len(parts) > 1 else ""
+            if action in ("on", "1", "true"):
+                session.metadata["voice_response_enabled"] = True
+                session.mark_metadata_dirty()
+                agent.sessions.save(session)
+                content = i18n_msg("voice_enabled") if "voice_enabled" in i18n_msg._messages.get("en", {}) else "Voice responses enabled for this session."
+            elif action in ("off", "0", "false"):
+                session.metadata["voice_response_enabled"] = False
+                session.mark_metadata_dirty()
+                agent.sessions.save(session)
+                content = i18n_msg("voice_disabled") if "voice_disabled" in i18n_msg._messages.get("en", {}) else "Voice responses disabled for this session."
+            else:
+                current = getattr(session, 'metadata', {}).get('voice_response_enabled', False)
+                state = "ON" if current else "OFF"
+                content = f"Voice responses are currently {state}.\nUsage: `/voice on` or `/voice off`"
+            
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id, content=content,
+            )
         if cmd == "/deep_consolidate":
             async def _run_deep_consolidate():
                 if hasattr(agent.memory_manager, "deep_consolidate"):

@@ -193,6 +193,7 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         channel: str | None = None,
         chat_id: str | None = None,
         search_query: str | None = None,
+        query_anchors: list[str] | None = None,
         context_limit: int = 120_000,
         evicted_context: str | None = None,
         knowledge_graph: "KnowledgeGraph | None" = None,
@@ -244,8 +245,12 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
                     from nanobot.agent.knowledge_graph import KnowledgeGraph
                     kg = KnowledgeGraph(self.workspace, vector_memory=self.vector_memory)
                 kq_query = search_query or current_message
-                # KG3: Prefer entity summaries over raw 1-hop triples
-                kg_context = kg.get_entity_context(kq_query)
+                # KG3/Phase 34: Pass anchors and prefetch_rag
+                kg_context = kg.get_entity_context(
+                    kq_query, 
+                    prefetch_rag=rag_results if 'rag_results' in locals() else None, 
+                    anchors=query_anchors
+                )
                 if kg_context:
                     system_prompt += f"\n\n{kg_context}"
         except Exception as e:

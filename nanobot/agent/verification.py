@@ -22,6 +22,7 @@ Design constraints (from ARCHITECTURE.md):
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
 from dataclasses import dataclass, field
@@ -80,6 +81,11 @@ _SENSITIVE_PATHS = [
     # User secrets
     "/.ssh/", "\\.ssh\\",
     "/.gnupg/", "\\.gnupg\\",
+    # macOS specific (Phase 36)
+    "/system/library/",
+    "/library/launchagents/",
+    "/library/launchdaemons/",
+    "/library/keychains/",
 ]
 
 # Network exfiltration patterns — commands that send data to external hosts
@@ -179,19 +185,27 @@ def _check_rule_exec_length(tool_calls: list[Any]) -> list[str]:
     return violations
 
 
-def _check_rule_sensitive_path(tool_calls: list[Any]) -> list[str]:
-    """R07: write_file / exec must not target sensitive system paths."""
+def _check_rule_sensitive_path(tool_calls: list[Any], *, extra_deny: list[str] | None = None) -> list[str]:
+    """R07: write_file / edit_file / exec must not target sensitive system paths.
+
+    Phase 35v2: Also checks ``edit_file`` (closing a real blind spot) and
+    supports configurable deny patterns from ``VerificationConfig.path_deny_patterns``.
+    """
     violations = []
     for tc in tool_calls:
         path_to_check = ""
         if tc.name == "write_file":
             path_to_check = tc.arguments.get("path", "")
+        elif tc.name == "edit_file":
+            path_to_check = tc.arguments.get("file_path", "")
         elif tc.name == "exec":
             path_to_check = tc.arguments.get("command", "")
         else:
             continue
 
         path_lower = path_to_check.lower()
+
+        # Hardcoded sensitive paths (existing)
         for sensitive in _SENSITIVE_PATHS:
             if sensitive in path_lower:
                 violations.append(
@@ -199,6 +213,16 @@ def _check_rule_sensitive_path(tool_calls: list[Any]) -> list[str]:
                     f"This has been blocked for safety."
                 )
                 break
+
+        # Phase 35v2: Configurable deny patterns (Glob via fnmatch)
+        if extra_deny:
+            for pattern in extra_deny:
+                if fnmatch.fnmatch(path_lower, pattern.lower()):
+                    violations.append(
+                        f"R07: Path matches deny pattern '{pattern}'. "
+                        f"This has been blocked by sandbox configuration."
+                    )
+                    break
     return violations
 
 
@@ -374,9 +398,15 @@ class VerificationLayer:
         if not self.config.l1_enabled:
             return RuleResult(passed=True)
 
+        # Phase 35v2: Read configurable deny patterns
+        extra_deny = getattr(self.config, 'path_deny_patterns', None) or None
+
         all_violations: list[str] = []
         for rule_fn in _L1_RULES:
-            violations = rule_fn(tool_calls)
+            if rule_fn is _check_rule_sensitive_path:
+                violations = rule_fn(tool_calls, extra_deny=extra_deny)
+            else:
+                violations = rule_fn(tool_calls)
             all_violations.extend(violations)
 
         if all_violations:

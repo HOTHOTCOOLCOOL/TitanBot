@@ -26,6 +26,8 @@ try:
         P2ImMessageReceiveV1,
         P2ImMessageMessageReadV1,
         GetMessageResourceRequest,
+        CreateImageRequest,
+        CreateImageRequestBody,
     )
     FEISHU_AVAILABLE = True
 except ImportError:
@@ -289,6 +291,45 @@ class FeishuChannel(BaseChannel):
 
         return elements or [{"tag": "markdown", "content": content}]
 
+    def _upload_image_sync(self, image_path: str) -> str | None:
+        """Upload a local image synchronously to get an image_key."""
+        if not self._client:
+            return None
+        try:
+            with open(image_path, "rb") as f:
+                request = CreateImageRequest.builder() \
+                    .request_body(
+                        CreateImageRequestBody.builder()
+                        .image_type("message")
+                        .image(f)
+                        .build()
+                    ).build()
+                response = self._client.im.v1.image.create(request)
+                if response.success():
+                    # Response structure: data -> image_key usually, check lark sdk
+                    # It's an object, so we access with dot notation
+                    if hasattr(response.data, "image_key"):
+                        return response.data.image_key
+                logger.error(f"Feishu image upload failed: code={response.code}, msg={response.msg}")
+                return None
+        except Exception as e:
+            logger.error(f"Feishu image upload error: {e}")
+            return None
+
+    async def _upload_images(self, media_paths: list[str]) -> list[str]:
+        """Upload all image paths sequentially or concurrently (here sequentially for simplicity) and return keys."""
+        from nanobot.channels.image_downloader import is_image_mime
+        import mimetypes
+        loop = asyncio.get_running_loop()
+        image_keys = []
+        for path in media_paths:
+            mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+            if is_image_mime(mime) or path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                key = await loop.run_in_executor(None, self._upload_image_sync, path)
+                if key:
+                    image_keys.append(key)
+        return image_keys
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Feishu."""
         if not self._client:
@@ -303,8 +344,27 @@ class FeishuChannel(BaseChannel):
             else:
                 receive_id_type = "open_id"
             
+            # Pre-upload any image media before building the card
+            image_keys = []
+            if msg.media:
+                image_keys = await self._upload_images(msg.media)
+            
             # Build card with markdown + table support
             elements = self._build_card_elements(msg.content)
+            
+            # Embed the pre-uploaded images atomically into the interactive card Elements array
+            image_elements = [
+                {
+                    "tag": "img",
+                    "image_key": key,
+                    "alt": {"tag": "plain_text", "content": "Image"}
+                }
+                for key in image_keys
+            ]
+            
+            # Insert images at the beginning of the card elements
+            elements = image_elements + elements
+            
             card = {
                 "config": {"wide_screen_mode": True},
                 "elements": elements,
@@ -403,6 +463,31 @@ class FeishuChannel(BaseChannel):
                         content = "[image: download failed]"
                 else:
                     content = "[image: no image_key found]"
+            elif msg_type == "audio":
+                file_key = ""
+                try:
+                    content_json = json.loads(message.content)
+                    file_key = content_json.get("file_key", "")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                    
+                if file_key:
+                    path = await self._download_audio(message_id, file_key)
+                    if path:
+                        media_paths.append(str(path))
+                        from nanobot.providers.transcription import TranscriptionProviderFactory
+                        from nanobot.config.loader import get_config
+                        config = get_config()
+                        transcriber = TranscriptionProviderFactory.get_default(config)
+                        transcription = await transcriber.transcribe(path) if transcriber else ""
+                        if transcription:
+                            content = f"[transcription: {transcription}]"
+                        else:
+                            content = f"[audio: {path}]"
+                    else:
+                        content = "[audio: download failed]"
+                else:
+                    content = "[audio: no file_key found]"
             else:
                 content = MSG_TYPE_MAP.get(msg_type, f"[{msg_type}]")
             
@@ -468,4 +553,39 @@ class FeishuChannel(BaseChannel):
         return await loop.run_in_executor(
             None, self._download_image_sync, message_id, image_key
         )
+
+    def _download_audio_sync(self, message_id: str, file_key: str) -> "Path | None":
+        """Sync helper to download audio via Feishu API."""
+        if not self._client:
+            return None
+        try:
+            request = GetMessageResourceRequest.builder() \
+                .message_id(message_id) \
+                .file_key(file_key) \
+                .type("file") \
+                .build()
+
+            response = self._client.im.v1.message_resource.get(request)
+
+            if not response.success():
+                logger.error(f"Feishu audio download failed: {response.msg}")
+                return None
+
+            audio_data = response.file.read() if response.file else None
+            if not audio_data:
+                return None
+
+            from nanobot.channels.image_downloader import MEDIA_DIR
+            MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+            file_path = MEDIA_DIR / f"feishu_{file_key[:16]}.ogg"
+            file_path.write_bytes(audio_data)
+            return file_path
+        except Exception as e:
+            logger.error(f"Feishu audio download error: {e}")
+            return None
+
+    async def _download_audio(self, message_id: str, file_key: str) -> "Path | None":
+        """Download audio from Feishu (non-blocking)."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._download_audio_sync, message_id, file_key)
 

@@ -662,42 +662,32 @@ Return ONLY the supplementary search query string, or nothing."""
         "其", "该",
     }
 
-    async def rewrite_query(self, query: str, conversation_history: list[dict[str, Any]] | None = None) -> str:
-        """Rewrite the query to resolve coreferences based on conversational history (P13 feature).
+    async def rewrite_query_with_anchors(self, query: str, conversation_history: list[dict[str, Any]] | None = None) -> tuple[str, list[str]]:
+        """Phase 34: Rewrite query and extract implicit concepts (anchors) as a JSON tuple.
         
-        Uses the configured provider to replace pronouns like 'he', 'she', 'it' with their
-        actual subjects from the preceding few messages.
+        Uses the configured provider to replace pronouns and extract key entity anchors.
         
         Args:
             query: The original user search query.
             conversation_history: List of previous message dictionaries.
              
         Returns:
-            The rewritten query, or the original query if no rewriting is needed or an error occurs.
+            Tuple of (rewritten_query, list_of_anchors).
         """
-        if not self.provider or not self.model or not conversation_history:
-            return query
+        if not self.provider or not self.model:
+            return query, []
 
-        # E3: Short-circuit — skip LLM call if query has no coreferential pronouns
-        query_lower = query.lower()
-        query_words = set(query_lower.split())
-        # Check both word-level (English) and substring-level (Chinese)
-        has_pronoun = bool(query_words & self._COREFERENCE_PRONOUNS) or any(
-            p in query_lower for p in self._COREFERENCE_PRONOUNS if len(p) > 1  # Chinese pronouns
-        )
-        if not has_pronoun:
-            return query
-            
-        recent_history = conversation_history[-6:]
-        if not recent_history:
-            return query
-            
+        recent_history = conversation_history[-6:] if conversation_history else []
         history_text = "\n".join([f"{msg.get('role', 'unknown')}: {msg.get('content', '')}" for msg in recent_history])
         
-        prompt = f"""You are a query rewriting assistant. 
-Given the following conversation history, rewrite the user's latest query so that it is fully self-contained without needing the context. 
-Resolve any pronouns (e.g. 'it', 'he', 'that issue') to their specific names or entities mentioned in the history.
-Do NOT reply with anything other than the rewritten query. If no rewriting is needed, return the original query exactly.
+        prompt = f"""You are a query rewriting and knowledge extraction assistant.
+Given the following conversation history (if any), perform TWO tasks:
+1. Rewrite the user's latest query so that it is fully self-contained (resolve pronouns like 'it', 'he', 'that issue' to their specific names).
+2. Extract the core entity concepts as 'anchors' (e.g. people, organizations, systems, locations) from the rewritten query. Include both explicit subjects and implied domain concepts.
+
+Do NOT reply with anything other than a valid JSON object.
+Format:
+{{"query": "the fully rewritten query", "anchors": ["EntityA", "EntityB"]}}
 
 Conversation History:
 {history_text}
@@ -705,7 +695,7 @@ Conversation History:
 Latest Query:
 {query}
 
-Rewritten Query:"""
+JSON Output:"""
 
         try:
             messages = [{"role": "user", "content": prompt}]
@@ -713,16 +703,35 @@ Rewritten Query:"""
                 messages=messages,
                 model=self.model,
                 temperature=0.0,
-                max_tokens=200
+                max_tokens=250
             )
-            rewritten = response.content.strip()
-            if rewritten and rewritten.lower() != query.lower():
-                logger.info(f"VectorMemory: Refined query from '{query}' to '{rewritten}'")
-                return rewritten
-            return query
+            resp_text = (response.content or "").strip()
+            
+            from nanobot.utils.think_strip import strip_think_tags
+            resp_text = strip_think_tags(resp_text)
+            if resp_text.startswith("```"):
+                resp_text = resp_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                
+            import json_repair
+            parsed = json_repair.loads(resp_text)
+            
+            if isinstance(parsed, dict) and "query" in parsed and "anchors" in parsed:
+                rewritten = str(parsed["query"]).strip()
+                anchors = [str(a).strip() for a in parsed["anchors"] if str(a).strip()]
+                
+                final_q = rewritten if rewritten else query
+                logger.info(f"VectorMemory: Refined query to '{final_q}' | Anchors: {anchors}")
+                return final_q, anchors
+                
+            return query, []
         except Exception as e:
             logger.error(f"VectorMemory query rewriting failed (non-fatal): {e}")
-            return query
+            return query, []
+
+    async def rewrite_query(self, query: str, conversation_history: list[dict[str, Any]] | None = None) -> str:
+        """Legacy wrapper for backward compatibility."""
+        rewritten, _ = await self.rewrite_query_with_anchors(query, conversation_history)
+        return rewritten
 
     @staticmethod
     def format_results_for_context(results: list[dict[str, Any]]) -> str:

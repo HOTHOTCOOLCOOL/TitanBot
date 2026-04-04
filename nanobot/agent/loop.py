@@ -374,6 +374,121 @@ class AgentLoop:
             if tool and hasattr(tool, "set_context"):
                 tool.set_context(channel, chat_id)
 
+    # Phase 37: Tools whose failures warrant a full post-mortem trace
+    _HIGH_COMPLEXITY_TOOLS = {"browser", "rpa", "browser_use_worker", "exec"}
+
+    async def _extract_trace_postmortem(
+        self,
+        request_text: str,
+        tool_calls_with_args: list[dict],
+        action_log: list[dict],
+        last_error: str,
+        break_reason: str = "circuit_breaker",
+    ) -> None:
+        """Phase 37: Extract a structured post-mortem from a failed complex task.
+
+        Replaces the P29-5 1-line experience with an LLM-driven analysis
+        that captures root cause, failed strategy, and recommended fix.
+        Result is stored in the existing Experience Bank — zero new data
+        structures or retrieval systems.
+
+        Called as fire-and-forget from circuit breaker, fuzzy loop, and
+        L14 duplicate detection break points.
+        """
+        config = self._get_config()
+        if not getattr(config.agents.verification, 'trace_archive_enabled', True):
+            return
+        if not getattr(getattr(config.agents, 'memory_features', None), 'experience_enabled', True):
+            return
+        if not self.knowledge_workflow or not self.knowledge_workflow.knowledge_store:
+            return
+
+        # Only trace high-complexity tool failures
+        tools_in_chain = {tc.get("tool", "") for tc in tool_calls_with_args}
+        if not tools_in_chain & self._HIGH_COMPLEXITY_TOOLS:
+            # Fallback to simple 1-line experience for non-complex failures
+            failed_tool = tool_calls_with_args[-1].get("tool", "unknown") if tool_calls_with_args else "unknown"
+            self.knowledge_workflow.knowledge_store.add_experience(
+                context_trigger=f"Tool error: {failed_tool}",
+                tactical_prompt=f"Tool '{failed_tool}' repeatedly failed ({break_reason}): {last_error[:200]}. Verify parameters or try alternative approach.",
+                action_type="error_recovery",
+            )
+            return
+
+        # Build compact failure summary (input ≤ 2000 chars)
+        chain_summary = []
+        for i, tc in enumerate(tool_calls_with_args[-8:], 1):
+            outcome = "❌" if any(
+                e.get("tool") == tc.get("tool") and e.get("outcome") == "error"
+                for e in action_log
+            ) else "✓"
+            args_brief = json.dumps(tc.get("args", {}), ensure_ascii=False)[:120]
+            chain_summary.append(f"{i}. {outcome} {tc.get('tool', '?')}({args_brief})")
+
+        prompt = (
+            f"An AI agent attempted this task and FAILED ({break_reason}):\n"
+            f"Task: {request_text[:200]}\n\n"
+            f"Tool chain (last {len(chain_summary)} steps):\n" + "\n".join(chain_summary) + "\n\n"
+            f"Final error: {last_error[:300]}\n\n"
+            f"Generate a POST-MORTEM analysis. Return ONLY valid JSON:\n"
+            '{\n'
+            '  "root_cause": "Why did the task fail? (1 sentence)",\n'
+            '  "failed_approach": "What strategy was tried and failed? (1 sentence)",\n'
+            '  "recommended_fix": "Concrete alternative approach for next attempt (2-3 sentences)"\n'
+            '}'
+        )
+
+        try:
+            response = await self.provider.chat(
+                messages=[
+                    {"role": "system", "content": "You are a failure analysis expert. Respond ONLY in strict JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                model=self.model,
+                temperature=0.1,
+                max_tokens=300,
+            )
+            text = (response.content or "").strip()
+            from nanobot.utils.think_strip import strip_think_tags
+            text = strip_think_tags(text)
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+            import json_repair
+            result = json_repair.loads(text)
+
+            if isinstance(result, dict) and "root_cause" in result:
+                tactical = (
+                    f"TRACE POST-MORTEM ({break_reason}):\n"
+                    f"Root cause: {result.get('root_cause', '')}\n"
+                    f"Failed approach: {result.get('failed_approach', '')}\n"
+                    f"Recommended: {result.get('recommended_fix', '')}"
+                )
+                self.knowledge_workflow.knowledge_store.add_experience(
+                    context_trigger=request_text[:80],
+                    tactical_prompt=tactical[:800],  # Hard cap within injection budget
+                    action_type="trace_postmortem",
+                )
+                logger.info(f"Phase 37: Post-mortem extracted for '{request_text[:50]}' ({break_reason})")
+            else:
+                logger.warning(f"Phase 37: Invalid post-mortem JSON: {text[:100]}")
+        except Exception as e:
+            logger.error(f"Phase 37: Post-mortem extraction failed: {e}")
+
+        # Developer-only: dump raw trace for offline debugging
+        try:
+            from nanobot.agent.trace_archive import TraceArchive
+            archive = TraceArchive(self.workspace)
+            archive.dump_debug_trace(
+                request_text=request_text,
+                tool_calls_with_args=tool_calls_with_args,
+                action_log=action_log,
+                final_content=last_error,
+            )
+        except Exception as e:
+            logger.debug(f"Phase 37: Debug trace dump failed (non-critical): {e}")
+
+
     async def _run_agent_loop(
         self,
         initial_messages: list[dict],
@@ -690,21 +805,24 @@ class AgentLoop:
                     if consecutive_all_exceptions >= _cb_threshold:
                         logger.error(f"Circuit breaker: {consecutive_all_exceptions} consecutive all-exception turns (threshold={_cb_threshold}). Breaking agent loop.")
                         
-                        # P29-5: Error -> Auto Experience. Extract a tactical hint from repeated failures.
-                        if getattr(getattr(config.agents, 'memory_features', None), 'experience_enabled', True):
-                            try:
-                                failed_tc = response.tool_calls[0] if response.tool_calls else None
-                                failed_res = results[0] if results else "Unknown error"
-                                if failed_tc and hasattr(self, "knowledge_workflow") and self.knowledge_workflow.knowledge_store:
-                                    exp_prompt = f"Executing tool '{failed_tc.name}' repeatedly failed with: {failed_res}. When using this tool, verify parameters or check system state."
-                                    self.knowledge_workflow.knowledge_store.add_experience(
-                                        context_trigger=f"Tool error: {failed_tc.name}",
-                                        tactical_prompt=exp_prompt,
-                                        action_type="error_recovery"
-                                    )
-                                    logger.info(f"P29-5: Saved auto-experience for {failed_tc.name} failure.")
-                            except Exception as e:
-                                logger.error(f"Failed to save auto-experience: {e}")
+                        # Phase 37: Extract structured post-mortem (replaces P29-5 1-line experience)
+                        _user_req = ""
+                        for _m in reversed(messages):
+                            if _m.get("role") == "user" and isinstance(_m.get("content"), str):
+                                _user_req = _m["content"][:200]
+                                break
+                        _last_err = str(results[0])[:500] if results else "Unknown error"
+                        from nanobot.agent.commands import _safe_create_task
+                        _safe_create_task(
+                            self._extract_trace_postmortem(
+                                request_text=_user_req,
+                                tool_calls_with_args=tool_calls_with_args,
+                                action_log=_action_log,
+                                last_error=_last_err,
+                                break_reason="circuit_breaker",
+                            ),
+                            name="p37_postmortem_cb",
+                        )
 
                         for tool_call, result in zip(response.tool_calls, results):
                             if isinstance(result, BaseException):
@@ -759,6 +877,23 @@ class AgentLoop:
                         f"Duplicate tool call detected ({_DUPLICATE_THRESHOLD}x): "
                         f"{_iter_sig[:120]}... Breaking loop."
                     )
+                    # Phase 37: Post-mortem for duplicate loop
+                    _user_req_l14 = ""
+                    for _m in reversed(messages):
+                        if _m.get("role") == "user" and isinstance(_m.get("content"), str):
+                            _user_req_l14 = _m["content"][:200]
+                            break
+                    from nanobot.agent.commands import _safe_create_task
+                    _safe_create_task(
+                        self._extract_trace_postmortem(
+                            request_text=_user_req_l14,
+                            tool_calls_with_args=tool_calls_with_args,
+                            action_log=_action_log,
+                            last_error=f"Duplicate loop: {_iter_sig[:200]}",
+                            break_reason="duplicate_loop",
+                        ),
+                        name="p37_postmortem_l14",
+                    )
                     final_content = (
                         "⚠️ I appear to be stuck in a loop calling the same tool repeatedly. "
                         "Please rephrase your request or try a different approach."
@@ -768,6 +903,23 @@ class AgentLoop:
                 # Phase 33: Fuzzy loop detection (semantic loops with similar but not identical calls)
                 if _detect_fuzzy_loop(_recent_call_sigs):
                     logger.warning("Fuzzy loop detected: tool-action pattern repeating. Breaking loop.")
+                    # Phase 37: Post-mortem for fuzzy loop
+                    _user_req_fz = ""
+                    for _m in reversed(messages):
+                        if _m.get("role") == "user" and isinstance(_m.get("content"), str):
+                            _user_req_fz = _m["content"][:200]
+                            break
+                    from nanobot.agent.commands import _safe_create_task
+                    _safe_create_task(
+                        self._extract_trace_postmortem(
+                            request_text=_user_req_fz,
+                            tool_calls_with_args=tool_calls_with_args,
+                            action_log=_action_log,
+                            last_error=f"Fuzzy loop: {_recent_call_sigs[-1][:200] if _recent_call_sigs else 'N/A'}",
+                            break_reason="fuzzy_loop",
+                        ),
+                        name="p37_postmortem_fuzzy",
+                    )
                     final_content = (
                         "⚠️ I appear to be stuck repeating similar actions without progress. "
                         "Please check if the page loaded correctly, or try a different approach."
@@ -1176,12 +1328,13 @@ class AgentLoop:
 
         self._set_tool_context(msg.channel, msg.chat_id)
 
-        # P13: Async query rewriting for coreference resolution (moved from context.py)
+        # P13/Phase 34: Async query rewriting and anchor extraction
         search_query = request_text
+        query_anchors = []
         try:
-            if hasattr(self.context, 'vector_memory') and hasattr(self.context.vector_memory, 'rewrite_query'):
+            if hasattr(self.context, 'vector_memory') and hasattr(self.context.vector_memory, 'rewrite_query_with_anchors'):
                 history = session.get_history(max_messages=10)
-                search_query = await self.context.vector_memory.rewrite_query(request_text, history)
+                search_query, query_anchors = await self.context.vector_memory.rewrite_query_with_anchors(request_text, history)
         except Exception as e:
             logger.debug(f"Query rewriting skipped: {e}")
 
@@ -1192,6 +1345,7 @@ class AgentLoop:
             channel=msg.channel,
             chat_id=msg.chat_id,
             search_query=search_query,
+            query_anchors=query_anchors,
             evicted_context=session.evicted_context,
             knowledge_graph=self._get_knowledge_graph(),  # D2: cached instance
         )
@@ -1321,11 +1475,28 @@ class AgentLoop:
                 logger.info("Skipping save prompt: workflow appears to have failed")
 
         self.sessions.save(session)
+        
+        media_attachments = []
+        if getattr(session, 'metadata', {}).get('voice_response_enabled'):
+            try:
+                from nanobot.providers.tts import EdgeTTSProvider
+                tts = EdgeTTSProvider()
+                text_to_speak = final_content[:500] if final_content else "No response"
+                # Strip markdown/images before speaking
+                import re
+                clean_text = re.sub(r'!\[.*?\]\(.*?\)', '', text_to_speak)
+                clean_text = re.sub(r'```.*?```', '代码块', clean_text, flags=re.DOTALL)
+                audio_path = await tts.synthesize(clean_text)
+                if audio_path:
+                    media_attachments.append(str(audio_path))
+            except Exception as e:
+                logger.error(f"Failed to generate TTS: {e}")
 
         return OutboundMessage(
             channel=msg.channel,
             chat_id=msg.chat_id,
             content=final_content + save_prompt,
+            media=media_attachments,
             metadata=msg.metadata or {},
         )
     

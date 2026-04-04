@@ -340,9 +340,14 @@ class TelegramChannel(BaseChannel):
                 
                 # Handle voice transcription
                 if media_type == "voice" or media_type == "audio":
-                    from nanobot.providers.transcription import GroqTranscriptionProvider
-                    transcriber = GroqTranscriptionProvider(api_key=self.groq_api_key)
-                    transcription = await transcriber.transcribe(file_path)
+                    from nanobot.providers.transcription import TranscriptionProviderFactory
+                    from nanobot.config.loader import get_config
+                    config = get_config()
+                    transcriber = TranscriptionProviderFactory.get_default(config)
+                    if transcriber:
+                        transcription = await transcriber.transcribe(file_path)
+                    else:
+                        transcription = ""
                     if transcription:
                         logger.info(f"Transcribed {media_type}: {transcription[:50]}...")
                         content_parts.append(f"[transcription: {transcription}]")

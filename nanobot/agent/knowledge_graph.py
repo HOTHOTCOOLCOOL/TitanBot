@@ -578,7 +578,7 @@ Do not include markdown fences. If no meaningful bridging facts can be deduced, 
             logger.error(f"Bridging facts generation failed: {e}")
             return 0
 
-    def get_entity_context(self, query: str) -> str:
+    def get_entity_context(self, query: str, prefetch_rag: list[dict[str, Any]] | None = None, anchors: list[str] | None = None) -> str:
         """KG3: Return matching entity summaries for the query.
 
         Preferred over get_1hop_context when entity summaries are available.
@@ -594,7 +594,7 @@ Do not include markdown fences. If no meaningful bridging facts can be deduced, 
 
         query_lower = query.lower()
         query_words = set(tokenize_key(query_lower))
-        if not query_words:
+        if not query_words and not anchors:
             return ""
 
         # Phase 28C: Semantic retrieval from Vector DB
@@ -622,12 +622,31 @@ Do not include markdown fences. If no meaningful bridging facts can be deduced, 
             score = 0.0
             if name_lower in query_lower:
                 score += 3.0  # Exact substring match
-            elif query_words & name_words:
+            elif query_words and (query_words & name_words):
                 score += 1.0  # Token overlap
             
             # Add semantic boost
             if name_lower in semantic_boost:
                 score += semantic_boost[name_lower]
+
+            # Phase 34: Coverage Penalty
+            if anchors:
+                hits = 0
+                summary_lower = info.get("summary", "").lower()
+                for anchor in anchors:
+                    if anchor.lower() in summary_lower or anchor.lower() in name_lower:
+                        hits += 1
+                coverage = hits / len(anchors)
+                multiplier = max(0.5, 0.5 + 0.5 * coverage)
+                score *= multiplier
+                
+            # Phase 34: Schema Relaxation
+            if score == 0.0 and prefetch_rag:
+                for chunk in prefetch_rag:
+                    chunk_text = chunk.get("text", "").lower()
+                    if name_lower in chunk_text:
+                        score = max(score, 1.0)
+                        break
 
             if score > 0.0:
                 matched_entities.append((name, info, score))
@@ -646,120 +665,6 @@ Do not include markdown fences. If no meaningful bridging facts can be deduced, 
             parts.append(f"- **{name}**: {summary}")
 
         return "## Entity Knowledge\n" + "\n".join(parts)
-
-    # ── KG4: Query Decomposition ────────────────────────────────────────
-
-    @staticmethod
-    def _is_complex_query(query: str) -> bool:
-        """KG4: Heuristic to detect queries that need multi-hop decomposition.
-
-        Complex queries typically ask about relationships between entities
-        that require graph traversal (e.g., "David同事的邮箱是什么？").
-        """
-        # Chinese patterns for multi-hop
-        zh_patterns = [
-            r"的.+的",       # "A的B的C" — chained possession
-            r"谁.+的",       # "谁是...的" — indirect reference
-            r"哪个.+的.+",   # "哪个...的..."
-        ]
-        # English patterns for multi-hop
-        en_patterns = [
-            r"\b\w+'s\s+\w+'s\b",        # "David's colleague's email"
-            r"who\s+.+\s+of\s+",          # "who is the manager of..."
-            r"what\s+is\s+.+\s+of\s+.+",  # "what is the email of..."
-        ]
-
-        for pattern in zh_patterns + en_patterns:
-            if re.search(pattern, query, re.IGNORECASE):
-                return True
-        return False
-
-    async def decompose_query(self, provider: LLMProvider, model: str, query: str) -> list[dict[str, str]]:
-        """KG4: Decompose a complex query into a chain of sub-queries.
-
-        Returns:
-            List of sub-query dicts: [{"query": "...", "target": "X"}, ...]
-        """
-        prompt = f"""You are a Query Decomposition Engine for a Knowledge Graph.
-Decompose this complex query into a sequence of simpler sub-queries that can be answered
-by looking up entity facts one hop at a time.
-
-Query: "{query}"
-
-Return a JSON array where each element has:
-- "query": the sub-query to look up
-- "target": the placeholder variable being resolved (e.g., "X", "Y")
-
-Example for "What is David's colleague's email?":
-[
-  {{"query": "Who is David's colleague?", "target": "X"}},
-  {{"query": "What is X's email?", "target": "Y"}}
-]
-
-Return ONLY valid JSON. If the query is simple (single hop), return a single-element array.
-Do not include markdown fences."""
-
-        try:
-            response = await provider.chat(
-                messages=[
-                    {"role": "system", "content": "Query decomposition engine. Return only JSON array."},
-                    {"role": "user", "content": prompt},
-                ],
-                model=model,
-                temperature=0.1,
-            )
-            resp_text = (response.content or "").strip()
-            from nanobot.utils.think_strip import strip_think_tags
-            resp_text = strip_think_tags(resp_text)
-            if resp_text.startswith("```"):
-                resp_text = resp_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-            result = json_repair.loads(resp_text)
-            if isinstance(result, list):
-                return [r for r in result if isinstance(r, dict) and "query" in r]
-            return [{"query": query, "target": "answer"}]
-        except Exception as e:
-            logger.error(f"Query decomposition failed: {e}")
-            return [{"query": query, "target": "answer"}]
-
-    async def resolve_multihop(self, provider: LLMProvider, model: str, query: str) -> str:
-        """KG4: Resolve a multi-hop query by decomposing and iteratively looking up.
-
-        Returns:
-            Assembled context string with resolved facts.
-        """
-        sub_queries = await self.decompose_query(provider, model, query)
-        if len(sub_queries) <= 1:
-            # Simple query — just use entity context
-            return self.get_entity_context(query)
-
-        resolved_facts: list[str] = []
-        resolved_vars: dict[str, str] = {}
-
-        for step in sub_queries:
-            sub_q = step.get("query", "")
-            target = step.get("target", "")
-
-            # Replace resolved placeholders in the sub-query
-            for var, val in resolved_vars.items():
-                sub_q = sub_q.replace(var, val)
-
-            # Look up in entity context
-            context = self.get_entity_context(sub_q)
-            if not context:
-                context = self.get_1hop_context(sub_q)
-
-            if context:
-                resolved_facts.append(f"Step ({sub_q}): {context}")
-                # Try to extract the answer entity from context for next step
-                # Simple heuristic: take the first entity mentioned in context
-                for name in self._entities:
-                    if name.lower() in context.lower() and name.lower() not in sub_q.lower():
-                        resolved_vars[target] = name
-                        break
-
-        if resolved_facts:
-            return "## Multi-hop Knowledge Resolution\n" + "\n".join(resolved_facts)
-        return self.get_entity_context(query)
 
     # ── Legacy 1-hop Context (backward compat) ──────────────────────────
 

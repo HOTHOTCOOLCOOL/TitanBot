@@ -30,8 +30,8 @@ TitanBot started as a fork of nanobot and grew into a significantly enhanced AI 
 | Dimension | 🐣 Original nanobot | 🚀 TitanBot | Growth |
 |-----------|---------------------|-------------|--------|
 | **Core source files** | ~10 | **105** | ×10.5 |
-| **Test cases** | 0 | **1209+ passed** | 0 → 1209 |
-| **Built-in tools** | 3 | **19** | ×6 |
+| **Test cases** | 0 | **1271+ passed** | 0 → 1271 |
+| **Built-in tools** | 3 | **19** | ×6.3 |
 | **Channel adapters** | 2 | **9** | ×4.5 |
 | **Sub-packages** | 2 | **14** | ×7 |
 | **Memory layers** | 1 (single file) | **7-layer architecture** | ×7 |
@@ -756,13 +756,11 @@ Feel free to [open an issue](https://github.com/HOTHOTCOOLCOOL/nanobot/issues) o
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Phase 34 | ⏳ Next | KG Retrieval Enhancement (BubbleRAG-inspired: semantic anchor grouping, coverage penalty, schema relaxation) |
-| Phase 22C | ⏳ Planned | Multi-Modal & Channel Extension |
-| Phase 36 | 📋 Backlog | Execution Trace Archive for L3 Reflection (Meta-Harness inspired) |
-| Plugin Marketplace | 📋 Backlog | Community skill repository |
-| Cross-Platform | 📋 Backlog | macOS/Linux parity (decouple COM, cross-OS sandbox) |
+| Phase 36 | ⏳ Next | Cross-Platform & OS Sandbox (Bubblewrap) |
+| Phase 37 | 📋 Backlog | Execution Trace Archive (Meta-Harness) |
+| Phase 38 | 📋 Backlog | Coordinator Mode |
 
-> **Recently Completed**: Browser Automation (Phase 26B+C ✅), Weak Model Protection (Phase 30 ✅), Verification Layer L0→L1→L3 (Phase 31/32 ✅), Browser-RPA Degradation (Phase 33 ✅)
+> **Recently Completed**: Browser Automation (Phase 26B+C ✅), Weak Model Protection (Phase 30 ✅), Verification Layer L0→L1→L3 (Phase 31/32 ✅), Browser-RPA Degradation & Hardening (Phase 33 ✅)
 
 ### Contributors
 

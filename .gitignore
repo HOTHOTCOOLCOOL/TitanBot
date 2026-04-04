@@ -170,3 +170,11 @@ chrome/
 chrome-win64/
 chrome-mac/
 chrome-linux/
+
+# ===== Added during Workspace Cleanup =====
+session_test_out*.txt
+test_eval_output.txt
+lifecycle_log.txt
+test_out_new.txt
+# 拦截根目录非法的 test_ 脚本，但不影响 tests/ 目录
+/test_*.py

@@ -11,6 +11,7 @@ Requires:
 - Outlook application installed on Windows
 """
 
+import sys
 import os
 import tempfile
 from datetime import datetime
@@ -139,6 +140,13 @@ Note: Requires Outlook application to be running on Windows."""
             return await self._execute_impl(**kwargs)
 
     async def _execute_impl(self, **kwargs: Any) -> str:
+        # Phase 36: Cross-platform graceful degradation (ARCHITECTURE.md R39)
+        if sys.platform != "win32":
+            return (
+                "Error: The Outlook tool requires Windows with Microsoft Outlook "
+                "desktop application. This feature is not available on your OS."
+            )
+        
         action = kwargs.get("action", "find_emails")
         
         try:

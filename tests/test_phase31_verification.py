@@ -399,6 +399,66 @@ def test_l1_r09_allows_curl_without_url():
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# L1: Phase 35v2 — edit_file Blind Spot + Configurable Deny Patterns
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_r07_edit_file_sensitive_path():
+    """R07 (Phase 35v2): edit_file targeting sensitive path should be blocked."""
+    v = _make_verification()
+    tc = FakeToolCall(name="edit_file", arguments={"file_path": "C:\\Windows\\System32\\hosts", "content": "x"})
+    result = v.check_rules([tc])
+    assert result.passed is False
+    assert any("R07" in v for v in result.violations)
+
+
+def test_r07_configurable_deny_patterns():
+    """R07 (Phase 35v2): Configurable glob deny pattern should block matching paths."""
+    cfg = VerificationConfig(
+        l1_enabled=True,
+        path_deny_patterns=["*.env", "**/secrets/*"],
+    )
+    v = VerificationLayer(config=cfg)
+
+    # Should block write_file to .env
+    tc1 = FakeToolCall(name="write_file", arguments={"path": "/app/.env", "content": "SECRET=x"})
+    result1 = v.check_rules([tc1])
+    assert result1.passed is False
+    assert any("deny pattern" in v for v in result1.violations)
+
+    # Should block edit_file to secrets dir
+    tc2 = FakeToolCall(name="edit_file", arguments={"file_path": "/app/secrets/key.pem", "content": "x"})
+    result2 = v.check_rules([tc2])
+    assert result2.passed is False
+    assert any("deny pattern" in v for v in result2.violations)
+
+
+def test_r07_empty_deny_patterns_passthrough():
+    """R07 (Phase 35v2): Empty deny list should not affect normal operations."""
+    cfg = VerificationConfig(
+        l1_enabled=True,
+        path_deny_patterns=[],
+    )
+    v = VerificationLayer(config=cfg)
+    tc = FakeToolCall(name="write_file", arguments={"path": "/home/user/project/readme.md", "content": "hi"})
+    result = v.check_rules([tc])
+    r07_violations = [v for v in result.violations if "R07" in v]
+    assert len(r07_violations) == 0
+
+
+def test_r07_malformed_pattern_fail_open():
+    """R07 (Phase 35v2): Malformed deny patterns should fail-open (no false rejects)."""
+    cfg = VerificationConfig(
+        l1_enabled=True,
+        path_deny_patterns=["", "   ", "[invalid"],  # Bad patterns
+    )
+    v = VerificationLayer(config=cfg)
+    tc = FakeToolCall(name="write_file", arguments={"path": "/home/user/project/app.py", "content": "x"})
+    result = v.check_rules([tc])
+    r07_violations = [v for v in result.violations if "R07" in v]
+    assert len(r07_violations) == 0
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # L3: Post-reflection & Knowledge Extraction
 # ═══════════════════════════════════════════════════════════════════════
 

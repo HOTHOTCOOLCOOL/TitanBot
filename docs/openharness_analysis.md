@@ -33,3 +33,24 @@
 如果我们要提取上述的高回报特性，可以考虑加入后续的开发阶段：
 1. **安全与审查能力扩展**：借鉴 OpenHarness 的 `checker.py`，在执行敏感 Tool 前置基于泛型的路径验证，进一步加固 Phase 33 的安全底座。
 2. **抽象 Hooks 机制**：重构我们在 `loop.py` 中的执行前拦截逻辑，剥离为轻量级的 `PreToolUse` 事件流，为之后零成本接入各种审查策略铺平道路。
+
+---
+
+## 4. Harness 三模型审议结论 (2026-04-04)
+
+> 经 Planner (Gemini) → Critic (Claude) → Planner (Gemini) 三阶段碰撞审议。
+
+### 被否决的提案
+
+| 原 ID | 提案 | 否决理由 |
+|--------|------|----------|
+| P35v2-1 | 生命周期 Hook 机制 (Pub/Sub 事件总线) | `_L1_RULES` 列表本身即为顺序执行的 Hook 管线，为唯一一个新消费者搭建完整的 Pub/Sub 总线属于过度工程。新增 `hooks/` + `security/` 两个子包会导致安全逻辑碎片化（当前统一在 `verification.py`）。 |
+| P35v2-2 | LLM 双重确认 (LLMAuditHook) | 与 Phase 32 L2 移除决策直接冲突。核心缺陷完全一致：截断上下文 + 二元判断 = 高误拒率 → 雪崩效应。复活条件（本地快速小模型 < 100ms + warn-only + 黑名单制）仍未成熟。详见 `docs/L2_VERIFICATION_RETHINK.md` L272。 |
+
+### 保留并精简的提案
+
+| ID | 提案 | 最终形态 |
+|----|------|----------|
+| P35v2-3 | 可配置路径沙盒 | 合并入 L1 `_check_rule_sensitive_path()`，新增 `VerificationConfig.path_deny_patterns` 字段，使用 `fnmatch` Glob 匹配。Fail-open 设计。~30 行代码，零新文件。 |
+| P35v2-5 | edit_file 路径盲区 | 补全 R07 规则对 `edit_file` 工具的 `file_path` 参数检查。与 P35v2-3 合并实施。 |
+

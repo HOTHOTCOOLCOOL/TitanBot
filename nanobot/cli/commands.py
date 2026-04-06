@@ -349,6 +349,29 @@ def gateway(
     warnings.filterwarnings("ignore", message="urllib3.*doesn't match a supported version")
     
     config = load_config()
+    
+    # Interactive Onboarding Wizard if no API key is set for the default model
+    p_name = config.agents.defaults.model.split("/")[0] if "/" in config.agents.defaults.model else "openai"
+    p_config = getattr(config.providers, p_name, None)
+    if not p_config or not getattr(p_config, "api_key", ""):
+        console.print(f"\n[bold yellow]✨ Welcome to Nanobot Command Center! ✨[/bold yellow]")
+        console.print("[dim]It looks like you're starting this for the first time (no API key detected).[/dim]\n")
+        key = typer.prompt(f"[1/2] Please paste your {p_name.capitalize()} API Key to continue (or press Enter to skip)", default="").strip()
+        if key:
+            if p_config:
+                p_config.api_key = key
+            else:
+                from nanobot.config.schema import ProviderConfig
+                setattr(config.providers, p_name, ProviderConfig(api_key=key))
+            
+            model = typer.prompt("[2/2] Which model would you like to use?", default=config.agents.defaults.model).strip()
+            if model:
+                config.agents.defaults.model = model
+            
+            from nanobot.config.loader import save_config
+            save_config(config)
+            console.print("\n[green]✓ Setup complete! Launching Gateway and services...[/green]\n")
+
     bus = MessageBus()
     provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)

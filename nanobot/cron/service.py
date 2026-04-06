@@ -106,6 +106,13 @@ class CronService:
                 self._store = CronStore(jobs=jobs)
             except Exception as e:
                 logger.warning(f"Failed to load cron store: {e}")
+                try:
+                    import shutil
+                    backup_path = self.store_path.with_name(f"{self.store_path.name}.corrupted.{int(time.time())}.bak")
+                    shutil.copy2(self.store_path, backup_path)
+                    logger.info(f"Cron: Backed up corrupted store to {backup_path}")
+                except Exception as be:
+                    logger.error(f"Cron: Failed to backup corrupted store: {be}")
                 self._store = CronStore()
         else:
             self._store = CronStore()
@@ -163,6 +170,15 @@ class CronService:
                 json.dump(data, f, indent=2)
                 f.flush()
                 os.fsync(f.fileno())
+            
+            # Keep a rolling .bak of the last good state
+            if self.store_path.exists():
+                try:
+                    import shutil
+                    shutil.copy2(self.store_path, str(self.store_path) + ".bak")
+                except Exception:
+                    pass
+                    
             safe_replace(tmp, str(self.store_path))
         except Exception:
             try:

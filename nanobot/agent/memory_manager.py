@@ -30,39 +30,44 @@ class MemoryManager:
         # L4/C1: Prevents concurrent consolidation tasks from corrupting session state / MEMORY.md
         self._consolidation_lock = asyncio.Lock()
 
-    async def consolidate_memory(self, session: Session, archive_all: bool = False) -> None:
-        """Consolidate old messages into MEMORY.md + HISTORY.md.
+    async def consolidate_memory_from_snapshot(self, session_snapshot: dict, session_manager: "SessionManager | None" = None, archive_all: bool = False) -> None:
+        """Consolidate old messages into MEMORY.md + HISTORY.md using a snapshot.
 
         Args:
+            session_snapshot: Immutable snapshot of the session.
+            session_manager: Used to commit changes back to the real session.
             archive_all: If True, clear all messages and reset session (for /new command).
-                       If False, only write to files without modifying session.
         """
         async with self._consolidation_lock:  # L4/C1: serialize consolidation
-            await self._consolidate_memory_inner(session, archive_all)
+            await self._consolidate_memory_inner_from_snapshot(session_snapshot, session_manager, archive_all)
 
-    async def _consolidate_memory_inner(self, session: Session, archive_all: bool = False) -> None:
+    async def _consolidate_memory_inner_from_snapshot(self, session_snapshot: dict, session_manager: "SessionManager | None", archive_all: bool = False) -> None:
         """Inner consolidation implementation (called under lock)."""
         memory = MemoryStore(self.workspace)
+        
+        session_key = session_snapshot["key"]
+        messages = session_snapshot["messages"]
+        last_consolidated = session_snapshot["last_consolidated"]
 
         if archive_all:
-            old_messages = session.messages
+            old_messages = messages
             keep_count = 0
-            logger.info(f"Memory consolidation (archive_all): {len(session.messages)} total messages archived")
+            logger.info(f"Memory consolidation (archive_all): {len(messages)} total messages archived")
         else:
             keep_count = self.memory_window // 2
-            if len(session.messages) <= keep_count:
-                logger.debug(f"Session {session.key}: No consolidation needed (messages={len(session.messages)}, keep={keep_count})")
+            if len(messages) <= keep_count:
+                logger.debug(f"Session {session_key}: No consolidation needed (messages={len(messages)}, keep={keep_count})")
                 return
 
-            messages_to_process = len(session.messages) - session.last_consolidated
+            messages_to_process = len(messages) - last_consolidated
             if messages_to_process <= 0:
-                logger.debug(f"Session {session.key}: No new messages to consolidate (last_consolidated={session.last_consolidated}, total={len(session.messages)})")
+                logger.debug(f"Session {session_key}: No new messages to consolidate (last_consolidated={last_consolidated}, total={len(messages)})")
                 return
 
-            old_messages = session.messages[session.last_consolidated:-keep_count]
+            old_messages = messages[last_consolidated:-keep_count]
             if not old_messages:
                 return
-            logger.info(f"Memory consolidation started: {len(session.messages)} total, {len(old_messages)} new to consolidate, {keep_count} keep")
+            logger.info(f"Memory consolidation started: {len(messages)} total, {len(old_messages)} new to consolidate, {keep_count} keep")
 
         lines = []
         for m in old_messages:
@@ -125,7 +130,7 @@ Respond with ONLY valid JSON, no markdown fences."""
 
                 # Append to evicted context buffer for Virtual Paging (keep last ~2000 chars)
                 try:
-                    current_evicted = session.evicted_context or ""
+                    current_evicted = session_snapshot.get("evicted_context") or ""
                     now_str = time.strftime("%Y-%m-%d %H:%M")
                     new_evicted = f"[{now_str}] {entry}\n"
                     combined = (current_evicted + new_evicted).strip()
@@ -133,7 +138,7 @@ Respond with ONLY valid JSON, no markdown fences."""
                         combined = combined[-2000:]
                         if "\n" in combined:
                             combined = combined.split("\n", 1)[1]
-                    session.evicted_context = combined
+                    session_snapshot["evicted_context"] = combined
                 except Exception as e:
                     logger.warning(f"Failed to update evicted context: {e}")
 
@@ -158,10 +163,25 @@ Respond with ONLY valid JSON, no markdown fences."""
                         )
 
             if archive_all:
-                session.last_consolidated = 0
+                session_snapshot["last_consolidated"] = 0
             else:
-                session.last_consolidated = len(session.messages) - keep_count
-            logger.info(f"Memory consolidation done: {len(session.messages)} messages, last_consolidated={session.last_consolidated}")
+                session_snapshot["last_consolidated"] = len(messages) - keep_count
+            logger.info(f"Memory consolidation done: {len(messages)} messages, last_consolidated={session_snapshot['last_consolidated']}")
+            
+            # Phase 40A Commit changes back to real session
+            if session_manager:
+                real_session = session_manager.get_or_create(session_key)
+                # Only apply if the real session hasn't been completely cleared while we were working
+                if len(real_session.messages) >= len(messages):
+                    real_session.evicted_context = session_snapshot["evicted_context"]
+                    # Calculate delta for last_consolidated, allowing for concurrent appends
+                    delta_consolidated = session_snapshot["last_consolidated"] - last_consolidated
+                    real_session.last_consolidated += delta_consolidated
+                    real_session.mark_metadata_dirty()
+                    session_manager.save(real_session)
+                else:
+                    logger.debug(f"Session {session_key} was cleared during consolidation, skipping back-commit")
+
             
             # Fire an asynchronous distillation to extract L1 core preferences
             # Only distill if the L2 memory actually changed 

@@ -21,6 +21,8 @@ from nanobot.config.schema import Config
 # factory: optional callable(config_section, bus, global_config) -> BaseChannel
 #   If None, the default factory calls ChannelClass(config_section, bus).
 
+# ── Channel factories (for channels that need extra constructor args) ──
+# _telegram_factory is kept here so Telegram can be re-enabled without code changes.
 def _telegram_factory(cfg: Any, bus: MessageBus, config: Config) -> BaseChannel:
     """Telegram needs an extra groq_api_key kwarg for voice transcription."""
     from nanobot.channels.telegram import TelegramChannel
@@ -28,15 +30,20 @@ def _telegram_factory(cfg: Any, bus: MessageBus, config: Config) -> BaseChannel:
 
 
 _CHANNEL_REGISTRY: list[tuple[str, str, str, Callable | None]] = [
-    ("telegram",  "nanobot.channels.telegram",  "TelegramChannel",  _telegram_factory),
-    ("whatsapp",  "nanobot.channels.whatsapp",  "WhatsAppChannel",  None),
-    ("discord",   "nanobot.channels.discord",   "DiscordChannel",   None),
-    ("feishu",    "nanobot.channels.feishu",    "FeishuChannel",    None),
-    ("mochat",    "nanobot.channels.mochat",    "MochatChannel",    None),
-    ("dingtalk",  "nanobot.channels.dingtalk",  "DingTalkChannel",  None),
-    ("email",     "nanobot.channels.email",     "EmailChannel",     None),
-    ("slack",     "nanobot.channels.slack",     "SlackChannel",     None),
-    ("qq",        "nanobot.channels.qq",        "QQChannel",        None),
+    # ── China-first active channels ──────────────────────────────────────────────
+    ("wecom",    "nanobot.channels.wecom",    "WecomChannel",    None),
+    ("weixin",   "nanobot.channels.weixin",   "WeixinChannel",   None),
+    ("feishu",   "nanobot.channels.feishu",   "FeishuChannel",   None),
+    ("dingtalk", "nanobot.channels.dingtalk", "DingTalkChannel", None),
+    ("qq",       "nanobot.channels.qq",       "QQChannel",       None),
+    ("whatsapp", "nanobot.channels.whatsapp", "WhatsAppChannel", None),
+    ("email",    "nanobot.channels.email",    "EmailChannel",    None),
+    # ── Legacy (low China adoption — files intact, not auto-started) ──
+    # To re-enable: add entry here AND set enabled: true in config.json
+    # ("telegram", "nanobot.channels.telegram", "TelegramChannel", _telegram_factory),
+    # ("discord",  "nanobot.channels.discord",  "DiscordChannel",  None),
+    # ("slack",    "nanobot.channels.slack",    "SlackChannel",    None),
+    # ("mochat",   "nanobot.channels.mochat",   "MochatChannel",   None),
 ]
 
 

@@ -1,6 +1,6 @@
 # Test Tracker
 
-> **最后更新**: 2026-04-03 (清理文档与同步状态)
+> **最后更新**: 2026-04-06 (完成 Phase 40 手动与自动化测试)
 
 ## 当前基线
 
@@ -22,6 +22,7 @@
 | Phase 32 | L2 移除, L1 扩展至 R09, Smart HITL 审批框架 (ApprovalStore 通配符匹配) |
 | Phase 33 | Browser-RPA 降级链路优化 (`ensure_visible` 生命周期, 坐标漂移修复, `[FALLBACK_RPA]` 信号协议, CDP 代码清理) |
 | Phase 34 | KG 检索增强 (Semantic Anchor Grouping, Coverage Penalty, Schema Relaxation) |
+| Phase 40 | 稳定性基石与可靠性增强 (工具结果截断, Session快照隔离, 动态Token裁剪, 轻量断点续传/Crash Recovery, 滚动.bak备份) |
 
 ## 缺陷封存 (Phase 33 Retro)
 

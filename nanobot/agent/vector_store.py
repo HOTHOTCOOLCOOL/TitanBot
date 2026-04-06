@@ -38,13 +38,21 @@ class _SentenceTransformerEmbedding(EmbeddingFunction):
     Model must be pre-downloaded to local path (local_files_only=True).
     """
 
-    # Default model path — local copy of BAAI/bge-m3
-    _DEFAULT_MODEL = r"..\nanochat\models\sentence-transformers\bge-m3"
+    # Phase 40 Portable: Dynamically resolve the local model path from codebase origin
+    _BASE_DIR = Path(__file__).resolve().parent.parent.parent
+    _BUILTIN_LOCAL_MODEL = str(_BASE_DIR / "models" / "sentence-transformers" / "bge-m3")
+
     _SHARED_MODEL = None
     _MODEL_DIMENSION: int | None = None  # Set after model load
 
     def __init__(self, model_path: str | None = None) -> None:
-        self._model_path = model_path or self._DEFAULT_MODEL
+        if model_path:
+            self._model_path = model_path
+        else:
+            if Path(self._BUILTIN_LOCAL_MODEL).exists():
+                self._model_path = self._BUILTIN_LOCAL_MODEL
+            else:
+                self._model_path = "BAAI/bge-m3"
 
     @property
     def dimension(self) -> int | None:
@@ -61,7 +69,7 @@ class _SentenceTransformerEmbedding(EmbeddingFunction):
         os.environ["HF_HUB_OFFLINE"] = "1"  # Force offline mode for HuggingFace hub
         
         from sentence_transformers import SentenceTransformer, models
-        logger.info(f"Loading embedding model: {self._model_path} (local_files_only=True) …")
+        logger.info(f"Loading embedding model: {self._model_path} ...")
         
         try:
             # We explicitly instantiate the two main modules for a standard semantic search model.
@@ -78,8 +86,7 @@ class _SentenceTransformerEmbedding(EmbeddingFunction):
             self.__class__._SHARED_MODEL = SentenceTransformer(modules=[word_embedding_model, pooling_model])
             logger.info("Embedding model loaded successfully using assembled components.")
         except Exception as e:
-            logger.warning(f"Failed to load using assembled components, falling back to standard SentenceTransformer: {e}")
-            self.__class__._SHARED_MODEL = SentenceTransformer(self._model_path, local_files_only=True)
+            self.__class__._SHARED_MODEL = SentenceTransformer(self._model_path)
 
         # Cache embedding dimension for collection migration checks
         try:

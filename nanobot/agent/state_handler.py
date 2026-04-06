@@ -4,6 +4,7 @@ __all__ = ["StateHandler"]
 
 import json
 import asyncio
+import time
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -20,10 +21,17 @@ class StateHandler:
         self.agent = agent
 
     async def handle_pending_knowledge(self, session: Session, msg: InboundMessage, user_input: str) -> OutboundMessage | None:
+        pending = session.pending_knowledge
+        if not pending:
+            return None
+        if hasattr(msg, "timestamp") and pending.get("timestamp") and msg.timestamp.timestamp() < pending.get("timestamp", 0.0):
+            logger.info(f"Session {session.key}: Ignoring stale message for pending knowledge (arrived before prompt)")
+            return None
+
         kw = self.agent.knowledge_workflow
         if kw.is_use_command(user_input):
             logger.info(f"Session {session.key}: User chose to use knowledge base")
-            match = session.pending_knowledge
+            match = pending
             session.pending_knowledge = None
             session.mark_metadata_dirty()
 
@@ -43,12 +51,12 @@ class StateHandler:
             
             history = session.get_history(max_messages=10)
             few_shot = await kw.adapt_knowledge(
-                match=session.pending_knowledge, 
+                match=pending, 
                 current_request=msg.content, 
                 history=history
             )
             
-            extracted_key = session.pending_knowledge.get("_extracted_key")
+            extracted_key = pending.get("_extracted_key")
             session.pending_knowledge = None
             session.mark_metadata_dirty()
 
@@ -69,10 +77,16 @@ class StateHandler:
         return None
 
     async def handle_pending_save(self, session: Session, msg: InboundMessage, user_input: str) -> OutboundMessage | None:
+        pending = session.pending_save
+        if not pending:
+            return None
+        if hasattr(msg, "timestamp") and pending.get("timestamp") and msg.timestamp.timestamp() < pending.get("timestamp", 0.0):
+            logger.info(f"Session {session.key}: Ignoring stale message for pending save (arrived before prompt)")
+            return None
+
         kw = self.agent.knowledge_workflow
         if kw.is_save_confirm(user_input):
             logger.info(f"Session {session.key}: User confirmed save to knowledge base")
-            pending = session.pending_save
             session.pending_save = None
             session.mark_metadata_dirty()
 
@@ -90,6 +104,7 @@ class StateHandler:
                     session.pending_upgrade = {
                         "key": save_key,
                         "match": match,
+                        "timestamp": time.time(),
                     }
                     session.mark_metadata_dirty()
                     self.agent.sessions.save(session)
@@ -110,10 +125,16 @@ class StateHandler:
         return None
 
     async def handle_pending_upgrade(self, session: Session, msg: InboundMessage, user_input: str) -> OutboundMessage | None:
+        pending = session.pending_upgrade
+        if not pending:
+            return None
+        if hasattr(msg, "timestamp") and pending.get("timestamp") and msg.timestamp.timestamp() < pending.get("timestamp", 0.0):
+            logger.info(f"Session {session.key}: Ignoring stale message for pending upgrade (arrived before prompt)")
+            return None
+
         kw = self.agent.knowledge_workflow
         if kw.is_upgrade_command(user_input):
             logger.info(f"Session {session.key}: User confirmed skill upgrade")
-            pending = session.pending_upgrade
             session.pending_upgrade = None
             session.mark_metadata_dirty()
             self.agent.sessions.save(session)
@@ -152,6 +173,9 @@ class StateHandler:
         pending = session.pending_approval_task
         if not pending:
             return None
+        if hasattr(msg, "timestamp") and pending.get("timestamp") and msg.timestamp.timestamp() < pending.get("timestamp", 0.0):
+            logger.info(f"Session {session.key}: Ignoring stale message for pending approval (arrived before prompt)")
+            return None
             
         action = user_input.strip().lower()
         tool_name = pending.get("tool")
@@ -160,12 +184,16 @@ class StateHandler:
         
         session.pending_approval_task = None
         session.mark_metadata_dirty()
+        self.agent.sessions.save(session)
         
         approved = False
-        if action in ["1", "approve", "ok", "yes", "y", "allow"]:
+        # Check if the user is explicitly rejecting
+        explicit_reject = action in ["0", "3", "reject", "no", "n", "deny", "不", "拒绝"] or action.startswith("reject ")
+        
+        if action in ["1", "approve", "ok", "yes", "y", "allow", "同意", "是"] or action.startswith("approve ") or action.startswith("1 "):
             approved = True
             logger.info(f"Session {session.key}: User approved High-Risk tool {tool_name}")
-        elif action in ["2", "always", "a"]:
+        elif action in ["2", "always", "a", "总是"] or action.startswith("always ") or action.startswith("2 "):
             approved = True
             logger.info(f"Session {session.key}: User always-approved tool {tool_name}")
             auth_store = self.agent._get_approval_store()
@@ -173,18 +201,60 @@ class StateHandler:
                 # Tool-level rule: approve ALL actions for this tool (no action filter, no context)
                 auth_store.add_approval(tool_name, "")
         else:
-            logger.info(f"Session {session.key}: User rejected tool {tool_name}")
+            logger.info(f"Session {session.key}: User rejected or interrupted tool {tool_name}")
 
         self.agent._set_tool_context(msg.channel, msg.chat_id)
 
         if approved:
             try:
+                await self.agent.bus.publish_outbound(OutboundMessage(
+                    channel=msg.channel, chat_id=msg.chat_id,
+                    content=f"⚙️ 正在执行 `{tool_name}`，可能需要较长时间，请耐心稍候..."
+                ))
+            except Exception as e:
+                logger.warning(f"Failed to publish execution feedback: {e}")
+                
+            # Phase 40B-1: Write checkpoint WAL before tool execution (HITL branch)
+            _ckpt_path = None
+            _ckpt_enabled = getattr(getattr(self.agent._get_config().agents, 'reliability', None), 'checkpoint_enabled', True)
+            if _ckpt_enabled and msg.channel and msg.chat_id:
+                _ckpt_session_key = self.agent.sessions.resolve_key(f"{msg.channel}:{msg.chat_id}")
+                _ckpt_tool_infos = [{"name": tool_name, "arguments": arguments}]
+                _ckpt_path = self.agent.sessions.write_checkpoint(_ckpt_session_key, _ckpt_tool_infos)
+                
+            try:
                 res = await self.agent.tools.execute(tool_name, arguments)
-                result_str = str(res)
+                from nanobot.agent.loop import _normalize_tool_result
+                result_str = _normalize_tool_result(res, tool_name)
+                # Phase 40B-1: Clear checkpoint after successful execution (HITL branch)
+                if _ckpt_path:
+                    self.agent.sessions.clear_checkpoint(_ckpt_path)
             except Exception as e:
                 result_str = f"Error executing tool: {e}"
+                if _ckpt_path:
+                    self.agent.sessions.clear_checkpoint(_ckpt_path)
         else:
             result_str = "Error: Execution blocked by user rejection."
+
+        # Remove the previous Action Required message from session history to maintain clean dialog
+        try:
+            for i in range(len(session.messages)-1, -1, -1):
+                msg_dict = session.messages[i]
+                if msg_dict.get("role") == "assistant" and "⚠️ **Action Required!**" in str(msg_dict.get("content", "")):
+                    session.messages.pop(i)
+                    break
+        except Exception as e:
+            logger.warning(f"Session {session.key}: Failed to cleanup UI message, ignoring: {e}")
+
+        # Reconstruct the missing assistant message before the tool message to satisfy strict API schema
+        session.add_message("assistant", content=None, tool_calls=[{
+            "id": tool_id,
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "arguments": json.dumps(arguments, ensure_ascii=False)
+            }
+        }])
 
         session.add_message("tool", result_str, tool_call_id=tool_id, name=tool_name)
         
@@ -197,15 +267,16 @@ class StateHandler:
                 break
         if approved:
             resume_msg = (
-                f"[System: HITL confirmation completed. Tool '{tool_name}' returned: {result_str[:200]}]\n"
-                f"Original user request: {original_request[:500]}\n"
-                f"Continue executing the original task."
+                f"[System: The user has approved the High-Risk tool execution.]\n"
+                f"The tool has been executed. Check the tool result above and continue executing the original task:\n"
+                f"{original_request[:500]}"
             )
         else:
             resume_msg = (
-                f"[System: HITL confirmation completed. Tool '{tool_name}' was REJECTED by the user.]\n"
+                f"[System: HITL confirmation completed. Tool '{tool_name}' was REJECTED/INTERRUPTED by the user.]\n"
                 f"Original user request: {original_request[:500]}\n"
-                f"DO NOT retry the exact same or similar tool call. Please ask the user for clarification or alternative approaches."
+                f"User input during interruption: {user_input}\n"
+                f"DO NOT retry the exact same or similar tool call. Please address the user's interruption input if it contains a new task or clarification."
             )
         initial_messages = self.agent.context.build_messages(
             history=history,
@@ -228,6 +299,8 @@ class StateHandler:
              session.last_tool_calls = tc_args
         self.agent.sessions.save(session)
         
+        # We must return OutboundMessage so the dashboard receives the final output.
+        # Removing Phase 32 logic which assumed all UIs subscribed to streaming endpoints.
         return OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id,
             content=final_content

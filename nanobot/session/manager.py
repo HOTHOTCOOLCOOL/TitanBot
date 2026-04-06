@@ -8,6 +8,7 @@ __all__ = ["Session", "SessionManager"]
 import json
 import os
 import tempfile
+import asyncio
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -99,6 +100,18 @@ class Session:
         """Phase 22D: Explicitly mark metadata as needing a full rewrite on next save."""
         self._metadata_dirty = True
 
+    def to_snapshot(self) -> dict:
+        """返回用于后台任务的不可变快照（深拷贝字典）。"""
+        import copy
+        return {
+            "key": self.key,
+            "messages": copy.deepcopy(self.messages),
+            "last_consolidated": self.last_consolidated,
+            "evicted_context": self.evicted_context,
+            "message_count_since_consolidation": self.message_count_since_consolidation,
+            "metadata": copy.deepcopy(self.metadata),
+        }
+
 
 class SessionManager:
     """
@@ -115,8 +128,16 @@ class SessionManager:
         self.sessions_dir = ensure_dir(self.workspace / "sessions")
         self.legacy_sessions_dir = Path.home() / ".nanobot" / "sessions"
         self._cache: dict[str, Session] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
         self.identity_mapping: dict[str, str] = {}
         self.pending_approvals: dict[str, str] = {}  # short_id -> session_key
+    
+    def get_session_lock(self, key: str) -> asyncio.Lock:
+        """获取 session 级别的排他锁。"""
+        resolved = self.resolve_key(key)
+        if resolved not in self._locks:
+            self._locks[resolved] = asyncio.Lock()
+        return self._locks[resolved]
     
     def set_identity_mapping(self, mapping: dict[str, str]) -> None:
         """Set the master identities mapping to resolve raw keys to master keys."""
@@ -380,3 +401,98 @@ class SessionManager:
                 continue
         
         return sorted(sessions, key=lambda x: x.get("updated_at", ""), reverse=True)
+
+    # ── Phase 40B-1: Checkpoint Management ──
+
+    def get_checkpoint_dir(self) -> Path:
+        """Return the checkpoint directory (lazily created)."""
+        ckpt_dir = self.sessions_dir / ".checkpoints"
+        ckpt_dir.mkdir(exist_ok=True)
+        return ckpt_dir
+
+    def write_checkpoint(self, session_key: str, tool_calls: list[dict]) -> Path | None:
+        """Write a checkpoint file before tool execution.
+
+        Returns the checkpoint path on success, or None on failure.
+        The checkpoint is a lightweight JSON file recording:
+        - session_key: which session was executing
+        - tools: list of tool names about to execute
+        - args_preview: truncated args for each tool (debug context)
+        - timestamp: ISO timestamp of checkpoint creation
+
+        Designed to be fast (<1ms) — minimal JSON serialization.
+        """
+        try:
+            import json
+            from datetime import datetime
+
+            ckpt_dir = self.get_checkpoint_dir()
+            safe_key = safe_filename(session_key.replace(":", "_"))
+            ckpt_path = ckpt_dir / f"{safe_key}.ckpt.json"
+
+            # Build minimal checkpoint payload
+            tools_info = []
+            for tc in tool_calls:
+                name = tc.get("name") or tc.get("tool", "?")
+                args = tc.get("arguments") or tc.get("args", {})
+                args_preview = json.dumps(args, ensure_ascii=False)[:200]
+                tools_info.append({"name": name, "args_preview": args_preview})
+
+            payload = {
+                "session_key": session_key,
+                "tools": tools_info,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            # Atomic write via tempfile + replace
+            fd, tmp = tempfile.mkstemp(dir=str(ckpt_dir), suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding=_ENCODING) as f:
+                    json.dump(payload, f, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                safe_replace(tmp, str(ckpt_path))
+            except Exception:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+
+            return ckpt_path
+        except Exception as e:
+            logger.warning(f"Phase 40B: Failed to write checkpoint: {e}")
+            return None
+
+    def clear_checkpoint(self, path: Path | None) -> None:
+        """Remove a checkpoint file after successful tool execution."""
+        if path and path.exists():
+            try:
+                path.unlink()
+            except OSError as e:
+                logger.debug(f"Phase 40B: Failed to clear checkpoint {path.name}: {e}")
+
+    def scan_stale_checkpoints(self) -> list[dict]:
+        """Scan for stale checkpoint files left by a previous crash.
+
+        Returns a list of checkpoint payloads (dicts) found.
+        Each stale checkpoint file is deleted after reading.
+        """
+        ckpt_dir = self.get_checkpoint_dir()
+        stale = []
+        for ckpt_file in ckpt_dir.glob("*.ckpt.json"):
+            try:
+                import json
+                payload = json.loads(ckpt_file.read_text(encoding=_ENCODING))
+                stale.append(payload)
+                ckpt_file.unlink()
+                logger.info(f"Phase 40B: Recovered stale checkpoint for session '{payload.get('session_key', '?')}'")
+            except Exception as e:
+                logger.warning(f"Phase 40B: Failed to read stale checkpoint {ckpt_file.name}: {e}")
+                # Try to clean up corrupted checkpoint
+                try:
+                    ckpt_file.unlink()
+                except OSError:
+                    pass
+        return stale
+

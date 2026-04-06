@@ -163,18 +163,60 @@ class QQConfig(Base):
     allow_from: list[str] = Field(default_factory=list)  # Allowed user openids (empty = public access)
 
 
-class ChannelsConfig(Base):
-    """Configuration for chat channels."""
+class WecomConfig(Base):
+    """WeCom (Enterprise WeChat / 企业微信) AI Bot channel configuration."""
 
+    enabled: bool = False
+    bot_id: str = ""      # Bot ID from WeCom AI Bot platform
+    secret: str = ""      # App Secret
+    allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs (empty = all)
+    welcome_message: str = ""
+
+
+class WeixinConfig(Base):
+    """Personal WeChat (微信) channel configuration via HTTP long-poll."""
+
+    enabled: bool = False
+    allow_from: list[str] = Field(default_factory=list)  # Allowed WeChat user IDs
+    base_url: str = "https://ilinkai.weixin.qq.com"
+    cdn_base_url: str = "https://novac2c.cdn.weixin.qq.com/c2c"
+    route_tag: str | int | None = None
+    token: str = ""        # Bot token (obtained via QR code login or set manually)
+    state_dir: str = ""    # State persistence dir (default: workspace/weixin/)
+    poll_timeout: int = 35  # Long-poll timeout in seconds
+
+
+class ChannelsConfig(Base):
+    """Configuration for chat channels.
+
+    Active channels (China-first set):
+        wecom   — 企业微信 (WeCom Enterprise WeChat) via WebSocket SDK
+        weixin  — 个人微信 (Personal WeChat) via HTTP long-poll
+        feishu  — 飞书/Lark
+        dingtalk — 钉钉
+        qq      — QQ 频道机器人
+        whatsapp — WhatsApp (Bridge)
+        email   — IMAP/SMTP
+
+    Removed (low China adoption):
+        discord, slack, telegram, mochat
+        (files kept on disk for potential future re-enable via config)
+    """
+
+    # ── Active channels ───────────────────────────────────────────────
+    wecom: WecomConfig = Field(default_factory=WecomConfig)
+    weixin: WeixinConfig = Field(default_factory=WeixinConfig)
+    feishu: FeishuConfig = Field(default_factory=FeishuConfig)
+    dingtalk: DingTalkConfig = Field(default_factory=DingTalkConfig)
+    qq: QQConfig = Field(default_factory=QQConfig)
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
+    email: EmailConfig = Field(default_factory=EmailConfig)
+
+    # ── Legacy / inactive (kept for config backward compat) ───────────
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     discord: DiscordConfig = Field(default_factory=DiscordConfig)
-    feishu: FeishuConfig = Field(default_factory=FeishuConfig)
-    mochat: MochatConfig = Field(default_factory=MochatConfig)
-    dingtalk: DingTalkConfig = Field(default_factory=DingTalkConfig)
-    email: EmailConfig = Field(default_factory=EmailConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
-    qq: QQConfig = Field(default_factory=QQConfig)
+    mochat: MochatConfig = Field(default_factory=MochatConfig)
 
 
 class AgentDefaults(Base):
@@ -291,10 +333,26 @@ class VerificationConfig(Base):
     trace_archive_enabled: bool = True
 
 
+class ContextConfig(Base):
+    """Context and truncation configuration (Phase 40A)."""
+
+    max_tool_result_chars: int = 16_000
+    context_window_tokens: int | None = None  # None = auto-infer
+    snip_safety_buffer: int = 1024
+
+
+class ReliabilityConfig(Base):
+    """Phase 40B: Reliability enhancement configuration."""
+
+    checkpoint_enabled: bool = True       # Write checkpoint before tool execution for crash recovery
+    memory_backup_count: int = 5          # Max rolling MEMORY.md .bak files (0 = disabled)
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    context: ContextConfig = Field(default_factory=ContextConfig)
     workflow_models: dict[str, str] = Field(default_factory=dict)  # Phase 29: Per-Workflow Model Routing (e.g. {"key_extraction": "gpt-4o-mini"})
     vlm: VLMConfig = Field(default_factory=VLMConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
@@ -304,6 +362,7 @@ class AgentsConfig(Base):
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     verification: VerificationConfig = Field(default_factory=VerificationConfig)
+    reliability: ReliabilityConfig = Field(default_factory=ReliabilityConfig)
 
 
 class ProviderConfig(Base):

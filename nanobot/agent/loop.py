@@ -63,6 +63,26 @@ _FAIL_INDICATORS = [
     "执行失败", "操作失败", "执行出错", "运行失败", "获取失败",
 ]
 
+# ── Phase 40A-1: Tool Result Truncation Constants ──
+_MAX_TOOL_RESULT_CHARS: int = 16_000   # 硬上限：约 8000 token
+_TOOL_RESULT_HEAD_CHARS: int = 8_000   # 截断时保留头部字符数
+
+def _normalize_tool_result(result: Any, tool_name: str, max_chars: int = 16_000) -> str:
+    """强制截断超长工具结果，保留头尾以保证信息完整性。"""
+    if isinstance(result, BaseException):
+        return f"Error: {result}"
+    text = str(result) if result is not None else "(empty)"
+    if len(text) <= max_chars:
+        return text
+    head_chars = max_chars // 2
+    head = text[:head_chars]
+    tail = text[-(max_chars - head_chars):] 
+    return (
+        f"{head}\n\n"
+        f"... [TRUNCATED: {len(text)} chars → {max_chars} chars limit] ...\n\n"
+        f"... (last segment) {tail}"
+    )
+
 
 # D3: Maximum characters to inject into system prompt from RAG/KG/reflections/experience/few-shot
 _INJECTION_BUDGET = 8000
@@ -722,7 +742,8 @@ class AgentLoop:
                                             "tool": tc.name,
                                             "arguments": tc.arguments,
                                             "id": tc.id,
-                                            "short_id": short_id
+                                            "short_id": short_id,
+                                            "timestamp": time.time(),
                                         }
                                         self.sessions.save(session)
                                         self.sessions.register_approval(short_id, session.key)
@@ -756,6 +777,17 @@ class AgentLoop:
                 if hitl_suspended:
                     break
 
+                # Phase 40B-1: Write checkpoint WAL before tool execution
+                _ckpt_path = None
+                _ckpt_enabled = getattr(getattr(self._get_config().agents, 'reliability', None), 'checkpoint_enabled', True)
+                if _ckpt_enabled and channel and chat_id:
+                    _ckpt_session_key = self.sessions.resolve_key(f"{channel}:{chat_id}")
+                    _ckpt_tool_infos = [
+                        {"name": tc.name, "arguments": tc.arguments}
+                        for tc in response.tool_calls
+                    ]
+                    _ckpt_path = self.sessions.write_checkpoint(_ckpt_session_key, _ckpt_tool_infos)
+
                 # Execute tool calls concurrently via asyncio.gather
                 async def _exec_tool(tc):
                     _start = time.monotonic()
@@ -779,6 +811,9 @@ class AgentLoop:
                     *[_exec_tool(tc) for tc in response.tool_calls],
                     return_exceptions=True,
                 )
+
+                # Phase 40B-1: Clear checkpoint after successful tool execution
+                self.sessions.clear_checkpoint(_ckpt_path)
 
                 # Phase 33: Action log tracking (for browser/rpa/browser_use tools)
                 for tool_call, result in zip(response.tool_calls, results):
@@ -843,10 +878,9 @@ class AgentLoop:
                         )
 
                         for tool_call, result in zip(response.tool_calls, results):
-                            if isinstance(result, BaseException):
-                                result = f"Error: {result}"
+                            normalized_res = _normalize_tool_result(result, tool_call.name, max_chars=getattr(getattr(self._get_config().agents, 'context', None), 'max_tool_result_chars', _MAX_TOOL_RESULT_CHARS))
                             messages = self.context.add_tool_result(
-                                messages, tool_call.id, tool_call.name, result
+                                messages, tool_call.id, tool_call.name, normalized_res
                             )
                         final_content = "⚠️ Multiple consecutive tool failures detected. Please check your request and try again."
                         break
@@ -857,9 +891,9 @@ class AgentLoop:
                 for tool_call, result in zip(response.tool_calls, results):
                     if isinstance(result, BaseException):
                         logger.error(f"Tool {tool_call.name} raised: {result}")
-                        result = f"Error: {result}"
+                    normalized_res = _normalize_tool_result(result, tool_call.name, max_chars=getattr(getattr(self._get_config().agents, 'context', None), 'max_tool_result_chars', _MAX_TOOL_RESULT_CHARS))
                     messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result
+                        messages, tool_call.id, tool_call.name, normalized_res
                     )
 
                 # Phase 32 L3: Anti-pattern audit (fire-and-forget, log-only)
@@ -1079,6 +1113,9 @@ class AgentLoop:
             except Exception as e:
                 logger.error(f"Failed to setup tool {tool.name}: {e}", exc_info=True)
         
+        # Phase 40B-1: Recover stale checkpoints from previous crash
+        await self._recover_stale_checkpoints()
+        
         # NOTE: idle_checker for automatic memory consolidation is disabled.
         # It was removed because auto-triggering LLM consolidation caused
         # interference with active user tasks. Memory consolidation is now
@@ -1092,10 +1129,12 @@ class AgentLoop:
                         timeout=1.0
                     )
                     try:
-                        with metrics.timer("message_processing"):
-                            response = await self._process_message(msg)
-                        if response:
-                            await self.bus.publish_outbound(response)
+                        session_lock = self.sessions.get_session_lock(msg.session_key)
+                        async with session_lock:
+                            with metrics.timer("message_processing"):
+                                response = await self._process_message(msg)
+                            if response:
+                                await self.bus.publish_outbound(response)
                     except Exception as e:
                         logger.error(f"Error processing message: {e}", exc_info=True)
                         metrics.increment("message_error_count")
@@ -1131,6 +1170,113 @@ class AgentLoop:
         # Gracefully shutdown the compute broker
         from nanobot.compute import shutdown_broker
         shutdown_broker(wait=False)
+
+    async def _recover_stale_checkpoints(self) -> None:
+        """Phase 40B-1: Scan for stale checkpoints from a previous crash and notify masters.
+
+        Called once at startup. If a checkpoint file exists, it means the process
+        crashed mid-tool-execution. We notify master_identities with a recovery
+        summary so the user knows what was interrupted.
+
+        We do NOT attempt to re-execute the interrupted tools — tool calls may
+        have side effects (email, file writes, RPA) and the system state is uncertain.
+
+        Delivery strategy (dual-path):
+        1. Bus OutboundMessage → goes through dispatch_outbound → global subscribers → WS
+        2. Direct broadcast_ws_message → bypasses bus routing entirely (dashboard guaranteed)
+        Both paths are attempted at each retry interval.
+        """
+        config = self._get_config()
+        if not getattr(getattr(config.agents, 'reliability', None), 'checkpoint_enabled', True):
+            return
+
+        try:
+            stale_checkpoints = self.sessions.scan_stale_checkpoints()
+            if not stale_checkpoints:
+                return
+
+            logger.info("Phase 40B: Stale checkpoints found. Initiating broadcast loop...")
+            logger.warning(f"Phase 40B: Found {len(stale_checkpoints)} stale checkpoint(s) from previous crash")
+
+            for ckpt in stale_checkpoints:
+                session_key = ckpt.get("session_key", "unknown")
+                tools = ckpt.get("tools", [])
+                timestamp = ckpt.get("timestamp", "unknown")
+
+                tool_names = ", ".join(t.get("name", "?") for t in tools[:5])
+                recovery_msg = (
+                    f"⚠️ **进程恢复通知 (Phase 40B)**\n\n"
+                    f"检测到上次进程崩溃时有未完成的操作：\n"
+                    f"- **会话**: `{session_key}`\n"
+                    f"- **中断工具**: `{tool_names}`\n"
+                    f"- **中断时间**: {timestamp}\n\n"
+                    f"请检查上次任务是否需要重新执行。"
+                )
+
+                # Build broadcast target set:
+                # 1. master_identities (configured admin channels)
+                # 2. Original session key (the crashed session's channel)
+                # 3. dashboard:direct (fallback — always reachable if UI is open)
+                targets = set(config.master_identities.keys())
+                if session_key != "unknown":
+                    targets.add(session_key)
+                # Always include dashboard as a guaranteed fallback target
+                targets.add("dashboard:direct")
+
+                async def _delayed_broadcast(tgts, msg, s_key):
+                    # Wait for at least one WebSocket client to connect before broadcasting.
+                    # This handles the race where the server starts before the browser reconnects.
+                    _ws_connected = False
+                    try:
+                        from nanobot.dashboard.app import _active_websockets
+                        for _poll in range(30):  # Poll up to 15s (30 × 0.5s)
+                            if _active_websockets:
+                                _ws_connected = True
+                                logger.info(f"Phase 40B: WebSocket client detected after {_poll * 0.5:.1f}s, broadcasting recovery.")
+                                break
+                            await asyncio.sleep(0.5)
+                        if not _ws_connected:
+                            logger.warning("Phase 40B: No WebSocket clients after 15s. Broadcasting anyway.")
+                    except ImportError:
+                        # Dashboard not available — still broadcast to bus targets
+                        await asyncio.sleep(3)
+
+                    # Broadcast via both paths at each retry interval
+                    delays = [0, 3, 5]  # First attempt immediate (after WS wait), then retries
+                    for delay in delays:
+                        if delay > 0:
+                            await asyncio.sleep(delay)
+
+                        # Path 1: Bus OutboundMessage (reaches channel subscribers + global WS logger)
+                        for target in tgts:
+                            if ":" in target:
+                                t_chan, t_chat = target.split(":", 1)
+                                try:
+                                    await self.bus.publish_outbound(OutboundMessage(
+                                        channel=t_chan, chat_id=t_chat, content=msg,
+                                    ))
+                                except Exception as e:
+                                    logger.error(f"Phase 40B: Path 1 bus routing failed for {target}: {e}")
+
+                        # Path 2: Direct WebSocket push (bypasses bus routing entirely)
+                        try:
+                            from nanobot.dashboard.app import broadcast_ws_message
+                            await broadcast_ws_message("log", {"sender": "system", "message": msg})
+                            await broadcast_ws_message("notification", {"message": msg})
+                        except Exception as e:
+                            logger.error(f"Phase 40B: Path 2 direct WS push failed: {e}")
+
+                # Fire and forget the delayed broadcast task so we don't block agent startup
+                _bg_task = asyncio.create_task(_delayed_broadcast(targets, recovery_msg, session_key))
+                
+                # Prevent GC from destroying the task during long verification sleeps
+                if getattr(self, '_bg_tasks', None) is None:
+                    self._bg_tasks = set()
+                self._bg_tasks.add(_bg_task)
+                _bg_task.add_done_callback(self._bg_tasks.discard)
+
+        except Exception as e:
+            logger.error(f"Phase 40B: Checkpoint recovery scan failed: {e}")
     
     async def _process_message(self, msg: InboundMessage, session_key: str | None = None) -> OutboundMessage | None:
         """
@@ -1208,7 +1354,7 @@ class AgentLoop:
                 target_session_key = self.sessions.get_approval_session(short_id)
                 if target_session_key:
                     resolved_key = self.sessions.resolve_key(f"{msg.channel}:{msg.chat_id}")
-                    if resolved_key.startswith("master:"):
+                    if resolved_key.startswith("master:") or resolved_key.startswith("dashboard:"):
                         target_session = self.sessions.get_or_create(target_session_key)
                         if target_session.pending_approval_task:
                             self.sessions.remove_approval(short_id)
@@ -1325,6 +1471,7 @@ class AgentLoop:
                     **match,
                     "_original_request": msg.content,
                     "_extracted_key": task_key,
+                    "timestamp": time.time(),
                 }
                 session.mark_metadata_dirty()
                 self.sessions.save(session)
@@ -1366,6 +1513,58 @@ class AgentLoop:
 
         # ── Step 5: No match → LLM execution ──
         return await self._execute_with_llm(session, msg, extracted_key=task_key)
+
+    def _snip_history(
+        self,
+        messages: list[dict],
+        context_window: int | None = None,
+    ) -> list[dict]:
+        """基于 Token 估算的动态历史裁剪。
+        
+        使用 litellm.token_counter 做跨模型估算。
+        对含 image_url 的消息附加启发式视觉 Token 权重。
+        """
+        if not context_window:
+            # 回退: 用 max_tokens * 4 作为 context_window 估算
+            context_window = self.max_tokens * 4
+        
+        # Phase 40A schema default snip buffer is 1024
+        budget = context_window - self.max_tokens - _INJECTION_BUDGET - 1024
+        if budget <= 0:
+            return messages
+        
+        try:
+            import litellm
+            
+            def _count_tokens(msgs: list[dict]) -> int:
+                total = 0
+                for m in msgs:
+                    content = m.get("content", "")
+                    if isinstance(content, list):
+                        for block in content:
+                            if block.get("type") == "image_url":
+                                total += 1024
+                    try:
+                        total += litellm.token_counter(model=self.model, messages=[m])
+                    except Exception:
+                        total += len(str(m.get("content", ""))) // 4  # fallback 估算
+                return total
+            
+            # 从最旧消息开始渐进丢弃，确保始终从 user 消息开始
+            system_msgs = [m for m in messages if m.get("role") == "system"]
+            non_system = [m for m in messages if m.get("role") != "system"]
+            
+            while non_system and _count_tokens(system_msgs + non_system) > budget:
+                # 丢弃最旧的消息，定位到下一个合法 user-turn 边界
+                non_system = non_system[1:]
+                # 确保不以 tool/assistant 消息开头
+                while non_system and non_system[0].get("role") != "user":
+                    non_system = non_system[1:]
+            
+            return system_msgs + non_system
+        except Exception as e:
+            logger.debug(f"Token-budget snip failed ({e}), using raw messages")
+            return messages
 
     async def _execute_with_llm(
         self,
@@ -1451,6 +1650,11 @@ class AgentLoop:
             pre_fetched_kg=pre_fetched_kg,
         )
 
+        # Phase 40A-3: Dynamic token-budget trimming
+        config = self._get_config()
+        ctx_window = getattr(getattr(config.agents, 'context', None), 'context_window_tokens', None)
+        initial_messages = self._snip_history(initial_messages, context_window=ctx_window)
+
         # Inject few-shot reference into system prompt if available
         if few_shot_context and initial_messages and initial_messages[0].get("role") == "system":
             initial_messages[0]["content"] += (
@@ -1523,7 +1727,8 @@ class AgentLoop:
             logger.info(f"Auto-consolidation triggered (count={_consolidation_count})")
             session.message_count_since_consolidation = 0
             from nanobot.agent.commands import _safe_create_task
-            _safe_create_task(self.memory_manager.consolidate_memory(session), name="auto_consolidation")
+            session_snapshot = session.to_snapshot()
+            _safe_create_task(self.memory_manager.consolidate_memory_from_snapshot(session_snapshot, session_manager=self.sessions), name="auto_consolidation")
             # Phase 22D: Emit memory consolidation event
             await self.bus.publish_event(MemoryConsolidatedEvent(
                 event_type="memory_consolidated",
@@ -1568,6 +1773,7 @@ class AgentLoop:
                     "tools_used": tools_used,
                     "user_request": request_text,
                     "result_summary": final_content[:500],
+                    "timestamp": time.time(),
                 }
                 # P1: store tool calls for silent steps update on next implicit feedback
                 session.last_tool_calls = tool_calls_with_args

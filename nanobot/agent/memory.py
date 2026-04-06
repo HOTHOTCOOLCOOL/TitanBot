@@ -6,10 +6,16 @@ OpenClaw-inspired design: plain Markdown files as source of truth.
 - HISTORY.md: grep-searchable conversation summaries
 """
 
+import shutil
 from datetime import date, timedelta
 from pathlib import Path
 
+from loguru import logger
 from nanobot.utils.helpers import ensure_dir
+
+
+# Phase 40B: Maximum number of rolling MEMORY.md backups
+_MAX_BACKUPS: int = 5
 
 
 class MemoryStore:
@@ -28,8 +34,52 @@ class MemoryStore:
         return ""
 
     def write_long_term(self, content: str) -> None:
-        """Write to the raw L2 MEMORY.md file."""
+        """Write to the raw L2 MEMORY.md file (with rolling backup).
+
+        Phase 40B-2: Rotates up to _MAX_BACKUPS numbered .bak files before
+        overwriting, protecting against LLM hallucination corrupting memory.
+        """
+        self._rotate_backup()
         self.memory_file.write_text(content, encoding="utf-8")
+
+    # ── Phase 40B-2: Rolling Backup ──
+
+    def _rotate_backup(self) -> None:
+        """Rotate MEMORY.md backups before overwrite (keep latest N copies).
+
+        Naming scheme: MEMORY.md.bak.1 (newest) → MEMORY.md.bak.N (oldest).
+        Skips backup if the file does not exist or is empty.
+        """
+        if not self.memory_file.exists():
+            return
+        try:
+            existing = self.memory_file.read_text(encoding="utf-8")
+        except OSError as e:
+            logger.warning(f"Phase 40B: Cannot read MEMORY.md for backup: {e}")
+            return
+        if not existing.strip():
+            return  # Don't backup empty/whitespace-only files
+
+        try:
+            # Delete the oldest backup if it exists
+            oldest = self.memory_dir / f"MEMORY.md.bak.{_MAX_BACKUPS}"
+            if oldest.exists():
+                oldest.unlink()
+
+            # Shift backups: .bak.(N-1) → .bak.N, ... .bak.1 → .bak.2
+            for i in range(_MAX_BACKUPS, 1, -1):
+                src = self.memory_dir / f"MEMORY.md.bak.{i - 1}"
+                dst = self.memory_dir / f"MEMORY.md.bak.{i}"
+                if src.exists():
+                    src.rename(dst)
+
+            # Copy current file → .bak.1 (copy, not move, so write_long_term can overwrite original)
+            bak1 = self.memory_dir / f"MEMORY.md.bak.1"
+            shutil.copy2(str(self.memory_file), str(bak1))
+            logger.debug("Phase 40B: MEMORY.md backup rotated successfully")
+        except OSError as e:
+            # Backup failure is non-fatal — log and continue
+            logger.warning(f"Phase 40B: MEMORY.md backup rotation failed: {e}")
 
     def read_preferences(self) -> str:
         """Read the L1 distilled preferences.json."""

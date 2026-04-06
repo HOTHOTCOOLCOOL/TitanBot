@@ -1,6 +1,38 @@
 # Nanobot 项目进度总览
 
-> 截至 2026-04-04 （长期维护文档）
+> 截至 2026-04-06 （长期维护文档）
+
+---
+
+## 📌 核心准则 & Lessons Learned (必读)
+
+⚠️ **由于未加入严格的静态类型检查，每次新开会话/开发前，必须先复习此清单，避免犯低级错误！**
+
+1. **交互式分支容易藏雷 (Edge Flows Testing)**：Agent 系统存在大量异步挂起的次级分支（`pending_approval`, `pending_save` 等）。如果重构了基础数据结构（比如调整了 `Session` 对象属性），不能只满足于“问候语”能正常输出，必须去把 HITL / 拦截界面亲自点一遍触发。Python 不会在运行前发现分支内部的 `AttributeError`（如把 `.messages` 误写成了 `.history`）！
+2. **禁止在物理层为 UX 妥协 (Decouple UX from Storage)**：永远不要为了“让用户的对话框看起来别那么啰嗦”而去用 `pop()` 和 `del` 硬删核心会话数据记录。基础上下文数据应当是 **Append-only（仅追加）** 的。要想净化用户视野，必须在发送消息的 Render 层 / View 侧通过过滤进行，绝对不允许去修改和截断持久化数据的原始排列。
+3. **限制非主业务崩溃的爆炸半径**：任何类似“清理一下不要的提示语”、“发个旁路通知”的代码，**绝对不允许**让主干 Loop 崩溃退出。这些锦上添花的功能如果不确定绝对安全，一律用 `try...except Exception as e:` 包裹，哪怕失效也顶多导致“提示语没删掉”，而不是进程直接崩溃抛出 500。
+4. **命名规范与防御式编程**：动词做方法（`get_history()`），名词做属性（`messages`）。脑海中的宏观概念（“我要清理历史”）不要无意识地直接点成代码（`session.history`）。如果代码缺少 `mypy` 校验，要用极其直白不出挑的命名，或在写这种无上下文的成员访问时防御性地 `getattr(obj, 'prop')` 一下来保全进程。
+
+### 🚨 深度避坑录：P40B-1 轻量断点续传 (Crash Recovery for Tools)
+
+在实现工具执行的断点续传（进程崩溃后恢复并主动通知外部）的测试过程中（特别是模拟长阻塞和断网崩溃等极端场景），我们结结实实踩了以下大坑，**请所有系统级开发者牢记此教训**：
+
+5. **Server Boot Race Conditions (服务器启动时的 WebSocket 广播竞态陷阱)**：
+   应用重启后，想要通过 WebSocket 向前端主动推送恢复通知，**绝对不能在 T=0 的时刻盲目发信**！Uvicorn/WebSockets 的启动以及前端 Client 的自动重连存在 1~3 秒的物理延迟。此时直接发布 `OutboundMessage` 会因为没有或者尚未就绪 Subscribers（订阅者）导致幽灵丢包（信发了，没人接，就永远丢了）。
+   **避坑指南**：避免死板固定硬编码 `asyncio.sleep(5)` 等待，必须实现**基于状态的连接检测（Connection Polling）机制**，如利用 polling 或回调确认确保至少有一个活跃的客户端心跳连接后，再执行关键的重连恢复通知。
+
+6. **Fragile Single-Path Delivery (单向通知投递的致命脆弱性)**：
+   仅仅依赖单边向事件总线投递 (`Bus -> Channel Subscriber -> WebSocket`) 去传递崩溃恢复通知对于 Critical Notification 来说是极度脆弱的。
+   - 当配置中 `master_identities` 为空时，没转发目标。
+   - 目标频道如果单纯是一个纯前端 Dashboard，可能根本不订阅特定的出向身份路由。
+   - Client 正处于页面刷新 F5 或者网络切断后的重连真空中。
+   **避坑指南**：必须采用 **Dual-Path (双保险混合推送)**。即在扔给消息总线通知常规客户端的同时，单独拿出一个独立的直推 `broadcast_ws_message()` 作为保底逻辑。并且在遇到身份空洞时，硬性注入类似 `dashboard:direct` 全局 Fallback ID 覆盖，做到无论如何都能兜底触发 UI。
+
+7. **Phantom Bugs in Background Sandboxes (完美逻辑却抓不到断点的玄学事件：幽灵崩溃与沙箱陷阱)**：
+   人工测试 Crash Recovery 往往需要 Mock 长时阻塞任务（例如使用 `ping -n 55` 或 `python -c "sleep(100)"`）。**千万不要想当然地认为目标命令在 Agent 底层 subprocess 调用中的表现，等同于在你控制台 CMD 中的表现！**
+   这是因为：在沙箱隔离机制中，很多环境变量与 PATH 被剔除，甚至剥离了基础 TTY 与标准输入流。这就导致许多在你的 CMD 中能原生挂起阻塞 50 秒的命令，一旦进入沙箱就因缺少重定向对象或转义剥离瞬间报错并 **极速退出**（如 `python -c "sleep(100)"` 会因为外层 Shell 把内部双引号拿掉，抛出 `SyntaxError`）。
+   造成的直观后果是：系统认为命令立刻“成功执行结束了” -> 然后顺便非常完美地清除了 Checkpoint WAL 断点文件 -> 当你干掉进程重新启动以后，根本没有断点引发恢复，并让你产生“逻辑完美但就是抓不出来的玄学 Bug”的错觉！
+   **避坑指南**：当遇到恢复逻辑执行不到位的情况，首要原则是：**先去验证你的 Mock 阻塞是否真的在剥离环境的沙箱中成功挂起了！**建议使用能够免疫 IO 或权限特性的绝对命令，比如 `powershell -Command "Start-Sleep -Seconds 60"`，排除 Mock 进程光速自杀的干扰。
 
 ---
 
@@ -10,9 +42,9 @@
 
 ---
 
-## 🏁 当前位置：Phase 37 ✅（Execution Trace Archive — Meta-Harness Inspired）
+## 🏁 当前位置：Phase 40 全面完成 ✅（稳定性与可靠性增强）
 
-已完成 **20+ 个大阶段**，从 10 文件聊天机器人发展到 106 文件、14 子包、19 工具、9 通道的企业级 AI Agent。回归测试：**1264 passed, 0 failed, 1 skipped**（排除 gemini/skill 可选依赖）。
+已完成 **20+ 个大阶段**，从 10 文件聊天机器人发展到 108 文件、14 子包、19 工具、9 通道的企业级 AI Agent。回归测试：**1264 passed, 0 failed, 1 skipped**（通过全部 Phase 40 手动/自动化测试）。
 
 ---
 
@@ -21,10 +53,44 @@
 ## ⏳ 待做阶段
 
 
+### ✅ Phase 40A — 稳定性基石 (Stability Foundations, 已完成)
+
+> 经由 5 段 Harness 辩证法锤炼（Harness 对话 2026-04-05）产出并已全面落实通过测试。详见 `implementation_plan.md`。
+
+| 状态 | ID | 功能维度 | 优先级 | 改动文件 |
+|------|-----|---------|--------|------------|
+| ✅ | P40A-1 | **工具结果强制截断** — `max_tool_result_chars=16000`，保留头尾各 8000 chars | P0 | `loop.py`, `config/schema.py` |
+| ✅ | P40A-2 | **Session 并发门闩 + 快照传递** — Lock + `to_snapshot()` 隔离后台任务直接引用 | P0 | `session/manager.py`, `agent/loop.py` |
+| ✅ | P40A-3 | **动态 Token-Budget 裁剪** — `litellm.token_counter` 替换固定 `memory_window=50` | P0 | `loop.py`, `config/schema.py` |
+
+---
+
+### ✅ Phase 40B — 可靠性增强 (Reliability, 已完成)
+
+| 状态 | ID | 功能维度 | 优先级 | 改动文件 |
+|------|-----|---------|--------|------------|
+| ✅ | P40B-1 | **轻量断点续传** — 工具执行前写 checkpoint WAL，进程崩溃后向 master_identities 推送恢复通知 | P1 | `loop.py`, `session/manager.py`, `config/schema.py` |
+| ✅ | P40B-2 | **MEMORY.md 滚动 .bak 备份** — 覆写前保留最新 5 份，防 LLM Hallucination 覆写损坏记忆 | P1 | `agent/memory.py` |
+
+---
+
+### 🔜 Phase 41 — 洋葱中间件架构 (Middleware Pattern, Phase 40B 稳定 2 周后)
+
+> 渐进式解耦 `_run_agent_loop` God Method。旧文件一行不删。
+
+| 状态 | ID | 功能维度 | 优先级 |
+|------|-----|---------|--------|
+| ⏳ | P41-1 | **AgentMiddleware 基类** — `async def process(context, next_call)` 洋葱模型 | P2 |
+| ⏳ | P41-2 | **MetricsMiddleware** — 计时器迁移（最外层） | P2 |
+| ⏳ | P41-3 | **CircuitBreakerMiddleware** — 熏断器快失洗相 | P2 |
+| ⏳ | P41-4 | **VerificationMiddleware** — L1 规则拦截迁移 | P2 |
+| ⏳ | P41-5 | **HITLMiddleware** — HITL 审批挂起迁移 | P2 |
+
+---
 
 ### 🔜 Phase 39 — 延迟优化与智能分层降级 (Latency Optimization — Finalized)
 
-> 经由三模型 Harness 碰撞论证产出的闭环降级方案。核心目标是打破 LLM 网络 TTFT 刚性下限，并解决异步本地 RAG 的 GIL 阻塞问题。详见 `docs/phase_39_latency_optimization.md`。
+> 经由三模型 Harness 碰撞论证产出的闭环降级方案。核心目标是打破 LLM 网络 TTFT 刚性下限，并解决异步本地 RAG 的 GIL 阻塑问题。详见 `docs/phase_39_latency_optimization.md`。
 
 | 状态 | ID | 功能维度 | 优先级 | 估计工作量 |
 |------|-----|---------|--------|------------|
@@ -71,6 +137,7 @@
 | ✅ | P2 | Unified Speech-to-Text (解耦频道下载与通用 STT 工厂) |
 | ✅ | P2 | Pluggable Text-to-Speech (EdgeTTS 异步指令化合成与回传) |
 | ✅ | P2 | Image Generation Tool (集成 DALL-E / Seedance 并跳过 Loop 自行发信) |
+| ✅ | P2 | **Channel 加减法** — 新增 **WeCom (企业微信) + Weixin (个人微信)**；移除 Discord/Slack/Telegram/Mochat 顺序列表（文件保留，可重启） |
 
 ### 长期 Backlog
 
@@ -94,6 +161,9 @@
 | `docs/cc_mini_analysis.md` | CC-Mini 与 Claude Code 架构提取分析及高 ROI 方案 | ✅ 2026-04-02 新建 |
 | `docs/openharness_analysis.md` | OpenHarness 架构借鉴分析与 Harness 审计策略 | ✅ 2026-04-03 新建 |
 | `.agent/workflows/harness.md` | 混合模型碰撞工作流 (Planner/Critic) 初始化 | ✅ 2026-04-03 新建 |
+| `implementation_plan.md` | Phase 40-41 架构决策备忘录（ADR）— 5 段 Harness 锻炼产出 | ✅ 2026-04-05 新建 |
+| `channels/wecom.py` | 企业微信通道适配器（从上游移植） | ✅ 2026-04-05 新建 |
+| `channels/weixin.py` | 个人微信通道适配器（从上游移植） | ✅ 2026-04-05 新建 |
 
 ---
 

@@ -34,7 +34,7 @@ class ShellSandbox:
         if sys.platform == "darwin":
             essential_vars = {"PATH", "HOME", "TMPDIR", "SHELL", "LANG", "USER", "LOGNAME"}
         else:
-            essential_vars = {"PATH", "SYSTEMROOT", "SYSTEMDRIVE", "COMSPEC", "WINDIR", "TEMP", "TMP"}
+            essential_vars = {"PATH", "SYSTEMROOT", "SYSTEMDRIVE", "COMSPEC", "WINDIR", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PSMODULEPATH"}
         env = {k: v for k, v in os.environ.items() if k.upper() in essential_vars}
 
         try:
@@ -104,7 +104,7 @@ class PythonSandbox:
         if sys.platform == "darwin":
             essential_vars = {"PATH", "HOME", "TMPDIR"}
         else:
-            essential_vars = {"PATH", "SYSTEMROOT", "SYSTEMDRIVE"}
+            essential_vars = {"PATH", "SYSTEMROOT", "SYSTEMDRIVE", "USERPROFILE", "APPDATA", "LOCALAPPDATA"}
         env = {k: v for k, v in os.environ.items() if k.upper() in essential_vars}
         
         try:

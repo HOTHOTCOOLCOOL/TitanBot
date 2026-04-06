@@ -194,17 +194,16 @@ class UnifiedScheduler:
                 # 转换为内部任务
                 now_ms = _now_ms()
                 for job in jobs:
-                    if job.enabled:
-                        task = ScheduledTask(
-                            id=f"cron_{job.id}",
-                            name=job.name,
-                            task_type=TaskType.CRON,
-                            schedule=job.schedule,
-                            payload=job.payload,
-                            next_run_ms=job.state.next_run_at_ms or _compute_next_run(job.schedule, now_ms),
-                            enabled=job.enabled,
-                        )
-                        self._tasks[task.id] = task
+                    task = ScheduledTask(
+                        id=f"cron_{job.id}",
+                        name=job.name,
+                        task_type=TaskType.CRON,
+                        schedule=job.schedule,
+                        payload=job.payload,
+                        next_run_ms=job.state.next_run_at_ms or _compute_next_run(job.schedule, now_ms),
+                        enabled=job.enabled,
+                    )
+                    self._tasks[task.id] = task
                 
                 logger.info(f"Loaded {len(jobs)} cron jobs from {self._cron_store_path}")
                 

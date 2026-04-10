@@ -215,7 +215,7 @@ def build_report_url(base_url: str, extra_params: dict, fmt: str) -> str:
     return f"{base_url}{separator}{query_string}"
 
 
-def fetch_as_csv(url: str, auth, timeout: int = 30) -> Optional[str]:
+def fetch_as_csv(url: str, auth, timeout: int = 10) -> Optional[str]:
     """Download report as CSV and return as string."""
     csv_url = build_report_url(url, {}, "CSV")
     try:
@@ -233,7 +233,7 @@ def fetch_as_csv(url: str, auth, timeout: int = 30) -> Optional[str]:
         return None
 
 
-def fetch_as_html(url: str, auth, timeout: int = 30) -> Optional[str]:
+def fetch_as_html(url: str, auth, timeout: int = 10) -> Optional[str]:
     """Download report as HTML4.0 and parse to readable text."""
     html_url = build_report_url(url, {}, "HTML4.0")
     try:
@@ -534,5 +534,11 @@ if __name__ == "__main__":
                 print(f"\n[PDF ERROR] {e}", file=sys.stderr)
                 sys.exit(1)
     else:
-        print(f"\n[ERROR] {result['error']}", file=sys.stderr)
+        # Phase 44: Emit structured JSON for agent consumption
+        error_json = {
+            "error_type": "DependencyFatal",
+            "report_name": args.report,
+            "reason": result["error"]
+        }
+        print(f"\n{json.dumps(error_json, ensure_ascii=False)}")
         sys.exit(1)

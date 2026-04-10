@@ -891,7 +891,7 @@ class WeixinChannel(BaseChannel):
             if not data:
                 return None
 
-            media_dir = get_media_dir("weixin")
+            media_dir = _get_media_dir("weixin")
             ext = _ext_for_type(media_type)
             if not filename:
                 ts = int(time.time())

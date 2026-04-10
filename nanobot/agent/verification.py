@@ -162,11 +162,11 @@ def _check_rule_outlook_recipient(tool_calls: list[Any]) -> list[str]:
         if tc.name == "outlook":
             action = tc.arguments.get("action", "")
             if action == "send_email":
-                to = tc.arguments.get("to", "")
-                if not to or not str(to).strip():
+                recipient = tc.arguments.get("recipient", "") or tc.arguments.get("to", "")
+                if not recipient or not str(recipient).strip():
                     violations.append(
                         "R04: 'outlook' send_email was called without a recipient. "
-                        "Please specify the 'to' address."
+                        "Please specify the 'recipient' address."
                     )
     return violations
 
@@ -266,6 +266,37 @@ def _check_rule_browser_use_ssrf(tool_calls: list[Any]) -> list[str]:
     return violations
 
 
+def _check_rule_ssrs_fatal(tool_calls: list[Any], messages: list[dict] | None = None) -> list[str]:
+    """R-SSRS-001: Block outlook search and other workaround attempts after SSRS fatal failure (ADR-44)."""
+    if not messages:
+        return []
+    
+    # Check if SSRS failed in recent history
+    ssrs_failed = False
+    for m in reversed(messages):
+        content = str(m.get("content", ""))
+        if '"error_type": "DependencyFatal"' in content:
+            ssrs_failed = True
+            break
+        # Stop looking back too far (just current conversation turn)
+        if m.get("role") == "user":
+            break
+            
+    if not ssrs_failed:
+        return []
+        
+    violations = []
+    for tc in tool_calls:
+        # Prevent searching or accessing outlook differently if SSRS failed
+        if tc.name == "outlook" and tc.arguments.get("action", "") in ("find_emails", "search_email", "read_email"):
+            violations.append(
+                "R-SSRS-001: The SSRS report dependency has failed. "
+                "Do NOT attempt to use outlook search or read to find a replacement report. "
+                "Instead, notify the user immediately that the required report is unavailable and output an error."
+            )
+    return violations
+
+
 # All L1 rules in evaluation order
 _L1_RULES = [
     _check_rule_message_content,
@@ -277,6 +308,7 @@ _L1_RULES = [
     _check_rule_tool_call_count,
     _check_rule_network_exfiltration,
     _check_rule_browser_use_ssrf,
+    _check_rule_ssrs_fatal,
 ]
 
 
@@ -295,13 +327,11 @@ class VerificationLayer:
         provider: LLMProvider | None = None,
         model: str | None = None,
         knowledge_workflow: Any | None = None,
-        reflection_store: Any | None = None,
     ):
         self.config = config
         self.provider = provider
         self.model = model
         self.knowledge_workflow = knowledge_workflow
-        self.reflection_store = reflection_store
 
     # ── L0: Pre-cognitive Experience Enrichment ───────────────────────
 
@@ -350,22 +380,7 @@ class VerificationLayer:
                     system_messages[0]["content"] += hint_text
                     injection_used += len(hint_text)
 
-        # 2. Metacognitive Reflection Memory (negative examples)
-        if (getattr(memory_features, 'reflection_enabled', True)
-                and self.reflection_store):
-            try:
-                reflections = self.reflection_store.search_reflections(request_text)
-                if reflections:
-                    reflection_text = "## ⚠️ Avoid Past Mistakes (Negative Examples)\n"
-                    for r in reflections:
-                        reflection_text += f"- **When**: {r.get('trigger', '')}\n"
-                        reflection_text += f"  - **Mistake**: {r.get('failure_reason', '')}\n"
-                        reflection_text += f"  - **Correction**: {r.get('corrective_action', '')}\n"
-                    if injection_used + len(reflection_text) <= _INJECTION_BUDGET:
-                        system_messages[0]["content"] += f"\n\n{reflection_text}"
-                        injection_used += len(reflection_text)
-            except Exception as e:
-                logger.error(f"L0: Failed to inject reflection memory: {e}")
+
 
         # 3. Long-session System Reminder
         if session_message_count >= 15:
@@ -384,7 +399,7 @@ class VerificationLayer:
 
     # ── L1: Rigid Rule Interception ───────────────────────────────────
 
-    def check_rules(self, tool_calls: list[Any]) -> RuleResult:
+    def check_rules(self, tool_calls: list[Any], messages: list[dict] | None = None) -> RuleResult:
         """L1: Run all rigid rules against proposed tool calls.
 
         Called *after* the LLM proposes tool calls but *before* they execute.
@@ -405,6 +420,8 @@ class VerificationLayer:
         for rule_fn in _L1_RULES:
             if rule_fn is _check_rule_sensitive_path:
                 violations = rule_fn(tool_calls, extra_deny=extra_deny)
+            elif rule_fn is _check_rule_ssrs_fatal:
+                violations = rule_fn(tool_calls, messages=messages)
             else:
                 violations = rule_fn(tool_calls)
             all_violations.extend(violations)

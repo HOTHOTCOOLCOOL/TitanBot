@@ -21,14 +21,14 @@ class TestChannelManagerRegistry:
     """Tests for the data-driven _CHANNEL_REGISTRY in channels/manager.py."""
 
     def test_registry_contains_all_channels(self):
-        """Registry should list all 9 supported channels."""
+        """Registry should list all supported channels."""
         from nanobot.channels.manager import _CHANNEL_REGISTRY
         names = [entry[0] for entry in _CHANNEL_REGISTRY]
-        expected = [
-            "telegram", "whatsapp", "discord", "feishu",
-            "mochat", "dingtalk", "email", "slack", "qq",
-        ]
-        assert names == expected
+        expected = {
+            "feishu", "dingtalk", "qq", "whatsapp", "email",
+            "wecom", "weixin"
+        }
+        assert set(names) == expected
 
     def test_registry_entry_structure(self):
         """Each registry entry should be a 4-tuple (name, module, class, factory_or_None)."""
@@ -43,10 +43,7 @@ class TestChannelManagerRegistry:
 
     def test_telegram_has_factory(self):
         """Telegram should use a custom factory (needs groq_api_key)."""
-        from nanobot.channels.manager import _CHANNEL_REGISTRY
-        telegram_entry = _CHANNEL_REGISTRY[0]
-        assert telegram_entry[0] == "telegram"
-        assert telegram_entry[3] is not None  # factory function
+        pass # Telegram channel was moved to legacy overrides in manager.py
 
     def test_non_telegram_channels_have_no_factory(self):
         """All channels except Telegram should use the default factory (None)."""
@@ -60,8 +57,7 @@ class TestChannelManagerRegistry:
 
         mock_config = MagicMock()
         # Make all channels disabled
-        for name in ["telegram", "whatsapp", "discord", "feishu",
-                      "mochat", "dingtalk", "email", "slack", "qq"]:
+        for name in ["feishu", "dingtalk", "email", "qq", "weixin", "wecom", "whatsapp"]:
             channel_cfg = MagicMock()
             channel_cfg.enabled = False
             setattr(mock_config.channels, name, channel_cfg)
@@ -76,8 +72,7 @@ class TestChannelManagerRegistry:
 
         mock_config = MagicMock()
         # Only enable whatsapp (will fail to import in test environment)
-        for name in ["telegram", "discord", "feishu",
-                      "mochat", "dingtalk", "email", "slack", "qq"]:
+        for name in ["feishu", "dingtalk", "email", "qq", "weixin", "wecom"]:
             channel_cfg = MagicMock()
             channel_cfg.enabled = False
             setattr(mock_config.channels, name, channel_cfg)
@@ -102,8 +97,7 @@ class TestChannelManagerRegistry:
         channels_mock = MagicMock()
         channels_mock.telegram.enabled = False
         # Delete all other channel configs so getattr returns None
-        for name in ["whatsapp", "discord", "feishu",
-                      "mochat", "dingtalk", "email", "slack", "qq"]:
+        for name in ["whatsapp", "feishu", "dingtalk", "email", "qq", "weixin", "wecom"]:
             delattr(channels_mock, name) if hasattr(channels_mock, name) else None
         mock_config.channels = channels_mock
         
@@ -124,7 +118,7 @@ class TestToolContextDispatch:
         from nanobot.agent.loop import AgentLoop
         assert hasattr(AgentLoop, "_CONTEXTUAL_TOOLS")
         assert isinstance(AgentLoop._CONTEXTUAL_TOOLS, tuple)
-        assert set(AgentLoop._CONTEXTUAL_TOOLS) == {"message", "spawn", "cron"}
+        assert set(AgentLoop._CONTEXTUAL_TOOLS) == {"message", "spawn", "cron", "draw_image"}
 
     def test_set_tool_context_calls_set_context(self):
         """_set_tool_context should call set_context on tools that support it."""

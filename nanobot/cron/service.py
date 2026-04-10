@@ -54,7 +54,7 @@ class CronService:
     def __init__(
         self,
         store_path: Path,
-        on_job: Callable[[CronJob], Coroutine[Any, Any, str | None]] | None = None,
+        on_job: Callable[[CronJob], Coroutine[Any, Any, tuple[str | None, str | None]]] | None = None,
         notification_callback: Callable[[str, str], Coroutine[Any, Any, None]] | None = None,
     ):
         self.store_path = store_path
@@ -98,6 +98,8 @@ class CronService:
                             last_run_at_ms=j.get("state", {}).get("lastRunAtMs"),
                             last_status=j.get("state", {}).get("lastStatus"),
                             last_error=j.get("state", {}).get("lastError"),
+                            retry_count=j.get("state", {}).get("retryCount", 0),
+                            parent_trace_id=j.get("state", {}).get("parentTraceId"),
                         ),
                         created_at_ms=j.get("createdAtMs", 0),
                         updated_at_ms=j.get("updatedAtMs", 0),
@@ -155,6 +157,8 @@ class CronService:
                         "lastRunAtMs": j.state.last_run_at_ms,
                         "lastStatus": j.state.last_status,
                         "lastError": j.state.last_error,
+                        "retryCount": j.state.retry_count,
+                        "parentTraceId": j.state.parent_trace_id,
                     },
                     "createdAtMs": j.created_at_ms,
                     "updatedAtMs": j.updated_at_ms,
@@ -310,6 +314,33 @@ class CronService:
         # Rearm the timer whether we ran jobs or just hit the 30s heartbeat
         self._arm_timer()
     
+    def _check_side_effect_via_trace(self, trace_id: str) -> bool:
+        """Check if trace contains execution of side effect tools. (ADR-44)"""
+        try:
+            from nanobot.config.loader import load_config
+            from nanobot.agent.trace_archive import TraceArchive
+            
+            config = load_config()
+            archive = TraceArchive(config.workspace_path)
+            tool_calls = archive.get_tool_calls(trace_id)
+            
+            if tool_calls is None:
+                # Fail-safe: if query fails, conservatively assume no side-effect, retry
+                return False
+
+            for tc in tool_calls:
+                tool_name = tc.get("tool", "")
+                action = tc.get("args", {}).get("action", "")
+                
+                # Check for side effect generating tools
+                if tool_name in ("send_email",) or (tool_name == "outlook" and action == "send_email"):
+                    if tc.get("outcome", "ok") == "ok":
+                        return True
+            return False
+        except Exception as e:
+            logger.error(f"Cron: TraceArchive side-effect check failed for {trace_id}: {e}")
+            return False
+
     async def _execute_job(self, job: CronJob) -> None:
         """Execute a single job."""
         start_ms = _now_ms()
@@ -325,33 +356,62 @@ class CronService:
                 job.enabled = False
                 job.state.next_run_at_ms = None
         else:
-            # Compute next run
+            # Phase 44: If we are in a retry or error state, we do not recompute the regular next_run_at_ms
+            # because the regular next run time has already been calculated.
+            # But wait, we DO need to move past the current schedule to strictly advance the calendar.
+            # Next run is computed here.
             job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
             
         self._save_store()
         
         try:
             response = None
+            trace_id = None
             if self.on_job:
-                response = await self.on_job(job)
+                res = await self.on_job(job)
+                if isinstance(res, tuple):
+                    response, trace_id = res
+                else:
+                    response = res
+            
+            side_effect_ok = False
+            if trace_id:
+                side_effect_ok = self._check_side_effect_via_trace(trace_id)
             
             # Check if the agent turn actually succeeded by inspecting the response.
             # process_direct() never raises — it returns error messages as plain text.
             _fail_markers = ["Error:", "error:", "failed", "timed out"]
             if response and any(marker in response for marker in _fail_markers):
-                job.state.last_status = "error"
-                job.state.last_error = response[:200]
-                logger.warning(f"Cron: job '{job.name}' returned error response: {response[:100]}")
-                # Schedule a retry in 15 minutes (if sooner than next regular run)
-                retry_ms = start_ms + 15 * 60 * 1000
-                if job.schedule.kind != "at" and job.state.next_run_at_ms and retry_ms < job.state.next_run_at_ms:
-                    job.state.next_run_at_ms = retry_ms
-                    logger.info(f"Cron: scheduled retry for '{job.name}' in 15 minutes")
-                # Proactive notification
-                await self._notify_failure(job.name, response[:200])
+                if side_effect_ok:
+                    job.state.last_status = "partial_success"
+                    job.state.last_error = response[:200]
+                    logger.warning(f"Cron: job '{job.name}' partially succeeded (side effect OK, but agent reported error)")
+                    await self._notify_failure(job.name, f"Job completed with error (Side-effect succeeded): {response[:200]}")
+                else:
+                    job.state.retry_count += 1
+                    job.state.last_error = response[:200]
+                    MAX_RETRIES = 1
+                    
+                    if job.state.retry_count > MAX_RETRIES:
+                        job.state.last_status = "error_fatal"
+                        logger.error(f"Cron: job '{job.name}' reached fatal error state")
+                        await self._notify_failure(job.name, f"FATAL ERROR (Retry limit exceeded): {response[:200]}")
+                    else:
+                        job.state.last_status = "error"
+                        job.state.parent_trace_id = job.state.parent_trace_id or trace_id
+                        logger.warning(f"Cron: job '{job.name}' returned error response: {response[:100]}")
+                        # Schedule a retry in 15 minutes (if sooner than next regular run)
+                        retry_ms = start_ms + 15 * 60 * 1000
+                        if job.schedule.kind != "at" and job.state.next_run_at_ms and retry_ms < job.state.next_run_at_ms:
+                            job.state.next_run_at_ms = retry_ms
+                            logger.info(f"Cron: scheduled retry for '{job.name}' in 15 minutes")
+                        # Proactive notification
+                        await self._notify_failure(job.name, response[:200])
             else:
                 job.state.last_status = "ok"
                 job.state.last_error = None
+                job.state.retry_count = 0
+                job.state.parent_trace_id = None
                 logger.info(f"Cron: job '{job.name}' completed successfully")
             
         except Exception as e:

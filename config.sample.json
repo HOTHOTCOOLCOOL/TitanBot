@@ -32,6 +32,11 @@
       "knowledgeGraphEnabled": true,
       "visualMemoryEnabled": true,
       "experienceEnabled": true
+    },
+    "coordinator": {
+      "enabled": false,
+      "maxWorkers": 4,
+      "sandboxRoot": "workspace/workers"
     }
   },
   "providers": {

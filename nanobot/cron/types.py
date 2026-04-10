@@ -34,8 +34,10 @@ class CronJobState:
     """Runtime state of a job."""
     next_run_at_ms: int | None = None
     last_run_at_ms: int | None = None
-    last_status: Literal["ok", "error", "skipped"] | None = None
+    last_status: Literal["ok", "error", "skipped", "error_fatal", "partial_success"] | None = None
     last_error: str | None = None
+    retry_count: int = 0
+    parent_trace_id: str | None = None
 
 
 @dataclass

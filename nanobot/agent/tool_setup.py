@@ -67,8 +67,13 @@ def _register_default_tools(agent: "AgentLoop") -> None:
     agent.tools.register(draw_image_tool)
     
     # Spawn tool (for subagents)
-    spawn_tool = SpawnTool(manager=agent.subagents)
-    agent.tools.register(spawn_tool)
+    if hasattr(agent, 'coordinator_manager') and agent.coordinator_manager.enabled:
+        from nanobot.agent.tools.coordinator import CoordinatorTool
+        agent.tools.register(CoordinatorTool(agent.coordinator_manager))
+    else:
+        from nanobot.agent.tools.spawn import SpawnTool
+        spawn_tool = SpawnTool(manager=agent.subagents)
+        agent.tools.register(spawn_tool)
     
     # Cron tool (for scheduling)
     if agent.cron_service:

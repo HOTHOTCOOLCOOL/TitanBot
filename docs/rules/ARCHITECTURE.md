@@ -67,3 +67,62 @@
   * 遇到 Worker 抛出失败（或循环执行多次仍无法推进），将强制熔断，并回传 `HINT` 提示。大模型接收到提示后，必须停止死磕 DOM，转换思路使用物理兜底。
 * **操作历史感知 (Action History Awareness)**:
   * Agent loop 会在系统提示中注入最近的 UI 行动历史 (`_action_log`)。模型必须参考历史避免重复验证已知死胡同的同一操作元件。
+
+## 7. 实践沉淀与避坑教训 (Lessons Learned)
+
+⚠️ **由于未加入严格的静态类型检查，每次新开会话/开发前，必须先复习此清单，避免犯低级错误！**
+
+1. **交互式分支容易藏雷 (Edge Flows Testing)**：Agent 系统存在大量异步挂起的次级分支（`pending_approval`, `pending_save` 等）。如果重构了基础数据结构（比如调整了 `Session` 对象属性），不能只满足于“问候语”能正常输出，必须去把 HITL / 拦截界面亲自点一遍触发。Python 不会在运行前发现分支内部的 `AttributeError`（如把 `.messages` 误写成了 `.history`）！
+2. **禁止在物理层为 UX 妥协 (Decouple UX from Storage)**：永远不要为了“让用户的对话框看起来别那么啰嗦”而去用 `pop()` 和 `del` 硬删核心会话数据记录。基础上下文数据应当是 **Append-only（仅追加）** 的。要想净化用户视野，必须在发送消息的 Render 层 / View 侧通过过滤进行，绝对不允许去修改和截断持久化数据的原始排列。
+3. **限制非主业务崩溃的爆炸半径**：任何类似“清理一下不要的提示语”、“发个旁路通知”的代码，**绝对不允许**让主干 Loop 崩溃退出。这些锦上添花的功能如果不确定绝对安全，一律用 `try...except Exception as e:` 包裹，哪怕失效也顶多导致“提示语没删掉”，而不是进程直接崩溃抛出 500。
+4. **命名规范与防御式编程**：动词做方法（`get_history()`），名词做属性（`messages`）。脑海中的宏观概念（“我要清理历史”）不要无意识地直接点成代码（`session.history`）。如果代码缺少 `mypy` 校验，要用极其直白不出挑的命名，或在写这种无上下文的成员访问时防御性地 `getattr(obj, 'prop')` 一下来保全进程。
+
+### 🚨 深度避坑录：P40B-1 轻量断点续传 (Crash Recovery for Tools)
+
+在实现工具执行的断点续传（进程崩溃后恢复并主动通知外部）的测试过程中（特别是模拟长阻塞和断网崩溃等极端场景），我们结结实实踩了以下大坑，**请所有系统级开发者牢记此教训**：
+
+5. **Server Boot Race Conditions (服务器启动时的 WebSocket 广播竞态陷阱)**：
+   应用重启后，想要通过 WebSocket 向前端主动推送恢复通知，**绝对不能在 T=0 的时刻盲目发信**！Uvicorn/WebSockets 的启动以及前端 Client 的自动重连存在 1~3 秒的物理延迟。此时直接发布 `OutboundMessage` 会因为没有或者尚未就绪 Subscribers（订阅者）导致幽灵丢包（信发了，没人接，就永远丢了）。
+   **避坑指南**：避免死板固定硬编码 `asyncio.sleep(5)` 等待，必须实现**基于状态的连接检测（Connection Polling）机制**，如利用 polling 或回调确认确保至少有一个活跃的客户端心跳连接后，再执行关键的重连恢复通知。
+
+6. **Fragile Single-Path Delivery (单向通知投递的致命脆弱性)**：
+   仅仅依赖单边向事件总线投递 (`Bus -> Channel Subscriber -> WebSocket`) 去传递崩溃恢复通知对于 Critical Notification 来说是极度脆弱的。
+   - 当配置中 `master_identities` 为空时，没转发目标。
+   - 目标频道如果单纯是一个纯前端 Dashboard，可能根本不订阅特定的出向身份路由。
+   - Client 正处于页面刷新 F5 或者网络切断后的重连真空中。
+   **避坑指南**：必须采用 **Dual-Path (双保险混合推送)**。即在扔给消息总线通知常规客户端的同时，单独拿出一个独立的直推 `broadcast_ws_message()` 作为保底逻辑。并且在遇到身份空洞时，硬性注入类似 `dashboard:direct` 全局 Fallback ID 覆盖，做到无论如何都能兜底触发 UI。
+
+7. **Phantom Bugs in Background Sandboxes (完美逻辑却抓不到断点的玄学事件：幽灵崩溃与沙箱陷阱)**：
+   人工测试 Crash Recovery 往往需要 Mock 长时阻塞任务（例如使用 `ping -n 55` 或 `python -c "sleep(100)"`）。**千万不要想当然地认为目标命令在 Agent 底层 subprocess 调用中的表现，等同于在你控制台 CMD 中的表现！**
+   这是因为：在沙箱隔离机制中，很多环境变量与 PATH 被剔除，甚至剥离了基础 TTY 与标准输入流。这就导致许多在你的 CMD 中能原生挂起阻塞 50 秒的命令，一旦进入沙箱就因缺少重定向对象或转义剥离瞬间报错并 **极速退出**（如 `python -c "sleep(100)"` 会因为外层 Shell 把内部双引号拿掉，抛出 `SyntaxError`）。
+   造成的直观后果是：系统认为命令立刻“成功执行结束了” -> 然后顺便非常完美地清除了 Checkpoint WAL 断点文件 -> 当你干掉进程重新启动以后，根本没有断点引发恢复，并让你产生“逻辑完美但就是抓不出来的玄学 Bug”的错觉！
+   **避坑指南**：当遇到恢复逻辑执行不到位的情况，首要原则是：**先去验证你的 Mock 阻塞是否真的在剥离环境的沙箱中成功挂起了！**建议使用能够免疫 IO 或权限特性的绝对命令，比如 `powershell -Command "Start-Sleep -Seconds 60"`，排除 Mock 进程光速自杀的干扰。
+
+8. **异步环境中的并发状态覆写 (Race Conditions in Context Override)**：
+   在需要为并发执行的子任务或子代理（Subagent）隔离其上下文（如屏蔽特定工具库）时，**绝对禁止通过修改全局的主实例属性 (如 `self.tools = restricted_tools`) 来实现**。Python 的 `asyncio` 环境下，多个子代理与主代理同时服务时必然产生严重的资源竞争，导致权限泄露或死锁。
+   **避坑指南**：必须采用**显式的参数传递 (Explicit Argument Passing)**向下流动（如追加 `tool_registry_override` 贯穿整个 Middleware 层级与上下文栈），通过函数局部变量保持调用的线程安全与纯净性。即使是 `ContextVars` 在复杂异步回调栈中也可能出现隐式泄露，不如显式传参来得强健。
+
+9. **Stateful Dependencies in Refactoring (重构时的状态副作用黑洞)**：
+   在提取或解耦长期存在于“上帝方法”（God Methods）中的逻辑（如 VLM 模型路由算法）时，一定要极其小心其对实例内部缓存机制（如 `self._vlm_provider_cache` LRU Cache）的依赖。如果在重构为静态函数或外部类方法时，错误地对字典等可变状态进行修改方式不当，或者忽视了内部的副作用更新（如 `move_to_end`），会导致 LRU 淘汰机制悄无声息地全面瘫痪（引发内存泄漏或重连风暴）。
+   **避坑指南**：对于包含此类隐式状态副作用的方法提取，首选将其声明为一个需要显式注入 Cache 引用的纯净委托（例如 Router 外部方法传入实例级的缓存字典按引用修改），并在接口代码中明确保留对架构决策（如 `DESIGN-5`）的传承注释，以此划定不可越轨的状态流转边界。
+
+10. **XML 解析不可轻信 (Untrusted Regex Extraction in Fallbacks)**：
+    在补救由于大模型能力退化（或本地微调模型缺陷）导致的结构化字段丢失 (如 `empty tool_calls`) 时，采用基于正则的 Fallback 提取（例如从 `content` 抽取 `<tool_use>`）会遭遇防不胜防的假阳性与 Prompt Injection 攻击测试。
+    **避坑指南**：绝对禁止无条件相信提取出的 XML 标签。必须：① 绑定当次对话运行时白名单 (`valid_tool_names` intersection) 来严格过滤不存在的意图；② 坚守“只读策略 (Read-Only)”，提取归提取，绝不要试图为了美观去破坏性地 `replace` 掉 `content` 中的 XML 原文，否则会导致 Streaming 流式合并阶段不可预料的残废；③ 提取出的补救工具必须 100% 毫无特权地流经原有的 L1+HITL 标准安全中间件拦截网。
+
+11. **Streaming API 行为隔离的重构盲区 (Streaming API Parsing Isolation Omission)**：
+    很多 LLM 代理框架在使用提供商 (Provider) 级别封装时，非流式 (`chat`) 与流式 (`stream_chat`) 经常是两段**完全解耦、独立执行**的代码分岔逻辑。在做全局级别的能力干预（如引入 XML 工具兜底解析、Trace-ID 注入等）时，往往会因为只修改了大家最熟悉的 `_parse_response()` 统一收口，而彻底遗漏了 `stream_chat` 内部由开发者手动编写的 Delta 累计与 Chunk 组装阶段！这会导致同一套逻辑在普通对话中完美生效，但一切换到流式调用就“神奇失效并摆烂报错”。
+    **避坑指南**：任何涉及 LLM Provider 数据进出的架构修改（Payload 解析补救、Metric 统计、安全过滤），必须**强制保持双线同构（Dual-Path Isomorphism）**检查。即：改了 `chat` / `_parse_response`，必须捏着鼻子去 `stream_chat` / `AsyncIterator` 结构内部的最后 `break`/`finish` 组装点，把同一套业务逻辑一字不差地复现进去。不要幻想底层的统一。
+
+12. **Windows 进程树孤儿灾难 (Windows Process Tree Orphan Disaster)**：
+    在实现类似 `Coordinator` 模式的跨进程真并发调度时，如果只保留 Python 的 `Popen` 对象而不加以系统级脱离挂载（如 `CREATE_NEW_PROCESS_GROUP`），当主 Agent 意外崩溃或被强杀 (Ctrl+C) 时，会直接导致派生的大量 Worker 进程变为孤儿留守在后台，引发可怕的端口占用和 API 请求泄漏（资源风暴）。
+    **避坑指南**：在涉及长期进程分离（Daemon-like Subprocess）时：① 必须在 `Popen` 唤起时附带系统级的 `creationflags=subprocess.CREATE_NEW_PROCESS_GROUP` 控制解绑（限 Windows，Unix 下使用 `start_new_session=True`）；② 必须在架构入口硬编码 `atexit.register` 注册全局清理程序；③ 不能仅仅用 Python 层面的 `process.kill()`，必须彻底用 `taskkill /F /T /PID` (Windows) 或发送 `SIGTERM` 给整个进程组来强制切断子树。
+
+13. **Cron 副作用检测禁止依赖 LLM 文本（LLM Text vs. Structured Trace for Side-Effect Detection）**：
+    在 Cron 执行引擎中，为防止重复执行已完成的副作用操作（如重复发送邮件），禁止通过解析 LLM 响应的自由文本（如匹配 `"send_email"` / `"邮件已发送"` 等关键词）来判断副作用是否执行。LLM 措辞多变，假阳性（失败的工具调用被误判为成功）会导致邮件静默丢失，假阴性（LLM 换了措辞）则导致重复发送，且多语言场景下关键词列表不可扩展。
+    **避坑指南**：副作用检测必须基于底层的**结构化工具执行遥测**（如 `TraceArchive.get_tool_calls(trace_id)`），从工具调用记录中确认特定工具（如 `outlook_send_email`）的执行状态（`status == "success"`）。同样原则适用于一切"是否已执行过 X 操作"的判断场景——永远"看它做了什么"，而不是"看它说了什么"。（参见 ADR-44）
+
+14. **Cron 重试必须有硬性熔断阈值（Retry Loops Must Have Hard Caps）**：
+    在定时任务（Cron）执行失败后，若盲目追加固定间隔重试（如 15-min retry），且不设置执行次数上限，会在依赖项（如 SSRS）长期不可用时造成日内无限循环，重复消耗 API Token 并产生多封重复邮件。条件判断 `retry_ms < next_cron_run_at_ms` 无法覆盖这一场景，因为重试时刻永远早于次日自然触发时刻。
+    **避坑指南**：所有有副作用的 Cron Job 必须在 State 中维护 `retry_count`，并设置明确的 `MAX_RETRIES` 熔断阈值（建议 = 1）。超出后，状态直接锁定为 `error_fatal`（不可自动恢复终态），触发最高级告警要求人工介入，并停止一切后续自动重试。新周期成功后再重置计数器。（参见 ADR-44）
+

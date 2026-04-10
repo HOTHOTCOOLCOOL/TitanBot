@@ -348,6 +348,31 @@ class ReliabilityConfig(Base):
     memory_backup_count: int = 5          # Max rolling MEMORY.md .bak files (0 = disabled)
 
 
+class ExperimentalConfig(Base):
+    """Phase 41: Experimental feature flags for grey deployment."""
+
+    middleware_enabled: bool = False  # Enable onion middleware pipeline (Phase 41)
+    xml_fallback_enabled: bool = True   # Settings to control fallback xml-tool parsing
+
+
+class FastModelConfig(Base):
+    """Fast model configuration for low-latency tasks (e.g. conversational routing)."""
+
+    enabled: bool = False
+    model: str | None = None
+
+
+class CoordinatorConfig(Base):
+    """Phase 38: Coordinator Mode Configuration."""
+
+    enabled: bool = False
+    max_workers: int = 4
+    worker_timeout: int = 300
+    heartbeat_interval: int = 10
+    sandbox_root: str = "workspace/workers"
+    ipc_mode: str = "http"
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
@@ -363,6 +388,9 @@ class AgentsConfig(Base):
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     verification: VerificationConfig = Field(default_factory=VerificationConfig)
     reliability: ReliabilityConfig = Field(default_factory=ReliabilityConfig)
+    experimental: ExperimentalConfig = Field(default_factory=ExperimentalConfig)
+    fast_model: FastModelConfig = Field(default_factory=FastModelConfig)
+    coordinator: CoordinatorConfig = Field(default_factory=CoordinatorConfig)
 
 
 class ProviderConfig(Base):

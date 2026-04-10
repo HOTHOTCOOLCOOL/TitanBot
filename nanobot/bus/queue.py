@@ -162,6 +162,11 @@ class MessageBus:
 
         Errors in individual subscribers are logged but never propagate.
         """
+        from nanobot.utils.trace_context import get_current_trace_id
+        tid = get_current_trace_id()
+        if tid != "no-trace":
+            event.metadata["trace_id"] = tid
+
         # Topic-specific subscribers
         for callback in self._event_subscribers.get(event.event_type, []):
             try:

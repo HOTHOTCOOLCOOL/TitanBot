@@ -28,7 +28,8 @@ class CustomProvider(LLMProvider):
             kwargs.update(tools=tools, tool_choice="auto")
         try:
             logger.info(f"Sending request to custom provider: {self._client.base_url}")
-            return self._parse(await self._client.chat.completions.create(**kwargs))
+            _valid_tools = frozenset(t["function"]["name"] for t in (tools or []) if "function" in t)
+            return self._parse(await self._client.chat.completions.create(**kwargs), valid_tools=_valid_tools)
         except Exception as e:
             logger.error(f"Error calling custom provider at {self._client.base_url} (HTTP 502/Gateway timeout is common for LocalLLM during cold starts). Full exception: {e}", exc_info=True)
             return LLMResponse(
@@ -36,7 +37,7 @@ class CustomProvider(LLMProvider):
                 finish_reason="error"
             )
 
-    def _parse(self, response: Any) -> LLMResponse:
+    def _parse(self, response: Any, valid_tools: frozenset[str] = frozenset()) -> LLMResponse:
         choice = response.choices[0]
         msg = choice.message
         tool_calls = [
@@ -44,6 +45,20 @@ class CustomProvider(LLMProvider):
                             arguments=json_repair.loads(tc.function.arguments) if isinstance(tc.function.arguments, str) else tc.function.arguments)
             for tc in (msg.tool_calls or [])
         ]
+        if not tool_calls and msg.content and valid_tools:
+            _cfg_enabled = True
+            try:
+                from nanobot.config.loader import get_config
+                cfg = get_config()
+                _cfg_enabled = getattr(getattr(cfg.agents, "experimental", None), "xml_fallback_enabled", True)
+            except Exception:
+                pass
+            if _cfg_enabled:
+                from nanobot.providers.xml_fallback_parser import XmlFallbackParser
+                for rc in XmlFallbackParser.extract(msg.content, valid_tools, "custom"):
+                    tool_calls.append(ToolCallRequest(
+                        id=rc["id"], name=rc["name"], arguments=rc["arguments"],
+                    ))
         u = response.usage
         return LLMResponse(
             content=msg.content, tool_calls=tool_calls, finish_reason=choice.finish_reason or "stop",

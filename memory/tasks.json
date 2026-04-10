@@ -1,0 +1,29 @@
+{
+  "tasks": [],
+  "experiences": [
+    {
+      "trigger": "用户要求发布时没有带标签",
+      "prompt": "USER DIRECTIVE (Migrated): Avoid Mistake: 直接输出了代码，忘记了用户的隐式偏好. Correction: 每次输出代码前检查上下文是否有特殊的 tag 或者 pre-hook 要求",
+      "action_type": "correction",
+      "success_count": 1,
+      "fail_count": 0,
+      "created_at": "2026-04-07",
+      "version": 1
+    },
+    {
+      "trigger": "用户要求发布时没有带标签",
+      "prompt": "USER DIRECTIVE (Migrated): Avoid Mistake: 直接输出了代码，忘记了用户的隐式偏好. Correction: 每次输出代码前检查上下文是否有特殊的 tag 或者 pre-hook 要求",
+      "action_type": "correction"
+    },
+    {
+      "trigger": "在子代理中执行了危险命令",
+      "prompt": "USER DIRECTIVE (Migrated): Avoid Mistake: 旧版 loop 没有经过白名单过滤器. Correction: 子任务必须使用 ToolRegistry 的 safe 工具集，不能绕过洋葱模型",
+      "action_type": "correction",
+      "success_count": 1,
+      "fail_count": 0,
+      "created_at": "2026-04-07",
+      "version": 1
+    }
+  ],
+  "updated_at": "2026-04-07T10:55:16.840369"
+}

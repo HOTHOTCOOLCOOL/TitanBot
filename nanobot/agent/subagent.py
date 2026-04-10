@@ -37,6 +37,7 @@ class SubagentManager:
         brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
+        agent_loop_ref: Any = None,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.provider = provider
@@ -48,6 +49,7 @@ class SubagentManager:
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
+        self.agent_loop_ref = agent_loop_ref
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
     
     async def spawn(
@@ -69,7 +71,9 @@ class SubagentManager:
         Returns:
             Status message indicating the subagent was started.
         """
-        task_id = str(uuid.uuid4())[:8]
+        from nanobot.utils.trace_context import get_current_trace_id
+        parent_trace = get_current_trace_id()
+        task_id = f"t-{uuid.uuid4().hex[:8]}"
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
         
         origin = {
@@ -79,7 +83,7 @@ class SubagentManager:
         
         # Create background task
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin)
+            self._run_subagent(task_id, task, display_label, origin, parent_trace)
         )
         self._running_tasks[task_id] = bg_task
         
@@ -95,116 +99,67 @@ class SubagentManager:
         task: str,
         label: str,
         origin: dict[str, str],
+        parent_trace: str | None = None,
     ) -> None:
-        """Execute the subagent task and announce the result."""
-        logger.info(f"Subagent [{task_id}] starting task: {label}")
+        """Execute the subagent task and announce the result using the main AgentLoop."""
+        from nanobot.utils.trace_context import _trace_id_var, _route_tags_var
+        t_token = _trace_id_var.set(task_id)
+        r_token = _route_tags_var.set(frozenset())
+        
+        logger.info(f"Subagent [{task_id}] starting task: {label}. parent_trace={parent_trace}")
         
         try:
-            # Build subagent tools (no message tool, no spawn tool)
-            tools = ToolRegistry()
-            allowed_dir = self.workspace if self.restrict_to_workspace else None
-            tools.register(ReadFileTool(allowed_dir=allowed_dir))
-            tools.register(WriteFileTool(allowed_dir=allowed_dir))
-            tools.register(EditFileTool(allowed_dir=allowed_dir))
-            tools.register(ListDirTool(allowed_dir=allowed_dir))
-            tools.register(ExecTool(
-                working_dir=str(self.workspace),
-                timeout=self.exec_config.timeout,
-                restrict_to_workspace=self.restrict_to_workspace,
-            ))
-            tools.register(WebSearchTool(api_key=self.brave_api_key))
-            tools.register(WebFetchTool())
+            # Build subagent sandbox
+            sandbox = self.workspace / "workers" / task_id
+            sandbox.mkdir(parents=True, exist_ok=True)
+
+            # Build subagent tools (restricted logic: no message, no spawn, no coordinator, NO EXEC)
+            restricted_tools = ToolRegistry()
+            allowed_dir = sandbox if self.restrict_to_workspace else None
+            restricted_tools.register(ReadFileTool(allowed_dir=allowed_dir))
+            restricted_tools.register(WriteFileTool(allowed_dir=allowed_dir))
+            restricted_tools.register(EditFileTool(allowed_dir=allowed_dir))
+            restricted_tools.register(ListDirTool(allowed_dir=allowed_dir))
+            restricted_tools.register(WebSearchTool(api_key=self.brave_api_key))
+            restricted_tools.register(WebFetchTool())
+            
+            # Setup context for specific tools that need it
+            for name in ["message", "spawn", "cron", "draw_image"]:
+                tool = restricted_tools.get(name)
+                if tool and hasattr(tool, "set_context"):
+                    tool.set_context("system", f"worker:{task_id}")
             
             # Build messages with subagent-specific prompt
-            system_prompt = self._build_subagent_prompt(task)
-            messages: list[dict[str, Any]] = [
+            system_prompt = self._build_subagent_prompt(task_id, task, sandbox)
+            initial_messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task},
             ]
             
-            # Run agent loop (limited iterations)
-            max_iterations = 15
-            iteration = 0
-            final_result: str | None = None
-            
-            # B3: Cache Config() once before the loop (was re-instantiated per iteration)
-            # I1: Use process-level singleton instead of new Config()
-            from nanobot.config.loader import get_config
-            config = get_config()
+            if not self.agent_loop_ref:
+                raise RuntimeError("SubagentManager missing agent_loop_ref. Cannot run subagent.")
 
-            while iteration < max_iterations:
-                iteration += 1
-                
-                # Determine if this turn requires the VLM
-                target_model = self.model
-                
-                if config.agents.vlm.enabled and config.agents.vlm.model:
-                    has_image = False
-                    for msg in messages:
-                        if isinstance(msg.get("content"), list):
-                            for block in msg["content"]:
-                                if block.get("type") == "image_url":
-                                    has_image = True
-                                    break
-                        if has_image:
-                            break
-                    
-                    if has_image:
-                        target_model = config.agents.vlm.model
-                        logger.debug(f"Image detected in subagent context. Routing to VLM: {target_model}")
-
-                response = await self.provider.chat(
-                    messages=messages,
-                    tools=tools.get_definitions(),
-                    model=target_model,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
-                
-                if response.has_tool_calls:
-                    # Add assistant message with tool calls
-                    tool_call_dicts = [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.name,
-                                "arguments": json.dumps(tc.arguments),
-                            },
-                        }
-                        for tc in response.tool_calls
-                    ]
-                    messages.append({
-                        "role": "assistant",
-                        "content": response.content or "",
-                        "tool_calls": tool_call_dicts,
-                    })
-                    
-                    # Execute tools
-                    for tool_call in response.tool_calls:
-                        args_str = json.dumps(tool_call.arguments)
-                        logger.debug(f"Subagent [{task_id}] executing: {tool_call.name} with arguments: {args_str}")
-                        result = await tools.execute(tool_call.name, tool_call.arguments)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "name": tool_call.name,
-                            "content": result,
-                        })
-                else:
-                    final_result = response.content
-                    break
+            # Delegate completely to the middleware-protected agent loop
+            final_content, _, _ = await self.agent_loop_ref._run_agent_loop(
+                initial_messages,
+                channel="system",
+                chat_id=f"worker:{task_id}",
+                tool_registry_override=restricted_tools,
+            )
             
-            if final_result is None:
-                final_result = "Task completed but no final response was generated."
+            if final_content is None:
+                final_content = "Task completed but no final response was generated, or loop aborted."
             
             logger.info(f"Subagent [{task_id}] completed successfully")
-            await self._announce_result(task_id, label, task, final_result, origin, "ok")
+            await self._announce_result(task_id, label, task, final_content, origin, "ok")
             
         except Exception as e:
             error_msg = f"Error: {str(e)}"
             logger.error(f"Subagent [{task_id}] failed: {e}")
             await self._announce_result(task_id, label, task, error_msg, origin, "error")
+        finally:
+            _trace_id_var.reset(t_token)
+            _route_tags_var.reset(r_token)
     
     async def _announce_result(
         self,
@@ -216,6 +171,7 @@ class SubagentManager:
         status: str,
     ) -> None:
         """Announce the subagent result to the main agent via the message bus."""
+        from nanobot.utils.trace_context import get_current_trace_id
         status_text = "completed successfully" if status == "ok" else "failed"
         
         announce_content = f"""[Subagent '{label}' {status_text}]
@@ -233,12 +189,13 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
             sender_id="subagent",
             chat_id=f"{origin['channel']}:{origin['chat_id']}",
             content=announce_content,
+            metadata={"trace_id": get_current_trace_id()},
         )
         
         await self.bus.publish_inbound(msg)
         logger.debug(f"Subagent [{task_id}] announced result to {origin['channel']}:{origin['chat_id']}")
     
-    def _build_subagent_prompt(self, task: str) -> str:
+    def _build_subagent_prompt(self, task_id: str, task: str, sandbox: Path) -> str:
         """Build a focused system prompt for the subagent."""
         from datetime import datetime
         import time as _time
@@ -250,7 +207,7 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
 ## Current Time
 {now} ({tz})
 
-You are a subagent spawned by the main agent to complete a specific task.
+You are a subagent spawned (task_id: {task_id}) by the main agent to complete a specific task.
 
 ## Rules
 1. Stay focused - complete only the assigned task, nothing else
@@ -259,18 +216,19 @@ You are a subagent spawned by the main agent to complete a specific task.
 4. Be concise but informative in your findings
 
 ## What You Can Do
-- Read and write files in the workspace
-- Execute shell commands
+- Read and write files in the workspace / sandbox
 - Search the web and fetch web pages
 - Complete the task thoroughly
 
 ## What You Cannot Do
 - Send messages directly to users (no message tool available)
 - Spawn other subagents
+- Execute shell commands (exec tool removed for security)
 - Access the main agent's conversation history
 
 ## Workspace
-Your workspace is at: {self.workspace}
+Your isolated sandbox is at: {sandbox}
+Main workspace is at: {self.workspace}
 Skills are available at: {self.workspace}/skills/ (read SKILL.md files as needed)
 
 When you have completed the task, provide a clear summary of your findings or actions."""

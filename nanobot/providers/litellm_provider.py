@@ -129,7 +129,7 @@ class LiteLLMProvider(LLMProvider):
         # LiteLLM wraps HTTP errors with status in the message
         if "timeout" in err_str or "timed out" in err_str:
             return True
-        if "connection" in err_str and "refused" in err_str:
+        if "connection" in err_str:
             return True
         if any(f"{code}" in err_str for code in (500, 502, 503, 504, 529)):
             return True
@@ -216,7 +216,10 @@ class LiteLLMProvider(LLMProvider):
             try:
                 response = await acompletion(**kwargs)
                 _elapsed = _time.monotonic() - _start
-                parsed = self._parse_response(response)
+                _valid_tools = frozenset(
+                    t["function"]["name"] for t in (tools or []) if "function" in t
+                )
+                parsed = self._parse_response(response, valid_tools=_valid_tools)
                 _tokens = parsed.usage.get("total_tokens", "?") if parsed.usage else "?"
                 if attempt > 0:
                     logger.info(f"LLM call succeeded on retry {attempt}: model={model}, duration={_elapsed:.1f}s, tokens={_tokens}")
@@ -247,7 +250,7 @@ class LiteLLMProvider(LLMProvider):
             finish_reason="error",
         )
     
-    def _parse_response(self, response: Any) -> LLMResponse:
+    def _parse_response(self, response: Any, valid_tools: frozenset[str] = frozenset()) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""
         choice = response.choices[0]
         message = choice.message
@@ -276,8 +279,32 @@ class LiteLLMProvider(LLMProvider):
         
         reasoning_content = getattr(message, "reasoning_content", None)
         
+        content = message.content
+
+        # ── XML Fallback (only when no structured tool_calls, config-gated) ──
+        if not tool_calls and content and valid_tools:
+            _cfg_enabled = True
+            try:
+                from nanobot.config.loader import get_config
+                cfg = get_config()
+                _cfg_enabled = getattr(
+                    getattr(cfg.agents, "experimental", None),
+                    "xml_fallback_enabled", True,
+                )
+            except Exception:
+                pass
+
+            if _cfg_enabled:
+                from nanobot.providers.xml_fallback_parser import XmlFallbackParser
+                provider_label = getattr(self, "_gateway", None)
+                provider_label = provider_label.name if provider_label else "unknown"
+                for rc in XmlFallbackParser.extract(content, valid_tools, provider_label):
+                    tool_calls.append(ToolCallRequest(
+                        id=rc["id"], name=rc["name"], arguments=rc["arguments"],
+                    ))
+        
         return LLMResponse(
-            content=message.content,
+            content=content,
             tool_calls=tool_calls,
             finish_reason=choice.finish_reason or "stop",
             usage=usage,
@@ -395,6 +422,31 @@ class LiteLLMProvider(LLMProvider):
                             name=acc["name"],
                             arguments=args_dict,
                         ))
+
+                    content = "".join(_content_parts)
+                    if not parsed_tool_calls and content and tools:
+                        _valid_tools = frozenset(
+                            t["function"]["name"] for t in tools if "function" in t
+                        )
+                        _cfg_enabled = True
+                        try:
+                            from nanobot.config.loader import get_config
+                            cfg = get_config()
+                            _cfg_enabled = getattr(
+                                getattr(cfg.agents, "experimental", None),
+                                "xml_fallback_enabled", True,
+                            )
+                        except Exception:
+                            pass
+
+                        if _cfg_enabled and _valid_tools:
+                            from nanobot.providers.xml_fallback_parser import XmlFallbackParser
+                            provider_label = getattr(self, "_gateway", None)
+                            provider_label = provider_label.name if provider_label else "unknown"
+                            for rc in XmlFallbackParser.extract(content, _valid_tools, provider_label):
+                                parsed_tool_calls.append(ToolCallRequest(
+                                    id=rc["id"], name=rc["name"], arguments=rc["arguments"],
+                                ))
 
                     _elapsed = _time.monotonic() - _start
                     _total = _usage.get("total_tokens", "?")

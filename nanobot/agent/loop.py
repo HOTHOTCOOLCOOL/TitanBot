@@ -20,6 +20,7 @@ from nanobot.agent.context import ContextBuilder
 from nanobot.agent.tools.registry import ToolRegistry
 
 from nanobot.agent.subagent import SubagentManager
+from nanobot.agent.coordinator import CoordinatorManager
 from nanobot.agent.task_tracker import TaskTracker, TaskStatus
 from nanobot.agent.knowledge_workflow import KnowledgeWorkflow
 from nanobot.agent.personalization import MemoryDistiller
@@ -29,6 +30,7 @@ from nanobot.agent.memory_manager import MemoryManager
 from nanobot.agent.state_handler import StateHandler
 from nanobot.agent.verification import VerificationLayer
 from nanobot.utils.metrics import metrics
+from nanobot.agent.routing import IntentClassifier, ModelRouter
 
 
 
@@ -62,6 +64,8 @@ _FAIL_INDICATORS = [
     "not found", "no emails found",
     "执行失败", "操作失败", "执行出错", "运行失败", "获取失败",
 ]
+
+# Phase 39 / 42C: Chitchat routing extracted to nanobot.agent.routing
 
 # ── Phase 40A-1: Tool Result Truncation Constants ──
 _MAX_TOOL_RESULT_CHARS: int = 16_000   # 硬上限：约 8000 token
@@ -208,6 +212,21 @@ def _build_action_history_summary(action_log: list[dict]) -> str:
     lines.append("For pending (👁️) actions, check the screenshot to verify before proceeding.")
     return "\n".join(lines)
 
+# Phase 41: Promoted from inline closure to module-level for middleware import.
+def _is_error_result(r) -> bool:
+    """Check if a tool execution result represents an error."""
+    if isinstance(r, BaseException):
+        return True
+    if isinstance(r, str):
+        s = str(r).strip()
+        if s.startswith("Error:"):
+            return True
+        # Phase 33: Diagnostic screenshots embed error context in ANCHORS text
+        if "⚠️ ACTION FAILED:" in s:
+            return True
+    return False
+
+
 class AgentLoop:
     """
     The agent loop is the core processing engine.
@@ -273,6 +292,16 @@ class AgentLoop:
             brave_api_key=brave_api_key,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            agent_loop_ref=self,
+        )
+        
+        coord_cfg = getattr(_cfg.agents, 'coordinator', None)
+        self.coordinator_manager = CoordinatorManager(
+            workspace=workspace,
+            bus=bus,
+            enabled=getattr(coord_cfg, 'enabled', False) if coord_cfg else False,
+            max_workers=getattr(coord_cfg, 'max_workers', 4) if coord_cfg else 4,
+            sandbox_root=getattr(coord_cfg, 'sandbox_root', "workspace/workers") if coord_cfg else "workspace/workers"
         )
         
         self._running = False
@@ -313,22 +342,13 @@ class AgentLoop:
         from nanobot.agent.tool_setup import setup_all_tools
         setup_all_tools(self)
 
-        # D2: Cached instances for ReflectionStore and KnowledgeGraph (lazy-init)
-        self._reflection_store = None
+        # D2: Cached instances for KnowledgeGraph (lazy-init)
         self._knowledge_graph = None
 
         # Phase 31: Verification Layer (lazy-init after config is available)
         self._verification: VerificationLayer | None = None
 
-    def _get_reflection_store(self):
-        """D2: Lazy-cached ReflectionStore (avoids disk I/O per message)."""
-        if self._reflection_store is None:
-            try:
-                from nanobot.agent.reflection import ReflectionStore
-                self._reflection_store = ReflectionStore(self.workspace)
-            except Exception:
-                pass
-        return self._reflection_store
+
 
     def _get_knowledge_graph(self):
         """D2: Lazy-cached KnowledgeGraph (avoids disk I/O per message)."""
@@ -361,7 +381,6 @@ class AgentLoop:
                 provider=self.provider,
                 model=self.model,
                 knowledge_workflow=self.knowledge_workflow,
-                reflection_store=self._get_reflection_store(),
             )
         return self._verification
     
@@ -385,12 +404,13 @@ class AgentLoop:
         await connect_mcp_servers(self._mcp_servers, self.tools, self._mcp_stack)
 
     # Names of tools that need channel/chat_id routing context set per message
-    _CONTEXTUAL_TOOLS = ("message", "spawn", "cron", "draw_image")
+    _CONTEXTUAL_TOOLS = ("message", "spawn", "cron", "draw_image", "coordinator")
 
-    def _set_tool_context(self, channel: str, chat_id: str) -> None:
+    def _set_tool_context(self, channel: str, chat_id: str, tool_registry_override: ToolRegistry | None = None) -> None:
         """Update context for all tools that support routing info (duck-typed)."""
+        current_tools = tool_registry_override or self.tools
         for name in self._CONTEXTUAL_TOOLS:
-            tool = self.tools.get(name)
+            tool = current_tools.get(name)
             if tool and hasattr(tool, "set_context"):
                 tool.set_context(channel, chat_id)
 
@@ -516,6 +536,7 @@ class AgentLoop:
         chat_id: str | None = None,
         injection_used: int = 0,
         target_model_override: str | None = None,
+        tool_registry_override: ToolRegistry | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """
         Run the agent iteration loop.
@@ -528,6 +549,21 @@ class AgentLoop:
         Returns:
             Tuple of (final_content, list_of_tools_used, tool_calls_with_args).
         """
+        # Phase 41: Middleware pipeline switch (config-driven grey deployment)
+        cfg = self._get_config()
+        _mw_enabled = getattr(
+            getattr(cfg.agents, 'experimental', None),
+            'middleware_enabled', False
+        )
+        if _mw_enabled:
+            return await self._run_agent_loop_v2(
+                initial_messages, channel, chat_id,
+                injection_used, target_model_override,
+                tool_registry_override=tool_registry_override,
+            )
+
+        # ─── Legacy path (original code below — untouched) ───
+        current_tools = tool_registry_override or self.tools
         messages = initial_messages
         iteration = 0
         final_content = None
@@ -562,72 +598,15 @@ class AgentLoop:
                         messages[0]["content"] = sys_content + _ACTION_HISTORY_SENTINEL + history_summary
                         _loop_injection_used += history_len
 
-            # Determine if this turn requires the VLM
-            # Phase 33: Only check the most recent N messages for images.
-            # This prevents the agent from being permanently downgraded to the
-            # weaker VLM model after old screenshots scroll out of relevance.
-            # Phase 35 fix: Reduced from 4 to 2 to prevent post-action verify
-            # screenshots from permanently trapping the agent in the weaker VLM.
-            # With window=2, after the VLM processes one screenshot and responds,
-            # the next turn routes back to the main model (stronger reasoning).
-            _VLM_RECENCY_WINDOW = 2
-            target_model = self.model
             config = self._get_config()
-            
-            provider_for_turn = self.provider
-
-            if target_model_override:
-                target_model = target_model_override
-                logger.debug(f"Target model overridden to: {target_model}")
-                p_conf = config.get_provider(target_model)
-                if not p_conf:
-                    logger.warning(f"Provider config missing for override {target_model}, falling back to default")
-                    target_model = self.model
-                else:
-                    if target_model not in self._vlm_provider_cache:
-                        if len(self._vlm_provider_cache) >= 4:
-                            self._vlm_provider_cache.popitem(last=False)
-                        from nanobot.providers.factory import ProviderFactory
-                        self._vlm_provider_cache[target_model] = ProviderFactory.get_provider(target_model, config)
-                    else:
-                        self._vlm_provider_cache.move_to_end(target_model)
-                    provider_for_turn = self._vlm_provider_cache[target_model]
-
-            if not target_model_override and config.agents.vlm.enabled and config.agents.vlm.model:
-                has_image = False
-                recent_msgs = messages[-_VLM_RECENCY_WINDOW:] if len(messages) > _VLM_RECENCY_WINDOW else messages
-                for msg in recent_msgs:
-                    if isinstance(msg.get("content"), list):
-                        for block in msg["content"]:
-                            if block.get("type") == "image_url":
-                                has_image = True
-                                break
-                    if has_image:
-                        break
-                
-                if has_image:
-                    target_model = config.agents.vlm.model
-                    logger.debug(f"Image detected in recent {_VLM_RECENCY_WINDOW} messages. Routing to VLM: {target_model}")
-                    
-                    # B4: Graceful fallback if VLM provider config is missing
-                    p_conf = config.get_provider(target_model)
-                    if not p_conf:
-                        logger.warning(f"VLM provider config missing for {target_model}, falling back to default model")
-                        target_model = self.model
-                    else:
-                        # DESIGN-5: Cache VLM provider to avoid re-creating per turn
-                        if target_model not in self._vlm_provider_cache:
-                            # Phase 31 Retro: evict oldest if cache full (LRU)
-                            if len(self._vlm_provider_cache) >= 4:
-                                self._vlm_provider_cache.popitem(last=False)
-                            from nanobot.providers.factory import ProviderFactory
-                            self._vlm_provider_cache[target_model] = ProviderFactory.get_provider(target_model, config)
-                        else:
-                            # B-2 fix: LRU semantics - move to end on hit
-                            self._vlm_provider_cache.move_to_end(target_model)
-                        provider_for_turn = self._vlm_provider_cache[target_model]
-                else:
-                    logger.debug(f"No images in recent {_VLM_RECENCY_WINDOW} messages. Using main model: {target_model}")
+            target_model, provider_for_turn = ModelRouter.determine_target_model(
+                messages=messages,
+                default_model=self.model,
+                default_provider=self.provider,
+                config=config,
+                vlm_provider_cache=self._vlm_provider_cache,
+                target_model_override=target_model_override,
+            )
 
             # Phase 21E: Check streaming config
             _streaming_enabled = getattr(
@@ -641,7 +620,7 @@ class AgentLoop:
                     response = await asyncio.wait_for(
                         self._stream_llm_call(
                             provider_for_turn, messages, target_model,
-                            channel, chat_id,
+                            channel, chat_id, tool_registry_override=current_tools,
                         ),
                         timeout=_LLM_CALL_TIMEOUT,
                     )
@@ -649,7 +628,7 @@ class AgentLoop:
                     response = await asyncio.wait_for(
                         provider_for_turn.chat(
                             messages=messages,
-                            tools=self.tools.get_definitions(),
+                            tools=current_tools.get_definitions(),
                             model=target_model,
                             temperature=self.temperature,
                             max_tokens=self.max_tokens,
@@ -698,7 +677,7 @@ class AgentLoop:
 
                 # Phase 31 L1: Rigid rule interception (pre-execution)
                 verification = self._get_verification()
-                rule_result = verification.check_rules(response.tool_calls)
+                rule_result = verification.check_rules(response.tool_calls, messages)
                 if not rule_result.passed:
                     # Inject violation feedback as a synthetic tool result
                     # so the LLM can self-correct instead of hard-failing
@@ -713,7 +692,7 @@ class AgentLoop:
                 # Phase 32: Smart HITL Approval Check
                 hitl_suspended = False
                 for tc in response.tool_calls:
-                    tool_impl = self.tools.get(tc.name)
+                    tool_impl = current_tools.get(tc.name)
                     if tool_impl and hasattr(tool_impl, "get_risk_tier"):
                         from nanobot.agent.tools.base import RiskTier
                         tier = tool_impl.get_risk_tier(tc.arguments)
@@ -792,7 +771,7 @@ class AgentLoop:
                 async def _exec_tool(tc):
                     _start = time.monotonic()
                     with metrics.timer("tool_execution"):
-                        res = await self.tools.execute(tc.name, tc.arguments)
+                        res = await current_tools.execute(tc.name, tc.arguments)
                     _elapsed_ms = (time.monotonic() - _start) * 1000
                     metrics.increment("tool_executions_count")
                     logger.debug(f"Tool {tc.name} completed in {_elapsed_ms / 1000:.1f}s")
@@ -1033,6 +1012,278 @@ class AgentLoop:
                 
                 break
 
+        # Unconditional trace dump for side-effect checking (ADR-44)
+        from nanobot.utils.trace_context import get_current_trace_id
+        tid = get_current_trace_id()
+        if tid != "no-trace":
+            try:
+                from nanobot.agent.trace_archive import TraceArchive
+                archive = TraceArchive(self.workspace)
+                archive.dump_tool_calls(tid, tool_calls_with_args, _action_log)
+            except Exception as e:
+                logger.debug(f"Failed to dump tool calls for {tid}: {e}")
+
+        return final_content, tools_used, tool_calls_with_args
+
+    # ── Phase 41: Middleware-based agent loop helpers ──────────────
+
+    def _get_middleware_pipeline(self):
+        """Phase 41: Lazy-init the middleware pipeline."""
+        if not hasattr(self, '_pipeline') or self._pipeline is None:
+            from nanobot.agent.middleware.pipeline import MiddlewarePipeline
+            from nanobot.agent.middleware.metrics import MetricsMiddleware
+            from nanobot.agent.middleware.circuit_breaker import CircuitBreakerMiddleware
+            from nanobot.agent.middleware.action_history import ActionHistoryMiddleware
+            from nanobot.agent.middleware.verification_mw import VerificationMiddleware
+            from nanobot.agent.middleware.hitl import HITLMiddleware
+            from nanobot.agent.middleware.crash_recovery import CrashRecoveryMiddleware
+            from nanobot.agent.middleware.flood_guard import FloodGuardMiddleware
+            from nanobot.agent.middleware.tool_executor import ToolExecutor
+            self._pipeline = MiddlewarePipeline(
+                middlewares=[
+                    MetricsMiddleware(),              # Outermost: timing
+                    CircuitBreakerMiddleware(self),    # Failure detection
+                    ActionHistoryMiddleware(),         # Browser/RPA history
+                    VerificationMiddleware(self),      # L1 rules
+                    HITLMiddleware(self),              # Approval gate
+                    CrashRecoveryMiddleware(self),     # WAL checkpoint (innermost)
+                    FloodGuardMiddleware(),            # Post-only: message floods
+                ],
+                executor=ToolExecutor(self),
+            )
+        return self._pipeline
+
+    async def _call_llm_for_turn(
+        self,
+        messages: list[dict],
+        channel: str | None,
+        chat_id: str | None,
+        target_model_override: str | None,
+        loop_injection_used: int,
+        tool_registry_override: ToolRegistry | None = None,
+    ):
+        """Phase 41: Extract the LLM call logic (VLM routing + streaming) from _run_agent_loop.
+
+        Returns:
+            LLMResponse or None (on timeout).
+        """
+        config = self._get_config()
+
+        # Phase 42C: Decoupled target model and VLM routing logic to ModelRouter
+        target_model, provider_for_turn = ModelRouter.determine_target_model(
+            messages=messages,
+            default_model=self.model,
+            default_provider=self.provider,
+            config=config,
+            vlm_provider_cache=self._vlm_provider_cache,
+            target_model_override=target_model_override,
+        )
+
+        has_image = any(
+            isinstance(m.get("content"), list) and any(b.get("type") == "image_url" for b in m["content"])
+            for m in messages[-3:]
+        )
+        if has_image:
+            from nanobot.utils.trace_context import add_route_tag, RoutingTag
+            add_route_tag(RoutingTag.VLM_ROUTE)
+
+        # Streaming config
+        _streaming_enabled = getattr(
+            getattr(config.agents, 'streaming', None), 'enabled', False
+        )
+
+        try:
+            with metrics.timer("llm_call"):
+                if _streaming_enabled and channel and chat_id:
+                    response = await asyncio.wait_for(
+                        self._stream_llm_call(
+                            provider_for_turn, messages, target_model,
+                            channel, chat_id, tool_registry_override,
+                        ),
+                        timeout=_LLM_CALL_TIMEOUT,
+                    )
+                else:
+                    response = await asyncio.wait_for(
+                        provider_for_turn.chat(
+                            messages=messages,
+                            tools=(tool_registry_override or self.tools).get_definitions(),
+                            model=target_model,
+                            temperature=self.temperature,
+                            max_tokens=self.max_tokens,
+                        ),
+                        timeout=_LLM_CALL_TIMEOUT,
+                    )
+        except asyncio.TimeoutError:
+            logger.error(f"LLM call timed out after {_LLM_CALL_TIMEOUT}s (model={target_model})")
+            return None
+
+        return response
+
+    async def _run_agent_loop_v2(
+        self,
+        initial_messages: list[dict],
+        channel: str | None = None,
+        chat_id: str | None = None,
+        injection_used: int = 0,
+        target_model_override: str | None = None,
+        tool_registry_override: ToolRegistry | None = None,
+    ) -> tuple[str | None, list[str], list[dict]]:
+        """Phase 41: Middleware-based agent loop.
+
+        This is the v2 replacement for _run_agent_loop that uses the onion
+        middleware pipeline for cross-cutting concerns. The while loop and
+        LLM call/nudge logic remain here; only tool-related concerns
+        (metrics, circuit breaker, L1/L3, HITL, WAL, action history,
+        flood guard) are delegated to middlewares.
+        """
+        from nanobot.agent.middleware.base import TurnContext, TurnAction
+        from nanobot.agent.i18n import msg as i18n_msg
+
+        messages = list(initial_messages)
+        iteration = 0
+        final_content = None
+        tools_used: list[str] = []
+        tool_calls_with_args: list[dict] = []
+
+        # Cross-turn persistent state
+        consecutive_all_exceptions = 0
+        recent_call_sigs: list[str] = []
+        action_log: list[dict] = []
+        message_call_count = 0
+        loop_injection_used = injection_used
+
+        pipeline = self._get_middleware_pipeline()
+
+        while iteration < self.max_iterations:
+            iteration += 1
+
+            # 1. LLM call (VLM routing + streaming)
+            response = await self._call_llm_for_turn(
+                messages, channel, chat_id,
+                target_model_override, loop_injection_used,
+                tool_registry_override=tool_registry_override,
+            )
+            if response is None:
+                final_content = f"⚠️ LLM call timed out after {_LLM_CALL_TIMEOUT}s. Please try again."
+                break
+
+            # Aggregate token usage
+            if response.usage:
+                metrics.record_tokens(
+                    prompt=response.usage.get("prompt_tokens", 0),
+                    completion=response.usage.get("completion_tokens", 0),
+                    total=response.usage.get("total_tokens", 0),
+                )
+
+            # 2. Non-tool response: wait-phrase / fake-completion detection
+            if not response.has_tool_calls:
+                final_content = response.content
+                _cs = (final_content or "").lower()
+
+                # Wait-phrase detection
+                if len(_cs) < 150 and any(p in _cs for p in _WAIT_PHRASES):
+                    _matched_wait = [p for p in _WAIT_PHRASES if p in _cs]
+                    logger.warning(f"Wait-phrase detected {_matched_wait}: {final_content[:80]}")
+                    if channel and chat_id:
+                        await self.bus.publish_outbound(OutboundMessage(
+                            channel=channel, chat_id=chat_id, content=final_content
+                        ))
+                    messages = self.context.add_assistant_message(
+                        messages, final_content, tool_calls=None,
+                        reasoning_content=response.reasoning_content,
+                    )
+                    messages.append({"role": "user", "content": i18n_msg("agent_wait_nudge")})
+                    continue
+
+                # Fake-completion detection
+                if len(_cs) < 150 and any(p in _cs for p in _FAKE_COMPLETION_PHRASES):
+                    logger.warning(f"Fake-completion detected: {final_content[:80]}")
+                    messages = self.context.add_assistant_message(
+                        messages, final_content, tool_calls=None,
+                        reasoning_content=response.reasoning_content,
+                    )
+                    messages.append({"role": "user", "content": i18n_msg("agent_fake_completion_nudge")})
+                    continue
+
+                break
+
+            # 3. Has tool calls — build TurnContext and run pipeline
+            tool_call_dicts = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": json.dumps(tc.arguments)
+                    }
+                }
+                for tc in response.tool_calls
+            ]
+            messages = self.context.add_assistant_message(
+                messages, response.content, tool_call_dicts,
+                reasoning_content=response.reasoning_content,
+            )
+
+            # Record tool calls for return value
+            for tc in response.tool_calls:
+                tools_used.append(tc.name)
+                tool_calls_with_args.append({"tool": tc.name, "args": tc.arguments})
+                args_str = json.dumps(tc.arguments, ensure_ascii=False)
+                logger.info(f"Tool call: {tc.name}({args_str[:200]})")
+
+            ctx = TurnContext(
+                messages=messages,
+                iteration=iteration,
+                channel=channel,
+                chat_id=chat_id,
+                consecutive_all_exceptions=consecutive_all_exceptions,
+                recent_call_sigs=recent_call_sigs,
+                action_log=action_log,
+                message_call_count=message_call_count,
+                loop_injection_used=loop_injection_used,
+            )
+            ctx.tool_registry_override = tool_registry_override
+            ctx.tool_calls = list(response.tool_calls)
+            ctx.llm_response = response
+
+            await pipeline.run_turn(ctx)
+
+            # 4. Sync cross-turn state back to while-loop variables
+            messages = ctx.messages
+            consecutive_all_exceptions = ctx.consecutive_all_exceptions
+            message_call_count = ctx.message_call_count
+            # recent_call_sigs, action_log are mutable refs — auto-synced
+
+            # 5. Decide while-loop behavior based on TurnAction
+            if ctx.action == TurnAction.ABORT:
+                # P5: L1 violation → continue (let LLM self-correct)
+                if ctx.action_reason == "l1_violation":
+                    continue
+                final_content = ctx.final_content
+                break
+
+            if ctx.action == TurnAction.FINISH:
+                final_content = ctx.final_content
+                break
+
+            # CONTINUE_TOOLS nudge
+            last_tool = response.tool_calls[-1].name if response.tool_calls else ""
+            if last_tool in _CONTINUE_TOOLS:
+                messages.append({"role": "user", "content": i18n_msg("agent_continue_prompt")})
+
+        # Unconditional trace dump for side-effect checking (ADR-44)
+        from nanobot.utils.trace_context import get_current_trace_id
+        tid = get_current_trace_id()
+        if tid != "no-trace":
+            try:
+                from nanobot.agent.trace_archive import TraceArchive
+                archive = TraceArchive(self.workspace)
+                # Note: v2 action log is in context.action_history
+                action_hist = ctx.action_history if 'ctx' in locals() else []
+                archive.dump_tool_calls(tid, tool_calls_with_args, action_hist)
+            except Exception as e:
+                logger.debug(f"Failed to dump tool calls for {tid} in v2 loop: {e}")
+
         return final_content, tools_used, tool_calls_with_args
 
     # ── Phase 21E: streaming helper ──────────────────────────────
@@ -1044,6 +1295,7 @@ class AgentLoop:
         model: str,
         channel: str,
         chat_id: str,
+        tool_registry_override: ToolRegistry | None = None,
     ) -> "LLMResponse":
         """Call provider.stream_chat(), publishing StreamEvents to the bus.
 
@@ -1061,7 +1313,7 @@ class AgentLoop:
 
         async for chunk in provider.stream_chat(
             messages=messages,
-            tools=self.tools.get_definitions(),
+            tools=(tool_registry_override or self.tools).get_definitions(),
             model=model,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
@@ -1278,7 +1530,48 @@ class AgentLoop:
         except Exception as e:
             logger.error(f"Phase 40B: Checkpoint recovery scan failed: {e}")
     
-    async def _process_message(self, msg: InboundMessage, session_key: str | None = None) -> OutboundMessage | None:
+    async def _process_message(
+        self, msg: InboundMessage, session_key: str | None = None
+    ) -> OutboundMessage | None:
+        from nanobot.utils.trace_context import (
+            generate_trace_id, _trace_id_var, _route_tags_var,
+            get_current_trace_id, get_route_tags, RoutingTag, add_route_tag,
+        )
+
+        # 1. 解析 Subagent 回调携带的 parent trace
+        parent_trace_id = (msg.metadata or {}).get("trace_id")
+
+        # 2. 生成本次请求的新 trace
+        new_trace = generate_trace_id()
+        t_token = _trace_id_var.set(new_trace)
+        r_token = _route_tags_var.set(frozenset())
+
+        if parent_trace_id:
+            logger.info(f"Subagent callback from parent trace={parent_trace_id}")
+            add_route_tag(RoutingTag.SUBAGENT_CALLBACK)
+
+        try:
+            out_msg = await self._core_process_message(msg, session_key)
+
+            # 3. 统一出站打标 — 所有 return 路径在此一次性覆盖，零遗漏
+            if out_msg is not None:
+                if out_msg.metadata is None:
+                    out_msg.metadata = {}
+                out_msg.metadata["trace_id"] = new_trace
+                tags = get_route_tags()
+                if tags:
+                    out_msg.metadata["route_tags"] = sorted(tags)
+                if parent_trace_id:
+                    out_msg.metadata["parent_trace_id"] = parent_trace_id
+
+            return out_msg
+
+        finally:
+            # 4. 强制重置 — 防止协程取消后 ContextVar 悬挂（内存泄漏）
+            _trace_id_var.reset(t_token)
+            _route_tags_var.reset(r_token)
+
+    async def _core_process_message(self, msg: InboundMessage, session_key: str | None = None) -> OutboundMessage | None:
         """
         Process a single inbound message.
 
@@ -1318,17 +1611,7 @@ class AgentLoop:
                 
                 from nanobot.agent.commands import _safe_create_task
 
-                # P1: Auto-generate metacognitive reflection memory on failure
-                try:
-                    reflection_store = self._get_reflection_store()
-                    if reflection_store:
-                        _safe_create_task(
-                            reflection_store.generate_reflection(self.provider, self.model, session, user_input),
-                            name="reflection_generation",
-                        )
-                except Exception as e:
-                    logger.error(f"Failed to trigger reflection generation: {e}")
-                
+
                 # P29-1: Auto-generate Directive Signal (Actionable tactical rule)
                 _safe_create_task(
                     kw.extract_and_save_directive(session, user_input),
@@ -1394,63 +1677,22 @@ class AgentLoop:
             if response:
                 return response
 
-        # ── Step 3.5: Fast Intent Routing (Chit-Chat Bypass) ──
-        # Phase 39 v2: Use a fast LLM call to classify and instantly reply to casual chat.
-        current_msg_text = msg.content.strip()
-        if len(current_msg_text) > 0 and len(current_msg_text) <= 50:
-            try:
-                import time
-                config = self._get_config()
-                fast_model = config.agents.fast_model.model if (hasattr(config.agents, 'fast_model') and config.agents.fast_model.enabled and config.agents.fast_model.model) else self.model
-                
-                _router_prompt = (
-                    "判断用户输入是否为纯粹的日常问候或无指令的极短闲聊（例如'你好'、'在吗'、'最近好么'）。\n"
-                    "如果是，请以 '[CHAT]' 开头，回复一句简短友好的纯文本问候语（必须带有[CHAT]前缀）。\n"
-                    "如果用户表述了任何具体意图、任务、问题、或者需要您产生实际回答（例如'今天天气'、'总结一下'、'写代码'），请严格且仅回复 '[TASK]'。"
-                )
-                
-                _router_start = time.time()
-                _router_res = await self.provider.chat(
-                    messages=[
-                        {"role": "system", "content": _router_prompt},
-                        {"role": "user", "content": current_msg_text}
-                    ],
-                    model=fast_model,
-                    temperature=0.3,
-                    max_tokens=60,
-                )
-                _router_text = (_router_res.content or "").strip()
-                logger.debug(f"Fast intent routing (took {time.time()-_router_start:.2f}s): {_router_text}")
-
-                if _router_text.startswith("[CHAT]"):
-                    chitchat_reply = _router_text.replace("[CHAT]", "", 1).strip()
-                    logger.info(f"L0 Fast Routing triggered. Replying instantly: {chitchat_reply}")
-                    
-                    # Log message to session
-                    media_to_pass = msg.media if getattr(msg, 'media', None) else None
-                    session.add_message("user", current_msg_text, media=media_to_pass)
-                    session.add_message("assistant", chitchat_reply)
-                    session.message_count_since_consolidation += 2
-                    self.sessions.save(session)
-
-                    return OutboundMessage(
-                        channel=msg.channel,
-                        chat_id=msg.chat_id,
-                        content=chitchat_reply,
-                    )
-            except Exception as e:
-                logger.warning(f"Fast router failed: {e}. Falling back to standard pipeline.")
+        # ── Phase 42C: Intent Classification ──
+        intent = IntentClassifier.detect_intent(user_input)
+        is_chitchat = (intent == "chitchat_safe")
 
         # ── Step 4: Extract Key → Match Knowledge Base ──
-        try:
-            history = session.get_history(max_messages=10)
-            task_key = await kw.extract_key(msg.content, history=history)
-            match = kw.match_knowledge(task_key)
-        except Exception as e:
-            logger.error(f"Knowledge workflow error (non-fatal): {e}")
-            metrics.increment("knowledge_fallback_count")
-            task_key = None
-            match = None
+        task_key = None
+        match = None
+        
+        if not is_chitchat:
+            try:
+                history = session.get_history(max_messages=10)
+                task_key = await kw.extract_key(msg.content, history=history)
+                match = kw.match_knowledge(task_key)
+            except Exception as e:
+                logger.error(f"Knowledge workflow error (non-fatal): {e}")
+                metrics.increment("knowledge_fallback_count")
 
         if match:
             confidence = match.get("_match_confidence", 0.0)
@@ -1508,11 +1750,11 @@ class AgentLoop:
                 )
                 return await self._execute_with_llm(
                     session, msg, extracted_key=task_key,
-                    few_shot_context=few_shot,
+                    few_shot_context=few_shot, intent=intent
                 )
 
         # ── Step 5: No match → LLM execution ──
-        return await self._execute_with_llm(session, msg, extracted_key=task_key)
+        return await self._execute_with_llm(session, msg, extracted_key=task_key, intent=intent)
 
     def _snip_history(
         self,
@@ -1573,6 +1815,7 @@ class AgentLoop:
         original_request: str | None = None,
         extracted_key: str | None = None,
         few_shot_context: str = "",
+        intent: str = "task",
     ) -> OutboundMessage:
         """Execute a user request via the LLM agent loop.
 
@@ -1593,48 +1836,61 @@ class AgentLoop:
         self._set_tool_context(msg.channel, msg.chat_id)
 
         target_model_override = None
+        if intent == "chitchat_safe":
+            from nanobot.utils.trace_context import add_route_tag, RoutingTag
+            add_route_tag(RoutingTag.CHITCHAT_FAST)
+            config = self._get_config()
+            if hasattr(config.agents, 'fast_model') and config.agents.fast_model.enabled and config.agents.fast_model.model:
+                target_model_override = config.agents.fast_model.model
         
         # P13/Phase 34: Async query rewriting and anchor extraction
         search_query = request_text
         query_anchors = []
-        try:
-            if hasattr(self.context, 'vector_memory') and hasattr(self.context.vector_memory, 'rewrite_query_with_anchors'):
-                history = session.get_history(max_messages=10)
-                search_query, query_anchors = await self.context.vector_memory.rewrite_query_with_anchors(request_text, history)
-        except Exception as e:
-            logger.debug(f"Query rewriting skipped: {e}")
+        if intent != "chitchat_safe":
+            try:
+                if hasattr(self.context, 'vector_memory') and hasattr(self.context.vector_memory, 'rewrite_query_with_anchors'):
+                    history = session.get_history(max_messages=10)
+                    search_query, query_anchors = await self.context.vector_memory.rewrite_query_with_anchors(request_text, history)
+            except Exception as e:
+                logger.debug(f"Query rewriting skipped: {e}")
+        else:
+            logger.info("Chitchat intent detected, skipping query rewrite and overriding target model.")
 
         # Phase 39: Async decouple contextual data pre-fetching
         pre_fetched_rag = None
         pre_fetched_kg = None
-        try:
-            import asyncio
-            kg_instance = self._get_knowledge_graph()
-            
-            def _sync_fetch_both():
-                r = None
-                k = None
-                try:
-                    r = self.context.vector_memory.search(search_query, top_k=3)
-                except Exception:
-                    pass
-                try:
-                    if kg_instance:
-                        from nanobot.config.loader import get_config
-                        if get_config().agents.memory_features.knowledge_graph_enabled:
-                            k = kg_instance.get_entity_context(
-                                search_query,
-                                prefetch_rag=r,
-                                anchors=query_anchors
-                            )
-                except Exception:
-                    pass
-                return r, k
+        if intent != "chitchat_safe":
+            try:
+                import asyncio
+                kg_instance = self._get_knowledge_graph()
                 
-            loop = asyncio.get_running_loop()
-            pre_fetched_rag, pre_fetched_kg = await loop.run_in_executor(None, _sync_fetch_both)
-        except Exception as e:
-            logger.debug(f"Async pre-fetch skipped: {e}")
+                def _sync_fetch_both():
+                    r = None
+                    k = None
+                    try:
+                        r = self.context.vector_memory.search(search_query, top_k=3)
+                    except Exception:
+                        pass
+                    try:
+                        if kg_instance:
+                            from nanobot.config.loader import get_config
+                            if get_config().agents.memory_features.knowledge_graph_enabled:
+                                k = kg_instance.get_entity_context(
+                                    search_query,
+                                    prefetch_rag=r,
+                                    anchors=query_anchors
+                                )
+                    except Exception:
+                        pass
+                    return r, k
+                    
+                loop = asyncio.get_running_loop()
+                pre_fetched_rag, pre_fetched_kg = await loop.run_in_executor(None, _sync_fetch_both)
+            except Exception as e:
+                logger.debug(f"Async pre-fetch skipped: {e}")
+        else:
+            pre_fetched_rag = []
+            pre_fetched_kg = ""
 
         initial_messages = self.context.build_messages(
             history=session.get_history(max_messages=self.memory_window),
@@ -1838,7 +2094,8 @@ class AgentLoop:
         session_key: str = "cli:direct",
         channel: str = "cli",
         chat_id: str = "direct",
-    ) -> str:
+        return_trace: bool = False,
+    ) -> str | tuple[str, str | None]:
         """
         Process a message directly (for CLI or cron usage).
         
@@ -1847,9 +2104,10 @@ class AgentLoop:
             session_key: Session identifier (overrides channel:chat_id for session lookup).
             channel: Source channel (for tool context routing).
             chat_id: Source chat ID (for tool context routing).
+            return_trace: If true, returns a tuple of (content, trace_id).
         
         Returns:
-            The agent's response.
+            The agent's response, or a tuple of (response, trace_id).
         """
         await self._connect_mcp()
         msg = InboundMessage(
@@ -1860,4 +2118,10 @@ class AgentLoop:
         )
         
         response = await self._process_message(msg, session_key=session_key)
-        return response.content if response else ""
+        out_content = response.content if response else ""
+        
+        if return_trace:
+            trace_id = response.metadata.get("trace_id") if response and response.metadata else None
+            return out_content, trace_id
+            
+        return out_content

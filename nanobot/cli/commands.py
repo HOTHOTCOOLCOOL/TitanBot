@@ -20,6 +20,10 @@ from prompt_toolkit.patch_stdout import patch_stdout
 
 from nanobot import __version__, __logo__
 from nanobot.config.schema import Config
+from nanobot.utils.trace_context import trace_log_patcher
+from loguru import logger
+
+logger.configure(patcher=trace_log_patcher)
 
 app = typer.Typer(
     name="nanobot",
@@ -406,14 +410,17 @@ def gateway(
     )
     
     # Set cron callback (needs agent)
-    async def on_cron_job(job: CronJob) -> str | None:
+    async def on_cron_job(job: CronJob) -> tuple[str | None, str | None]:
         """Execute a cron job through the agent."""
-        response = await agent.process_direct(
+        res_tuple = await agent.process_direct(
             job.payload.message,
             session_key=f"cron:{job.id}",
             channel=job.payload.channel or "cli",
             chat_id=job.payload.to or "direct",
+            return_trace=True,
         )
+        response, trace_id = res_tuple if isinstance(res_tuple, tuple) else (res_tuple, None)
+        
         if job.payload.deliver and job.payload.to:
             from nanobot.bus.events import OutboundMessage
             await bus.publish_outbound(OutboundMessage(
@@ -421,7 +428,7 @@ def gateway(
                 chat_id=job.payload.to,
                 content=response or ""
             ))
-        return response
+        return response, trace_id
     cron.on_job = on_cron_job
 
     # Wire proactive cron failure notification

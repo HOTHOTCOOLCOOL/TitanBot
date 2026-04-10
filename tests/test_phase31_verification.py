@@ -46,7 +46,7 @@ class FakeToolCall:
 def _make_verification(
     l0_enabled=True, l1_enabled=True, l3_enabled=True,
     l3_min_tools=3,
-    knowledge_workflow=None, reflection_store=None, provider=None, model=None,
+    knowledge_workflow=None, provider=None, model=None,
 ) -> VerificationLayer:
     """Create a VerificationLayer with specified config overrides."""
     cfg = VerificationConfig(
@@ -60,7 +60,6 @@ def _make_verification(
         provider=provider,
         model=model,
         knowledge_workflow=knowledge_workflow,
-        reflection_store=reflection_store,
     )
 
 
@@ -158,27 +157,6 @@ def test_l0_enrich_context_disabled():
 
     assert injected == 0
     assert msgs[0]["content"] == "Base prompt"
-
-
-def test_l0_enrich_context_injects_reflections():
-    """Reflection memories should be injected into system prompt."""
-    mock_ref = MagicMock()
-    mock_ref.search_reflections.return_value = [
-        {"trigger": "email task", "failure_reason": "wrong tool", "corrective_action": "use outlook"}
-    ]
-
-    mock_mem = MagicMock()
-    mock_mem.experience_enabled = False
-    mock_mem.reflection_enabled = True
-
-    v = _make_verification(reflection_store=mock_ref)
-    msgs = [{"role": "system", "content": "Base prompt"}]
-
-    injected = v.enrich_context(msgs, "send email", 0, memory_features=mock_mem)
-
-    assert injected > 0
-    assert "Avoid Past Mistakes" in msgs[0]["content"]
-    assert "wrong tool" in msgs[0]["content"]
 
 
 def test_l0_system_reminder_injected_on_long_session():
@@ -502,9 +480,13 @@ async def test_l3_post_reflect_extracts_success_pattern():
 
 
 @pytest.mark.asyncio
-async def test_l3_post_reflect_skips_short_workflows():
-    """L3 should skip extraction when fewer than min_tools used."""
+async def test_l3_post_reflect_processes_short_workflows_p39():
+    """L3 should process short workflows (Phase 39) for high-entropy conversation."""
+    mock_response = MagicMock()
+    mock_response.content = "{}"
     mock_provider = MagicMock()
+    mock_provider.chat = AsyncMock(return_value=mock_response)
+
     mock_kw = MagicMock()
     mock_kw.knowledge_store = MagicMock()
 
@@ -521,8 +503,8 @@ async def test_l3_post_reflect_skips_short_workflows():
         session=MagicMock(),
     )
 
-    # Should NOT call LLM
-    mock_provider.chat.assert_not_called()
+    # Should call LLM now in Phase 39
+    mock_provider.chat.assert_called_once()
 
 
 @pytest.mark.asyncio

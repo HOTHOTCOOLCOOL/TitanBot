@@ -198,8 +198,24 @@ class StateHandler:
             logger.info(f"Session {session.key}: User always-approved tool {tool_name}")
             auth_store = self.agent._get_approval_store()
             if auth_store:
-                # Tool-level rule: approve ALL actions for this tool (no action filter, no context)
-                auth_store.add_approval(tool_name, "")
+                # 提取特定的行为动作（例如 'send_email', 'get_attachment'）
+                target_action = arguments.get("action", "")
+                match_context = {}
+                
+                # 针对不同工具提取不变的“任务锚点”作为绑定上下文
+                if tool_name == "outlook" and target_action == "send_email":
+                    # 绑定固定收件人（忽略会随着日期变化的 subject/body）
+                    if "recipient" in arguments:
+                        match_context["recipient"] = arguments["recipient"]
+                    elif "to" in arguments:
+                        match_context["to"] = arguments["to"]
+                elif tool_name == "exec":
+                    # 绑定固定的执行脚本或命令
+                    if "command" in arguments:
+                        match_context["command"] = arguments["command"]
+                
+                # 替代粗暴的全局放行，注册细粒度规则
+                auth_store.add_approval(tool_name, target_action, match_context)
         else:
             logger.info(f"Session {session.key}: User rejected or interrupted tool {tool_name}")
 

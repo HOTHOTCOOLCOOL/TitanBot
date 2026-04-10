@@ -15,7 +15,7 @@
 | **子包 (packages)** | 2 (`agent`, `config`) | **14** | **×7** |
 | **内置工具 (Tools)** | 3 (shell, outlook, exec) | **19** | **×6.3** |
 | **通道适配器 (Channels)** | 2 (CLI, MoChat) | **9** | **×4.5** |
-| **Phase 迭代** | — | **33 个大阶段** | — |
+| **Phase 迭代** | — | **41 个大阶段** | — |
 | **论文参考** | 0 | **12** (AutoSkill, XSKILL, mem9, MemGPT, AI Memory Survey, MDER-DR, IndexRAG, OPENDEV, Dual-Tree, QChunker, OpenClaw-RL, BubbleRAG) | — |
 
 ---
@@ -64,7 +64,7 @@ graph TB
         A_CORE --> A_CRON
     end
 
-    BEFORE -.->|"33 Phase 演进"| AFTER
+    BEFORE -.->|"41 Phase 演进"| AFTER
 
     style BEFORE fill:#2d2d2d,color:#ccc,stroke:#555
     style AFTER fill:#1a1a2e,color:#eee,stroke:#0f3460
@@ -78,10 +78,11 @@ graph TB
 
 - [Epoch 1: Phase 1-20 演进回顾与架构对比](./EVOLUTION_epoch1_20.md)
 - [Epoch 2: Phase 21-32 详细迭代历程](./EVOLUTION_epoch21_32.md)
+- [Epoch 3: Phase 33-41 洋葱架构与安全降级纪元](./EVOLUTION_epoch33_41.md)
 
-## 最新阶段核心内容 (Phase 33及以后)
+## 最新阶段核心内容 (Phase 42及以后)
 
-有关当前开发进度和 Phase 33 及之后的迭代内容，请以此为唯一事实来源 (Single Source of Truth)：
+有关当前开发进度和 Phase 42 及之后的迭代内容，请以此为唯一事实来源 (Single Source of Truth)：
 - [Nanobot 开发进度与 Roadmap](../../progress_report.md)
 
 > Note: 有关架构安全、最佳实践与具体开发规范，请参阅根目录 `docs/` 下的其他详细文档。

@@ -7,6 +7,7 @@ from loguru import logger
 
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.capability import CapabilityTag
 
 
 class MCPToolWrapper(Tool):
@@ -22,6 +23,11 @@ class MCPToolWrapper(Tool):
     @property
     def name(self) -> str:
         return self._name
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.UNTRUSTED_EXTERNAL | CapabilityTag.INFO_RETRIEVAL
+
 
     @property
     def description(self) -> str:

@@ -4,12 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 from enum import Enum
 
-class RiskTier(Enum):
-    """Risk tiers for categorizing safety of tool operations."""
-    READ_ONLY = 0
-    MUTATE_LOCAL = 1
-    MUTATE_EXTERNAL = 2
-    DESTRUCTIVE = 3
+from nanobot.agent.capability import CapabilityTag
 
 
 class Tool(ABC):
@@ -47,12 +42,21 @@ class Tool(ABC):
         """JSON Schema for tool parameters."""
         pass
     
-    def get_risk_tier(self, args: dict[str, Any]) -> RiskTier:
-        """
-        Determine the risk tier of this tool invocation based on its arguments.
-        Defaults to MUTATE_LOCAL (1). Override in specific tools for finer granularity.
-        """
-        return RiskTier.MUTATE_LOCAL
+
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        """工具固有的不可变标签（由内置工具硬编码声明）。"""
+        return CapabilityTag.NONE
+
+    def evaluate_dynamic_tags(self, args: dict[str, Any]) -> CapabilityTag:
+        """基于运行时参数追加风险标签（取代 get_risk_tier）。"""
+        return CapabilityTag.NONE
+
+    def get_effective_tags(self, args: dict[str, Any], config_override: CapabilityTag | None = None) -> CapabilityTag:
+        """合并三层标签：静态 | 配置覆盖 | 动态参数分析。"""
+        base_tags = self.static_tags if config_override is None else config_override
+        return base_tags | self.evaluate_dynamic_tags(args)
     
     async def setup(self) -> None:
         """

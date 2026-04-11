@@ -513,7 +513,8 @@ def gateway(
             await broadcast_ws_message("log", {"sender": msg.channel, "message": msg.content})
 
         async def _ws_inbound_logger(msg):
-            await broadcast_ws_message("log", {"sender": "User", "message": msg.content})
+            sender = "User" if msg.channel != "system" else f"System ({msg.sender_id})"
+            await broadcast_ws_message("log", {"sender": sender, "message": msg.content})
 
         bus.subscribe_global(_ws_outbound_logger)
         bus.subscribe_inbound_global(_ws_inbound_logger)

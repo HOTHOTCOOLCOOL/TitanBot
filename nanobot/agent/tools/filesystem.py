@@ -3,7 +3,8 @@
 from pathlib import Path
 from typing import Any
 
-from nanobot.agent.tools.base import Tool, RiskTier
+from nanobot.agent.tools.base import Tool
+from nanobot.agent.capability import CapabilityTag
 
 
 def _resolve_path(path: str, allowed_dir: Path | None = None) -> Path:
@@ -26,8 +27,11 @@ class ReadFileTool(Tool):
     
     _MAX_READ_BYTES = 5 * 1024 * 1024  # 5 MB
 
-    def get_risk_tier(self, arguments: dict) -> RiskTier:
-        return RiskTier.READ_ONLY
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.DATA_READ
+
     
     @property
     def description(self) -> str:
@@ -77,6 +81,11 @@ class WriteFileTool(Tool):
     @property
     def name(self) -> str:
         return "write_file"
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.DATA_WRITE | CapabilityTag.MUTATIVE
+
     
     @property
     def description(self) -> str:
@@ -123,6 +132,11 @@ class EditFileTool(Tool):
     @property
     def name(self) -> str:
         return "edit_file"
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.DATA_WRITE | CapabilityTag.MUTATIVE
+
     
     @property
     def description(self) -> str:
@@ -187,8 +201,11 @@ class ListDirTool(Tool):
     
     _MAX_ITEMS = 500
 
-    def get_risk_tier(self, arguments: dict) -> RiskTier:
-        return RiskTier.READ_ONLY
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.DATA_READ
+
     
     @property
     def description(self) -> str:

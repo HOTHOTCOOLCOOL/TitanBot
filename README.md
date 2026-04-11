@@ -4,12 +4,12 @@
   <p>
     <img src="https://img.shields.io/badge/python-≥3.11-blue" alt="Python">
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-    <img src="https://img.shields.io/badge/tests-1271%20passed-brightgreen" alt="Tests">
-    <img src="https://img.shields.io/badge/phases-33%20completed-blueviolet" alt="Phases">
+    <img src="https://img.shields.io/badge/tests-1324%20passed-brightgreen" alt="Tests">
+    <img src="https://img.shields.io/badge/phases-45%20completed-blueviolet" alt="Phases">
     <img src="https://img.shields.io/badge/papers-12%20referenced-orange" alt="Papers">
   </p>
   <p>
-    <em>Built upon <a href="https://github.com/HKUDS/nanobot">nanobot</a> by HKUDS — extended through 33 phases of evolution, 11 academic papers, and 1271+ tests.</em>
+    <em>Built upon <a href="https://github.com/HKUDS/nanobot">nanobot</a> by HKUDS — extended through 45 phases of evolution, 11 academic papers, and 1324+ tests.</em>
   </p>
 </div>
 
@@ -17,7 +17,7 @@
 
 > **TitanBot** is a derivative work based on [nanobot](https://github.com/HKUDS/nanobot) by [HKUDS](https://github.com/HKUDS), licensed under the [MIT License](./LICENSE).
 >
-> We deeply respect the original nanobot team's work. Starting from their elegant ultra-lightweight foundation (~10 files, ~4,000 lines), we extended the project through **33 major phases** of independent development, incorporating insights from **11 academic papers** to build an enterprise-grade AI agent framework.
+> We deeply respect the original nanobot team's work. Starting from their elegant ultra-lightweight foundation (~10 files, ~4,000 lines), we extended the project through **45 major phases** of independent development, incorporating insights from **11 academic papers** to build an enterprise-grade AI agent framework.
 >
 > All original code is used in compliance with the MIT License. The original copyright notice is preserved in our [LICENSE](./LICENSE) file.
 
@@ -29,8 +29,8 @@ TitanBot started as a fork of nanobot and grew into a significantly enhanced AI 
 
 | Dimension | 🐣 Original nanobot | 🚀 TitanBot | Growth |
 |-----------|---------------------|-------------|--------|
-| **Core source files** | ~10 | **105** | ×10.5 |
-| **Test cases** | 0 | **1271+ passed** | 0 → 1271 |
+| **Core source files** | ~10 | **105+** | ×10.5 |
+| **Test cases** | 0 | **1324+ passed** | 0 → 1324 |
 | **Built-in tools** | 3 | **19** | ×6.3 |
 | **Channel adapters** | 2 | **9** | ×4.5 |
 | **Sub-packages** | 2 | **14** | ×7 |
@@ -759,8 +759,9 @@ Feel free to [open an issue](https://github.com/HOTHOTCOOLCOOL/nanobot/issues) o
 | Phase 36 | ⏳ Next | Cross-Platform & OS Sandbox (Bubblewrap) |
 | Phase 37 | 📋 Backlog | Execution Trace Archive (Meta-Harness) |
 | Phase 38 | 📋 Backlog | Coordinator Mode |
+| Phase 46 | ⏳ Next | Next steps to be arranged |
 
-> **Recently Completed**: Browser Automation (Phase 26B+C ✅), Weak Model Protection (Phase 30 ✅), Verification Layer L0→L1→L3 (Phase 31/32 ✅), Browser-RPA Degradation & Hardening (Phase 33 ✅)
+> **Recently Completed**: Browser Automation (Phase 26B+C ✅), Verification Layer & Smart HITL (Phase 31/32 ✅), Cron Retry/SSRS Guard (Phase 44 ✅), Dynamic Sandbox & Tag-Driven L1 Shell Guard (Phase 45 ✅)
 
 ### Contributors
 

@@ -6,6 +6,7 @@ import json
 
 from nanobot.agent.tools.base import Tool
 from nanobot.utils.helpers import ensure_dir
+from nanobot.agent.capability import CapabilityTag
 
 
 class SaveSkillTool(Tool):
@@ -24,6 +25,11 @@ class SaveSkillTool(Tool):
     @property
     def name(self) -> str:
         return "save_skill"
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.DATA_WRITE | CapabilityTag.MUTATIVE
+
     
     @property
     def description(self) -> str:

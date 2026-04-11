@@ -126,6 +126,36 @@ class CommandHandler:
                 channel=msg.channel, chat_id=msg.chat_id,
                 content=f"```\n{metrics.report()}\n```"
             )
+            
+        if cmd.startswith("/spawn"):
+            parts = cmd.split(maxsplit=1)
+            task = parts[1] if len(parts) > 1 else ""
+            if not task:
+                return OutboundMessage(
+                    channel=msg.channel, chat_id=msg.chat_id, 
+                    content="Usage: /spawn <task description>"
+                )
+            
+            # Phase 45C: Force enable coordinator just for this command to verify IPC
+            was_enabled = agent.coordinator_manager.enabled
+            agent.coordinator_manager.enabled = True
+            try:
+                result = await agent.coordinator_manager.spawn(
+                    task=task,
+                    label=task[:20] + "...",
+                    origin_channel=msg.channel,
+                    origin_chat_id=msg.chat_id
+                )
+            except Exception as e:
+                result = f"Error spawning coordinator: {e}"
+            finally:
+                agent.coordinator_manager.enabled = was_enabled
+                
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id,
+                content=result,
+            )
+            
         return None
 
     def format_tasks_list(self) -> str:

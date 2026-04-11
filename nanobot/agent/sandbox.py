@@ -10,6 +10,7 @@ from typing import Any
 from loguru import logger
 
 from nanobot.config.loader import get_config
+from nanobot.agent.capability import ExecutionPolicy
 
 
 class ShellSandbox:
@@ -68,14 +69,15 @@ class PythonSandbox:
         hooks_file: Path,
         hook_name: str,
         context: dict[str, Any],
-        result_content: str | None = None
+        result_content: str | None = None,
+        policy: 'ExecutionPolicy | None' = None
     ) -> tuple[bool, str, dict[str, Any] | None]:
         """
         Execute a python hook in a restricted subprocess via sandbox_worker.py.
         Returns: (success_bool, message_string, result_dict)
         """
         config = get_config()
-        timeout = config.agents.sandbox.python_timeout_seconds
+        timeout = policy.timeout_seconds if policy else config.agents.sandbox.python_timeout_seconds
         
         worker_script = Path(__file__).parent / "sandbox_worker.py"
         
@@ -97,7 +99,7 @@ class PythonSandbox:
             "context": context,
             "result": result_content,
             "workspace": str(config.workspace_path),
-            "allow_network": config.agents.sandbox.allow_network
+            "allow_network": policy.python_allow_network if policy else config.agents.sandbox.allow_network
         }
         
         # Same environment stripping as shell (SEC-3: PYTHONPATH removed — -I flag handles isolation)

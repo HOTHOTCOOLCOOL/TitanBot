@@ -29,6 +29,7 @@ except ImportError:
 
 from nanobot.agent.tools.base import Tool
 from loguru import logger
+from nanobot.agent.capability import CapabilityTag
 
 
 class RPAExecutorTool(Tool):
@@ -38,6 +39,11 @@ class RPAExecutorTool(Tool):
     """
 
     name = "rpa"
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.MUTATIVE
+
     description = (
         "Perform physical mouse and keyboard actions on the computer. "
         "Allows clicking, typing, and navigating the system UI autonomously."

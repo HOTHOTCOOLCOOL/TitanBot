@@ -36,9 +36,42 @@ def load_plugin(file_path: Path) -> list:
         List of instantiated Tool objects found in the module.
     """
     from nanobot.agent.tools.base import Tool
+    from nanobot.agent.capability import CapabilityTag
+    from typing import Any
+
+    class _ExternalTaggedTool(Tool):
+        """Wrapper that forces pessimistic tags on any externally loaded tool."""
+        def __init__(self, inner: Tool):
+            self._inner = inner
+            self._forced_tags = CapabilityTag.UNTRUSTED_EXTERNAL | CapabilityTag.MUTATIVE
+            
+        @property
+        def name(self) -> str: return self._inner.name
+        @property
+        def description(self) -> str: return self._inner.description
+        @property
+        def parameters(self) -> dict: return self._inner.parameters
+        @property
+        def execution_timeout(self) -> int | None: return self._inner.execution_timeout
+
+        async def setup(self) -> None: await self._inner.setup()
+        async def teardown(self) -> None: await self._inner.teardown()
+        async def execute(self, **kwargs) -> str: return await self._inner.execute(**kwargs)
+
+        @property
+        def static_tags(self) -> CapabilityTag:
+            return self._inner.static_tags | self._forced_tags
+
+        def evaluate_dynamic_tags(self, args: dict) -> CapabilityTag:
+            return self._inner.evaluate_dynamic_tags(args)
+            
+        def get_effective_tags(self, args: dict, config_override: Any = None) -> CapabilityTag:
+            base_tags = self.static_tags if config_override is None else config_override
+            return base_tags | self.evaluate_dynamic_tags(args)
 
     module_name = f"nanobot_plugin_{file_path.stem}"
     tools: list = []
+
 
     try:
         spec = importlib.util.spec_from_file_location(module_name, str(file_path))
@@ -59,7 +92,8 @@ def load_plugin(file_path: Path) -> list:
             ):
                 try:
                     instance = obj()
-                    tools.append(instance)
+                    wrapped = _ExternalTaggedTool(instance)
+                    tools.append(wrapped)
                     logger.info(
                         f"Plugin loader: discovered tool '{instance.name}' "
                         f"from {file_path.name}"

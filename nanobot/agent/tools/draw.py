@@ -3,10 +3,11 @@
 from typing import Any, Callable, Awaitable
 from loguru import logger
 
-from nanobot.agent.tools.base import Tool, RiskTier
+from nanobot.agent.tools.base import Tool
 from nanobot.bus.events import OutboundMessage
 from nanobot.config.loader import get_config
 from nanobot.agent.i18n import msg as i18n_msg
+from nanobot.agent.capability import CapabilityTag
 
 
 class DrawImageTool(Tool):
@@ -18,6 +19,11 @@ class DrawImageTool(Tool):
     @property
     def name(self) -> str:
         return "draw_image"
+        
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.SYS_COMMUNICATION | CapabilityTag.MUTATIVE
+
         
     @property
     def description(self) -> str:
@@ -55,9 +61,6 @@ class DrawImageTool(Tool):
         """Set the current message context."""
         self._default_channel = channel
         self._default_chat_id = chat_id
-
-    def get_risk_tier(self, args: dict[str, Any]) -> RiskTier:
-        return RiskTier.READ_ONLY
 
     async def execute(self, **kwargs: Any) -> str:
         prompt = kwargs.get("prompt", "")

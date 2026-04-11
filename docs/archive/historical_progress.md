@@ -33,6 +33,12 @@
 | **Phase 28C** | **OpenClaw Memory Architecture (Vector Memory Integration)** | **✅ 1097** |
 | **Phase 28D** | **Gateway Client/Server 统一网络拓扑重构** | **✅** |
 | **Phase 30** | **弱模型防护 (Weak Model Safety Guards)** | **✅ 1209** |
+| **Phase 31-37** | **Verification Layer & Knowledge Evolution** | **✅** |
+| **Phase 38** | **Coordinator并发模型注入** | **✅** |
+| **Phase 39-41** | **Latency优化与架构微调** | **✅** |
+| **Phase 42-43** | **TraceID 全链路日志与 XML Retry** | **✅** |
+| **Phase 44** | **Cron 重试引擎熔断与 PSRS 幻觉阻断防线** | **✅** |
+| **Phase 45** | **动态沙箱能力标签 (CapabilityTag & ExecutionPolicy)** | **✅** |
 
 ## 🔍 手动验证追踪清单
 

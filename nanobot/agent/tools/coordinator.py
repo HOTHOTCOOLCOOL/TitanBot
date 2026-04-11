@@ -1,4 +1,5 @@
-from nanobot.agent.tools.base import BaseTool, Parameter, RiskTier
+from nanobot.agent.tools.base import BaseTool, Parameter
+from nanobot.agent.capability import CapabilityTag
 from typing import Any
 
 class CoordinatorTool(BaseTool):
@@ -24,9 +25,10 @@ class CoordinatorTool(BaseTool):
         self.channel = channel
         self.chat_id = chat_id
 
-    def get_risk_tier(self, params: dict[str, Any]) -> RiskTier:
-        # Phase 38: Enforce HITL approval before spawning any subprocess
-        return RiskTier.MUTATE_EXTERNAL 
+    @property
+    def static_tags(self) -> CapabilityTag:
+        # Phase 38 / Phase 45B: Enforce HITL approval before spawning any subprocess
+        return CapabilityTag.MUTATIVE | CapabilityTag.IS_HIGH_RISK
 
     async def execute(self, action: str, **kwargs) -> str | dict[str, Any]:
         if action == "list":

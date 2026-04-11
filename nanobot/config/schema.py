@@ -300,6 +300,7 @@ class SandboxConfig(Base):
     tool_timeout_seconds: int = 120  # Default timeout for all tool executions (BP-3)
     allow_network: bool = False
     restrict_workspace: bool = True
+    capability_overrides: dict[str, int] = Field(default_factory=dict)  # Phase 45C: Sandbox Tool Tag Overrides
 
 
 class VerificationConfig(Base):

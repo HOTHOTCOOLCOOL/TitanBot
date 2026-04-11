@@ -38,6 +38,7 @@ except ImportError:
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool
+from nanobot.agent.capability import CapabilityTag
 from nanobot.compute import run_cpu_heavy
 
 
@@ -146,6 +147,10 @@ class AttachmentAnalyzerTool(Tool):
     @property
     def name(self) -> str:
         return "attachment_analyzer"
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.DATA_READ
     
     @property
     def description(self) -> str:

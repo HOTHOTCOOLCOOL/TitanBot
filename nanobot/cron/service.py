@@ -204,6 +204,9 @@ class CronService:
         # gateway is restarted the next day.
         self._skip_stale_cross_day_jobs()
         
+        # Initialize next_run for manually injected jobs without nextRunAtMs
+        self._recompute_next_runs()
+        
         self._arm_timer()
         logger.info(f"Cron service started with {len(self._store.jobs if self._store else [])} jobs")
     
@@ -380,11 +383,13 @@ class CronService:
             
             # Check if the agent turn actually succeeded by inspecting the response.
             # process_direct() never raises — it returns error messages as plain text.
-            _fail_markers = ["Error:", "error:", "failed", "timed out"]
+            _fail_markers = ["Error:", "error:", "failed", "timed out", "失败", "报错"]
             if response and any(marker in response for marker in _fail_markers):
                 if side_effect_ok:
                     job.state.last_status = "partial_success"
                     job.state.last_error = response[:200]
+                    job.enabled = False
+                    job.state.next_run_at_ms = None
                     logger.warning(f"Cron: job '{job.name}' partially succeeded (side effect OK, but agent reported error)")
                     await self._notify_failure(job.name, f"Job completed with error (Side-effect succeeded): {response[:200]}")
                 else:
@@ -394,6 +399,8 @@ class CronService:
                     
                     if job.state.retry_count > MAX_RETRIES:
                         job.state.last_status = "error_fatal"
+                        job.enabled = False
+                        job.state.next_run_at_ms = None
                         logger.error(f"Cron: job '{job.name}' reached fatal error state")
                         await self._notify_failure(job.name, f"FATAL ERROR (Retry limit exceeded): {response[:200]}")
                     else:
@@ -422,6 +429,11 @@ class CronService:
         
         job.state.last_run_at_ms = start_ms
         job.updated_at_ms = _now_ms()
+        
+        # Prevent busy-looping if execution took longer than the target interval
+        if job.schedule.kind != "at" and job.state.next_run_at_ms and job.state.next_run_at_ms <= job.updated_at_ms:
+            job.state.next_run_at_ms = _compute_next_run(job.schedule, job.updated_at_ms)
+            
         self._save_store()
     
     async def _notify_failure(self, job_name: str, error_msg: str) -> None:

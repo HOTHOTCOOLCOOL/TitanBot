@@ -112,11 +112,20 @@ def _register_dynamic_tools(agent: "AgentLoop") -> None:
     Tools that conflict with already-registered built-in tools are skipped.
     """
     plugins_dir = agent.workspace / "nanobot" / "plugins"
-    if not plugins_dir.exists():
-        # Try relative to the package itself
-        plugins_dir = Path(__file__).parent.parent / "plugins"
+    fallback_dir = agent.workspace.parent / "plugins"
+    src_dir = Path(__file__).parent.parent / "plugins"
     
-    discovered = scan_plugins(plugins_dir)
+    dirs_to_scan = []
+    if plugins_dir.exists():
+        dirs_to_scan.append(plugins_dir)
+    if fallback_dir.exists():
+        dirs_to_scan.append(fallback_dir)
+    if src_dir.exists():
+        dirs_to_scan.append(src_dir)
+    
+    discovered = []
+    for d in dirs_to_scan:
+        discovered.extend(scan_plugins(d))
     
     for tool in discovered:
         if agent.tools.has(tool.name):
@@ -153,11 +162,20 @@ async def _reload_dynamic_tools(agent: "AgentLoop") -> None:
         agent._dynamic_tool_names.clear()
     
     plugins_dir = agent.workspace / "nanobot" / "plugins"
-    if not plugins_dir.exists():
-        # Try relative to the package itself
-        plugins_dir = Path(__file__).parent.parent / "plugins"
+    fallback_dir = agent.workspace.parent / "plugins"
+    src_dir = Path(__file__).parent.parent / "plugins"
     
-    discovered = scan_plugins(plugins_dir)
+    dirs_to_scan = []
+    if plugins_dir.exists():
+        dirs_to_scan.append(plugins_dir)
+    if fallback_dir.exists():
+        dirs_to_scan.append(fallback_dir)
+    if src_dir.exists():
+        dirs_to_scan.append(src_dir)
+    
+    discovered = []
+    for d in dirs_to_scan:
+        discovered.extend(scan_plugins(d))
     
     for tool in discovered:
         if agent.tools.has(tool.name):

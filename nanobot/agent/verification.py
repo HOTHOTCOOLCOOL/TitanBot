@@ -68,6 +68,14 @@ _DESTRUCTIVE_PATTERNS: list[re.Pattern] = [
     # --- Network exfiltration (Phase 31 Retro) ---
     re.compile(r"\binvoke-webrequest\b", re.IGNORECASE),
     re.compile(r"\binvoke-restmethod\b", re.IGNORECASE),
+    # --- Phase 45B: Python interpreter variants & pipe injection ---
+    # Content-aware match (multi-line \n attacks via DOTALL)
+    re.compile(
+        r"\bpython\d*\b.*\s-c\s+[\"']?.*(?:import|exec|eval|__import__|base64\.b64decode|os\.|sys\.|subprocess|open\()",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    # Pipe-to-shell injection (echo X | bash, etc.)
+    re.compile(r"\|\s*(bash|sh|cmd|powershell|pwsh)\b", re.IGNORECASE),
 ]
 
 # Sensitive path prefixes — writing to or executing commands targeting these is blocked
@@ -297,6 +305,62 @@ def _check_rule_ssrs_fatal(tool_calls: list[Any], messages: list[dict] | None = 
     return violations
 
 
+def _check_rule_shell_guard(
+    tool_calls: list[Any],
+    *,
+    registry: Any | None = None,
+    config_overrides: dict | None = None,
+) -> list[str]:
+    """R-SHELL-GUARD: Tag-Driven DESTRUCTIVE shell command hard-block (Phase 45B / ADR-45).
+
+    Detects all tools declaring SHELL_EXECUTION and evaluates their runtime
+    arguments via evaluate_dynamic_tags(). If the resolved effective tags contain
+    DESTRUCTIVE, the tool call is blocked immediately — no HITL approval path.
+
+    Falls back to _DESTRUCTIVE_PATTERNS regex scan when no registry is available
+    (e.g. unit tests that don't wire up a full ToolRegistry).
+    """
+    from nanobot.agent.capability import CapabilityTag
+    violations = []
+    for tc in tool_calls:
+        # Type-safe argument access
+        if not hasattr(tc, "arguments") or not isinstance(tc.arguments, dict):
+            continue
+
+        tool_impl = registry.get(tc.name) if registry else None
+
+        if tool_impl is None:
+            # No registry: fallback to static regex scan on the well-known 'exec' tool
+            if tc.name != "exec":
+                continue
+            cmd = tc.arguments.get("command", "")
+            for pat in _DESTRUCTIVE_PATTERNS:
+                if pat.search(cmd):
+                    violations.append(
+                        f"R-SHELL-GUARD: Destructive command pattern detected in 'exec': "
+                        f"'{cmd[:100]}'. This has been automatically blocked."
+                    )
+                    break
+            continue
+
+        # Tag-Driven path: only process SHELL_EXECUTION-capable tools
+        if not (tool_impl.static_tags & CapabilityTag.SHELL_EXECUTION):
+            continue
+
+        # Resolve effective tags (static | config_override | dynamic)
+        override_val = config_overrides.get(tc.name) if config_overrides else None
+        config_override = CapabilityTag(override_val) if override_val is not None else None
+        effective = tool_impl.get_effective_tags(tc.arguments, config_override=config_override)
+
+        if effective & CapabilityTag.DESTRUCTIVE:
+            cmd = tc.arguments.get("command", "")
+            violations.append(
+                f"R-SHELL-GUARD: DESTRUCTIVE capability detected on tool '{tc.name}'. "
+                f"Command: '{cmd[:100]}'. Blocked automatically — no approval path exists."
+            )
+    return violations
+
+
 # All L1 rules in evaluation order
 _L1_RULES = [
     _check_rule_message_content,
@@ -309,6 +373,7 @@ _L1_RULES = [
     _check_rule_network_exfiltration,
     _check_rule_browser_use_ssrf,
     _check_rule_ssrs_fatal,
+    _check_rule_shell_guard,  # Phase 45B: Tag-Driven DESTRUCTIVE hard-block (must run last)
 ]
 
 
@@ -399,13 +464,23 @@ class VerificationLayer:
 
     # ── L1: Rigid Rule Interception ───────────────────────────────────
 
-    def check_rules(self, tool_calls: list[Any], messages: list[dict] | None = None) -> RuleResult:
+    def check_rules(
+        self,
+        tool_calls: list[Any],
+        messages: list[dict] | None = None,
+        *,
+        registry: Any | None = None,
+        config_overrides: dict | None = None,
+    ) -> RuleResult:
         """L1: Run all rigid rules against proposed tool calls.
 
         Called *after* the LLM proposes tool calls but *before* they execute.
 
         Args:
             tool_calls: List of ToolCall objects from the LLM response.
+            messages: Conversation history (used by context-sensitive rules).
+            registry: ToolRegistry instance for Tag-Driven rules (R-SHELL-GUARD).
+            config_overrides: Per-tool capability tag overrides from config.
 
         Returns:
             RuleResult with pass/fail status and any violation messages.
@@ -422,6 +497,12 @@ class VerificationLayer:
                 violations = rule_fn(tool_calls, extra_deny=extra_deny)
             elif rule_fn is _check_rule_ssrs_fatal:
                 violations = rule_fn(tool_calls, messages=messages)
+            elif rule_fn is _check_rule_shell_guard:
+                violations = rule_fn(
+                    tool_calls,
+                    registry=registry,
+                    config_overrides=config_overrides,
+                )
             else:
                 violations = rule_fn(tool_calls)
             all_violations.extend(violations)

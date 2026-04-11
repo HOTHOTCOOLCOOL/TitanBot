@@ -3,6 +3,7 @@
 from typing import Any
 
 from nanobot.agent.tools.base import Tool
+from nanobot.agent.capability import CapabilityTag
 from nanobot.cron.service import CronService
 from nanobot.cron.types import CronSchedule
 
@@ -23,6 +24,10 @@ class CronTool(Tool):
     @property
     def name(self) -> str:
         return "cron"
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.MUTATIVE
     
     @property
     def description(self) -> str:

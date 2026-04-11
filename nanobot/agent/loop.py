@@ -677,7 +677,9 @@ class AgentLoop:
 
                 # Phase 31 L1: Rigid rule interception (pre-execution)
                 verification = self._get_verification()
-                rule_result = verification.check_rules(response.tool_calls, messages)
+                cfg = self._get_config()
+                overrides = cfg.agents.sandbox.capability_overrides if cfg and getattr(cfg, 'agents', None) and getattr(cfg.agents, 'sandbox', None) else {}
+                rule_result = verification.check_rules(response.tool_calls, messages, registry=current_tools, config_overrides=overrides)
                 if not rule_result.passed:
                     # Inject violation feedback as a synthetic tool result
                     # so the LLM can self-correct instead of hard-failing
@@ -693,22 +695,16 @@ class AgentLoop:
                 hitl_suspended = False
                 for tc in response.tool_calls:
                     tool_impl = current_tools.get(tc.name)
-                    if tool_impl and hasattr(tool_impl, "get_risk_tier"):
-                        from nanobot.agent.tools.base import RiskTier
-                        tier = tool_impl.get_risk_tier(tc.arguments)
-                        if tier.value >= RiskTier.MUTATE_EXTERNAL.value:
+                    if tool_impl:
+                        from nanobot.agent.capability import CapabilityTag
+                        override_val = overrides.get(tc.name)
+                        config_override = CapabilityTag(override_val) if override_val is not None else None
+                        tags = tool_impl.get_effective_tags(tc.arguments, config_override=config_override)
+                        if bool(tags & CapabilityTag.IS_HIGH_RISK):
                             approval_store = self._get_approval_store()
-                            
-                            # Phase 33 SEC-BUW-1: Forced-HITL for Script Execution
-                            forced_hitl = False
-                            if tc.name == "exec" and "command" in tc.arguments:
-                                cmd = str(tc.arguments["command"]).lower()
-                                if any(x in cmd for x in [".py", ".sh", ".ps1", "python -c", "node -e"]):
-                                    forced_hitl = True
-                                    logger.warning(f"Forced-HITL triggered for script execution: {cmd[:50]}")
-
                             is_approved = approval_store.is_approved(tc.name, tc.arguments) if approval_store else False
-                            if forced_hitl or not is_approved:
+                            
+                            if not is_approved:
                                 logger.info(f"HITL: Suspending loop for {tc.name} approval")
                                 if channel and chat_id:
                                     session_key = self.sessions.resolve_key(f"{channel}:{chat_id}")
@@ -1278,8 +1274,8 @@ class AgentLoop:
             try:
                 from nanobot.agent.trace_archive import TraceArchive
                 archive = TraceArchive(self.workspace)
-                # Note: v2 action log is in context.action_history
-                action_hist = ctx.action_history if 'ctx' in locals() else []
+                # Note: v2 action log is in context.action_log
+                action_hist = ctx.action_log if 'ctx' in locals() else []
                 archive.dump_tool_calls(tid, tool_calls_with_args, action_hist)
             except Exception as e:
                 logger.debug(f"Failed to dump tool calls for {tid} in v2 loop: {e}")

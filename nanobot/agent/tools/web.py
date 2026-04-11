@@ -13,6 +13,7 @@ import httpcore
 import httpx
 
 from nanobot.agent.tools.base import Tool
+from nanobot.agent.capability import CapabilityTag
 
 # Shared constants
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36"
@@ -113,6 +114,11 @@ class WebSearchTool(Tool):
         },
         "required": ["query"]
     }
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.INFO_RETRIEVAL
+
     
     def __init__(self, api_key: str | None = None, max_results: int = 5):
         self.api_key = api_key or os.environ.get("BRAVE_API_KEY", "")
@@ -166,6 +172,11 @@ class WebFetchTool(Tool):
         },
         "required": ["url"]
     }
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.INFO_RETRIEVAL
+
     
     def __init__(self, max_chars: int = 50000):
         self.max_chars = max_chars

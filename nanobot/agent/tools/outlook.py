@@ -20,7 +20,8 @@ import asyncio
 
 from loguru import logger
 
-from nanobot.agent.tools.base import Tool, RiskTier
+from nanobot.agent.tools.base import Tool
+from nanobot.agent.capability import CapabilityTag
 
 
 # Outlook item class constants
@@ -127,13 +128,19 @@ Note: Requires Outlook application to be running on Windows."""
             "required": ["action"]
         }
     
-    def get_risk_tier(self, args: dict[str, Any]) -> RiskTier:
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.NONE
+
+    def evaluate_dynamic_tags(self, args: dict[str, Any]) -> CapabilityTag:
         action = args.get("action", "find_emails")
-        if action in ["send_email"]:
-            return RiskTier.MUTATE_EXTERNAL
-        elif action in ["delete_email"]:
-            return RiskTier.DESTRUCTIVE
-        return RiskTier.READ_ONLY
+        if action == "send_email":
+            return CapabilityTag.SYS_COMMUNICATION | CapabilityTag.MUTATIVE
+        elif action == "delete_email":
+            return CapabilityTag.DESTRUCTIVE | CapabilityTag.MUTATIVE
+        return CapabilityTag.INFO_RETRIEVAL
+
     
     async def execute(self, **kwargs: Any) -> str:
         async with self._lock:
@@ -352,15 +359,24 @@ Note: Requires Outlook application to be running on Windows."""
                         
                         after_date = criteria.get("received_after")
                         if after_date:
-                            after = datetime.strptime(after_date, "%Y-%m-%d")
-                            if received_time_normalized and received_time_normalized < after:
-                                continue
+                            try:
+                                # Strip time portion if LLM passes 'YYYY-MM-DD 00:00:00'
+                                after_date_str = str(after_date).split()[0]
+                                after = datetime.strptime(after_date_str, "%Y-%m-%d")
+                                if received_time_normalized and received_time_normalized < after:
+                                    continue
+                            except ValueError:
+                                pass
                         
                         before_date = criteria.get("received_before")
                         if before_date:
-                            before = datetime.strptime(before_date, "%Y-%m-%d")
-                            if received_time_normalized and received_time_normalized > before:
-                                continue
+                            try:
+                                before_date_str = str(before_date).split()[0]
+                                before = datetime.strptime(before_date_str, "%Y-%m-%d")
+                                if received_time_normalized and received_time_normalized > before:
+                                    continue
+                            except ValueError:
+                                pass
         
                         subject = OutlookTool._safe_get_property(item, 'Subject', '') or ''
                         

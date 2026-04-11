@@ -13,6 +13,7 @@ except ImportError:
     HAS_VISION_DEPS = False
 
 from nanobot.agent.tools.base import Tool
+from nanobot.agent.capability import CapabilityTag
 
 
 class ScreenCaptureTool(Tool):
@@ -23,6 +24,10 @@ class ScreenCaptureTool(Tool):
     """
 
     name = "screen_capture"
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.DATA_READ
     description = (
         "Captures the current computer screen and returns the image plus a structured "
         "text list of all interactive UI elements. Use this to discover what buttons, "

@@ -126,3 +126,10 @@
     在定时任务（Cron）执行失败后，若盲目追加固定间隔重试（如 15-min retry），且不设置执行次数上限，会在依赖项（如 SSRS）长期不可用时造成日内无限循环，重复消耗 API Token 并产生多封重复邮件。条件判断 `retry_ms < next_cron_run_at_ms` 无法覆盖这一场景，因为重试时刻永远早于次日自然触发时刻。
     **避坑指南**：所有有副作用的 Cron Job 必须在 State 中维护 `retry_count`，并设置明确的 `MAX_RETRIES` 熔断阈值（建议 = 1）。超出后，状态直接锁定为 `error_fatal`（不可自动恢复终态），触发最高级告警要求人工介入，并停止一切后续自动重试。新周期成功后再重置计数器。（参见 ADR-44）
 
+15. **沙箱网络审计钩子的盲目运用（Blind Network Auditing in Sandboxes）**：
+    在对 Worker 进程（如 Coordinator Worker）应用防御式的 `sys.addaudithook` 拦截网络套接字（`socket.bind`/`socket.connect`）前，必须彻底厘清目标进程的业务职能。对于单纯执行一段不受信纯计算代码的容器（无 IPC，无三方依赖），严格断网是正确的；但对于需要依靠 HTTP 微服务框架（如 `aiohttp`）等待 IPC 任务派发，且内部包含 Agent 推理大回环（需直直连 LLM API）的调度进程，直接植入 `-I` 并拦截其内核层的 `socket.bind` 将立刻导致初始化死亡（Windows `ProactorEventLoop` 对自组环回的心跳依赖），同时也会让 Agent 因报错不可达变成聋瞎。
+    **避坑指南**：切忌在架构高层落实「为了安全彻底切断子进程网络」这种不切实际的“一刀切”。真正的防线应该部署在**不受信子动作触发前隙**（如隔离的 `PythonSandbox` 或 `ShellSandbox`），而不是在承担基础设施职责的调度进程顶端自残。对于核心系统 Worker，安全策略必须止步于拦截恶意原生的 `os.system` / `os.exec` 等越权动作，明文豁免 Socket 以保留其生命血脉。（参见 ADR-45 Phase 45C 避坑反思）
+
+16. **测试 Mock 必须与接口重构同步进化（Test Mock Interface Fidelity）**：
+    在重构安全中间件接口（如从 `get_risk_tier()` → `CapabilityTag` / `static_tags` + `get_effective_tags(args, config_override=)` ）后，若测试中的 `FakeTool` / `FakeRegistry` 仅更新属性值而遗漏接口签名变化（如缺少 `static_tags` 属性、`get_effective_tags` 签名不接受 `config_override` 关键字参数），会导致产品代码通过但所有涉及新路径的测试全部 `AttributeError`/`TypeError` 崩溃，制造"绿色 CI 假象"。
+    **避坑指南**：在做安全/验证层的 API 重构时，必须在同一 PR 里同步更新所有测试桩（Test Doubles），且对使用真实实例（如 `ExecTool()`）的 Mock 注册表优先于手搓的 FakeTool，以保证 `evaluate_dynamic_tags()` 等运行时动态行为能被测试链条端到端覆盖。（参见 ADR-45B Phase 45B）

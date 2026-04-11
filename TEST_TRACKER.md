@@ -1,16 +1,16 @@
 # Test Tracker
 
-> **最后更新**: 2026-04-06 (完成 Phase 40 手动与自动化测试)
+> **最后更新**: 2026-04-11 (完成 Phase 44 & 45 全量回归与操作演练)
 
 ## 当前基线
 
 | 指标 | 值 |
 |------|-----|
-| Passed | 1264 |
+| Passed | 1324 |
 | Failed | 0 |
 | Skipped | 1 |
-| 耗时 | ~119s |
-| 测试文件 | 91 |
+| 耗时 | ~130s |
+| 测试文件 | 93 |
 
 ## 架构变更
 
@@ -23,6 +23,8 @@
 | Phase 33 | Browser-RPA 降级链路优化 (`ensure_visible` 生命周期, 坐标漂移修复, `[FALLBACK_RPA]` 信号协议, CDP 代码清理) |
 | Phase 34 | KG 检索增强 (Semantic Anchor Grouping, Coverage Penalty, Schema Relaxation) |
 | Phase 40 | 稳定性基石与可靠性增强 (工具结果截断, Session快照隔离, 动态Token裁剪, 轻量断点续传/Crash Recovery, 滚动.bak备份) |
+| Phase 44 | Cron 重试引擎加固、幻觉防线 (ADR-44), SSRS 兜底防线, 副作用重试隔离 |
+| Phase 45 | 动态沙箱能力标签 (ADR-45), R-SHELL-GUARD L1 高危 Shell 拦截 (ADR-45B), Worker IPC 安全隔离 |
 
 ## 缺陷封存 (Phase 33 Retro)
 

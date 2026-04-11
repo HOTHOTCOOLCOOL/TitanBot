@@ -15,7 +15,7 @@
 | **子包 (packages)** | 2 (`agent`, `config`) | **14** | **×7** |
 | **内置工具 (Tools)** | 3 (shell, outlook, exec) | **19** | **×6.3** |
 | **通道适配器 (Channels)** | 2 (CLI, MoChat) | **9** | **×4.5** |
-| **Phase 迭代** | — | **41 个大阶段** | — |
+| **Phase 迭代** | — | **45 个大阶段** | — |
 | **论文参考** | 0 | **12** (AutoSkill, XSKILL, mem9, MemGPT, AI Memory Survey, MDER-DR, IndexRAG, OPENDEV, Dual-Tree, QChunker, OpenClaw-RL, BubbleRAG) | — |
 
 ---

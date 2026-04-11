@@ -11,6 +11,7 @@ from typing import Any
 from loguru import logger
 
 from nanobot.agent.tools import Tool
+from nanobot.agent.capability import CapabilityTag
 
 
 class MemorySearchTool(Tool):
@@ -21,6 +22,11 @@ class MemorySearchTool(Tool):
     """
 
     name = "memory"
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.DATA_READ | CapabilityTag.DATA_WRITE | CapabilityTag.MUTATIVE
+
     description = (
         "Manage long-term memory: store facts/preferences, search past events, "
         "update existing entries, or delete outdated information.\n\n"

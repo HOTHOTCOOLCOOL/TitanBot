@@ -1,6 +1,6 @@
 """Phase 41 (P41-5): HITLMiddleware — Human-in-the-Loop approval gateway.
 
-Pre:  Checks tool calls for high-risk operations (RiskTier >= MUTATE_EXTERNAL).
+Pre:  Checks tool calls for high-risk operations (CapabilityTag.IS_HIGH_RISK).
       If approval is required, suspends the session and aborts with a prompt
       for the user to approve/reject/always-approve.
 Post: No-op (approval resolution happens in state_handler.py, not here).
@@ -33,41 +33,35 @@ class HITLMiddleware(AgentMiddleware):
         if not ctx.channel or not ctx.chat_id:
             return
 
-        from nanobot.agent.tools.base import RiskTier
+        from nanobot.agent.capability import CapabilityTag
 
         for tc in ctx.tool_calls:
             registry = getattr(ctx, "tool_registry_override", None) or self._agent.tools
             tool_impl = registry.get(tc.name)
-            if not tool_impl or not hasattr(tool_impl, "get_risk_tier"):
+            if not tool_impl:
                 continue
 
-            tier = tool_impl.get_risk_tier(tc.arguments)
-            if tier.value < RiskTier.MUTATE_EXTERNAL.value:
+            # Phase 45C: Apply tag overrides from config
+            cfg = self._agent._get_config()
+            overrides = cfg.agents.sandbox.capability_overrides if cfg and getattr(cfg, 'agents', None) and getattr(cfg.agents, 'sandbox', None) else {}
+            override_val = overrides.get(tc.name)
+            config_override = CapabilityTag(override_val) if override_val is not None else None
+
+            tags = tool_impl.get_effective_tags(tc.arguments, config_override=config_override)
+            is_high_risk = bool(tags & CapabilityTag.IS_HIGH_RISK)
+            
+            if not is_high_risk:
                 continue
 
             approval_store = self._agent._get_approval_store()
-
-            # Phase 33 SEC-BUW-1: Forced-HITL for script execution
-            forced_hitl = False
-            if tc.name == "exec" and "command" in tc.arguments:
-                cmd = str(tc.arguments["command"]).lower()
-                if any(
-                    x in cmd
-                    for x in [".py", ".sh", ".ps1", "python -c", "node -e"]
-                ):
-                    forced_hitl = True
-                    logger.warning(
-                        f"Forced-HITL triggered for script execution: "
-                        f"{cmd[:50]}"
-                    )
-
+            
             is_approved = (
                 approval_store.is_approved(tc.name, tc.arguments)
                 if approval_store
                 else False
             )
 
-            if not forced_hitl and is_approved:
+            if is_approved:
                 continue
 
             # ── HITL triggered ──

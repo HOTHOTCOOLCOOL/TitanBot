@@ -3,6 +3,7 @@
 from typing import Any
 
 from nanobot.agent.tools.base import Tool
+from nanobot.agent.capability import CapabilityTag
 
 
 class SaveExperienceTool(Tool):
@@ -20,6 +21,11 @@ class SaveExperienceTool(Tool):
     @property
     def name(self) -> str:
         return "save_experience"
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.DATA_WRITE | CapabilityTag.MUTATIVE
+
 
     @property
     def description(self) -> str:

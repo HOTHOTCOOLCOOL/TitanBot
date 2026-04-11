@@ -6,6 +6,7 @@ import asyncio
 import atexit
 import json
 import os
+import sys
 import secrets
 import subprocess
 import weakref
@@ -91,14 +92,19 @@ class CoordinatorManager:
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
         token = secrets.token_hex(16)
         
+        from nanobot.config.loader import get_config
+        config = get_config()
+        
         # Start Python process
-        # Use python -m nanobot.agent.worker_process --port 0 --token <xyz> --workspace <pwd>
+        # Use python -I -X utf8 -m nanobot.agent.worker_process --port 0 --token <xyz> --workspace <pwd> --timeout <sec>
         cmd = [
             sys.executable or "python",
+            "-I", "-X", "utf8",
             "-m", "nanobot.agent.worker_process",
             "--port", "0",
             "--token", token,
-            "--workspace", str(self.workspace)
+            "--workspace", str(self.workspace),
+            "--timeout", str(config.agents.coordinator.worker_timeout)
         ]
         
         # In order to avoid sharing file descriptors accidentally (e.g. windows sockets / pipe deadlocks),
@@ -107,12 +113,16 @@ class CoordinatorManager:
         if platform.system() == "Windows":
             # CREATE_NEW_PROCESS_GROUP avoids Ctrl+C propagating directly 
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 512)
+        else:
+            # Equivalent isolation for POSIX (macOS/Linux)
+            kwargs["start_new_session"] = True
             
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
             bufsize=1, # Line buffered
             **kwargs
         )
@@ -129,8 +139,18 @@ class CoordinatorManager:
                 # We can also print worker startup logs here if needed
             return None
             
+        def _drain_stdout(proc):
+            try:
+                for _ in proc.stdout:
+                    pass
+            except Exception:
+                pass
+            
         try:
             port = await asyncio.to_thread(_read_ready_port)
+            if port:
+                # Drain the remaining stdout pipe in the background to prevent Windows 64KB buffer deadlocks
+                asyncio.create_task(asyncio.to_thread(_drain_stdout, process))
         except Exception as e:
             logger.error(f"Coordinator: Failed to start worker: {e}")
             

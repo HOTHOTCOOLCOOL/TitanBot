@@ -34,10 +34,11 @@ from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
 from nanobot.utils.trace_context import _trace_id_var, _route_tags_var
 
 class WorkerNode:
-    def __init__(self, port: int, token: str, workspace_path: Path):
+    def __init__(self, port: int, token: str, workspace_path: Path, timeout: int = 300):
         self.port = port
         self.token = token
         self.workspace = workspace_path
+        self.timeout = timeout
         self.app = web.Application()
         self.app.add_routes([
             web.post("/task", self.handle_task),
@@ -67,9 +68,9 @@ class WorkerNode:
         
     async def _idle_watchdog(self):
         """Shutdown worker if it remains idle for too long without instructions."""
-        await asyncio.sleep(300) # 5 minutes
+        await asyncio.sleep(self.timeout) # Enforce dynamic idle timeout
         if self.status in ("idle", "completed", "error") and not getattr(self, "_shutdown_requested", False):
-            logger.warning("Worker idle timeout reached. Shutting down automatically.")
+            logger.warning(f"Worker idle timeout ({self.timeout}s) reached. Shutting down automatically.")
             os._exit(0)
             
     async def start(self):
@@ -78,6 +79,10 @@ class WorkerNode:
         await runner.setup()
         site = web.TCPSite(runner, '127.0.0.1', self.port)
         await site.start()
+        
+        if site._server and site._server.sockets:
+            self.port = site._server.sockets[0].getsockname()[1]
+            
         logger.info(f"Worker process listening on 127.0.0.1:{self.port}")
         # Signal master that we are ready
         sys.stdout.write(f"WORKER_READY:{self.port}\n")
@@ -177,7 +182,7 @@ class WorkerNode:
             now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
             tz = _time.strftime("%Z") or "UTC"
 
-            system_prompt = f\"\"\"# Subagent
+            system_prompt = f"""# Subagent
 
 ## Current Time
 {now} ({tz})
@@ -193,7 +198,7 @@ You are a subagent spawned (task_id: {task_id}) by the main agent.
 Your isolated sandbox is at: {sandbox}
 Main workspace is at: {self.workspace}
 
-When completed, provide a clear summary of findings.\"\"\"
+When completed, provide a clear summary of findings."""
 
             initial_messages = [
                 {"role": "system", "content": system_prompt},
@@ -231,17 +236,30 @@ async def main():
     parser.add_argument("--port", type=int, required=True, help="Port to bind HTTP server")
     parser.add_argument("--token", type=str, required=True, help="Secret token for authentication")
     parser.add_argument("--workspace", type=str, required=True, help="Workspace path")
+    parser.add_argument("--timeout", type=int, default=300, help="Worker idle timeout seconds")
+    parser.add_argument("--disable-network-socket", action="store_true", help="Unused in worker_process (kept for compatibility)")
     
     args = parser.parse_args()
     
     workspace_path = Path(args.workspace).expanduser().resolve()
     
-    node = WorkerNode(args.port, args.token, workspace_path)
+    node = WorkerNode(args.port, args.token, workspace_path, timeout=args.timeout)
     await node.start()
     
     # Keep alive
     while True:
         await asyncio.sleep(3600)
 
+def _bootstrap_security(argv: list[str]) -> None:
+    """CLI 安全引导：必须在所有业务逻辑启动前调用。"""
+    # Defensive programming: Block raw OS execution, but ALLOW sockets to preserve LLM and IPC.
+    def _block_dangerous_ops(event, args):
+        if event in ("os.system", "os.exec", "os.posix_spawn"):
+            raise PermissionError(f"Worker: Direct OS execution blocked by parent policy ({event})")
+            
+    import sys
+    sys.addaudithook(_block_dangerous_ops)
+
 if __name__ == "__main__":
+    _bootstrap_security(sys.argv)
     asyncio.run(main())

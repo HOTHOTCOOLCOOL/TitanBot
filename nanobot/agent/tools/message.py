@@ -2,8 +2,9 @@
 
 from typing import Any, Callable, Awaitable
 
-from nanobot.agent.tools.base import Tool, RiskTier
+from nanobot.agent.tools.base import Tool
 from nanobot.bus.events import OutboundMessage
+from nanobot.agent.capability import CapabilityTag
 
 
 class MessageTool(Tool):
@@ -24,10 +25,7 @@ class MessageTool(Tool):
         self._default_channel = channel
         self._default_chat_id = chat_id
     
-    def get_risk_tier(self, args: dict[str, Any]) -> RiskTier:
-        """Message is the agent's output channel — always READ_ONLY."""
-        return RiskTier.READ_ONLY
-    
+
     def set_send_callback(self, callback: Callable[[OutboundMessage], Awaitable[None]]) -> None:
         """Set the callback for sending messages."""
         self._send_callback = callback
@@ -35,6 +33,10 @@ class MessageTool(Tool):
     @property
     def name(self) -> str:
         return "message"
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.SYS_COMMUNICATION
     
     @property
     def description(self) -> str:

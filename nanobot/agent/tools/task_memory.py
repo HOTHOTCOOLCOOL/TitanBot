@@ -7,6 +7,7 @@ from typing import Any
 
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.task_knowledge import TaskKnowledgeStore
+from nanobot.agent.capability import CapabilityTag
 
 
 class TaskMemoryTool(Tool):
@@ -19,6 +20,11 @@ class TaskMemoryTool(Tool):
     @property
     def name(self) -> str:
         return "task_memory"
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.DATA_WRITE | CapabilityTag.DATA_READ | CapabilityTag.MUTATIVE
+
     
     @property
     def description(self) -> str:

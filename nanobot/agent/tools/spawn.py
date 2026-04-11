@@ -3,6 +3,7 @@
 from typing import Any, TYPE_CHECKING
 
 from nanobot.agent.tools.base import Tool
+from nanobot.agent.capability import CapabilityTag
 
 if TYPE_CHECKING:
     from nanobot.agent.subagent import SubagentManager
@@ -29,6 +30,10 @@ class SpawnTool(Tool):
     @property
     def name(self) -> str:
         return "spawn"
+
+    @property
+    def static_tags(self) -> CapabilityTag:
+        return CapabilityTag.MUTATIVE
     
     @property
     def description(self) -> str:

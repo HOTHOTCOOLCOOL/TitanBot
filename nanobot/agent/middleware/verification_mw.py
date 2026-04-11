@@ -33,7 +33,10 @@ class VerificationMiddleware(AgentMiddleware):
             return
 
         verification = self._agent._get_verification()
-        rule_result = verification.check_rules(ctx.tool_calls, ctx.messages)
+        registry = getattr(ctx, "tool_registry_override", None) or self._agent.tools
+        cfg = self._agent._get_config()
+        overrides = cfg.agents.sandbox.capability_overrides if cfg and getattr(cfg, 'agents', None) and getattr(cfg.agents, 'sandbox', None) else {}
+        rule_result = verification.check_rules(ctx.tool_calls, ctx.messages, registry=registry, config_overrides=overrides)
 
         if not rule_result.passed:
             logger.warning(

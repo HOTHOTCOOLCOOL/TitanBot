@@ -93,6 +93,6 @@ async def test_subagent_without_agent_loop_ref(mock_deps):
     # The subagent should have caught an exception and reported error because agent_loop_ref is missing
     bus.publish_inbound.assert_called()
     msg = bus.publish_inbound.call_args[0][0]
-    assert "[Subagent '" in msg.content
+    assert "[Worker '" in msg.content
     assert "failed" in msg.content
     assert "Error:" in msg.content

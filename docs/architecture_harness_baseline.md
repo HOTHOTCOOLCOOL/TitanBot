@@ -101,6 +101,24 @@ Nanobot "自我进化"的体现。每次对话落地后，后台静默启动 L3 
 
 ---
 
+### 2.6 L7 知识图谱子系统审查追记 (ADR-47, 2026-04-12)
+
+> **✅ ADR-47 Harness 辩证发现（代码审查红利，勿删）**
+> 
+> 在对 BubbleRAG 论文进行五阶 Harness 辩证分析时，深度代码审查揭示了以下**两个 Nanobot 已独立实现、但未被论文对比分析识别**的核心机制：
+> 
+> | 机制 | 代码位置 | BubbleRAG 对应概念 |
+> |------|---------|-------------------|
+> | **Coverage Penalty** | `knowledge_graph.py` `get_entity_context()` L632-L641：用 anchor 覆盖率对实体评分实施乘法惩罚 | BubbleRAG CEG Ranking `Score(T) = 1 / (SemanticCost × MissingPenalty + ε)` |
+> | **Schema Relaxation** | `knowledge_graph.py` `get_entity_context()` L644-L650：用 `prefetch_rag` 向量预取结果对 score=0 实体进行基于共现的"松弛升分" | BubbleRAG Schema Relaxation via Chunk Preview |
+> 
+> **结论**：Nanobot 的 KG 子系统已独立推演出与 BubbleRAG 论文相近的两个核心思路，且实现更轻量（不依赖图数据库）。
+> 
+> **待补充（Phase 46A）**：在 `knowledge_workflow.py` `match_knowledge()` 的三层回退（Exact/Substring/Hybrid）全部 Zero Match 之后，利用轻量 LLM 推断隐式概念词（Semantic Anchor Grouping 降维版本），发起带 timeout 熔断的静默第二次检索。
+
+
+---
+
 ## 3. 部署与技术底座
 
 - **架构风格：** 洋葱重构（Onion Architecture）结合响应式状态机

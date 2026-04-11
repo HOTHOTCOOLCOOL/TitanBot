@@ -12,12 +12,10 @@ from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
+from nanobot.agent.worker.bridge import BaseWorkerBridge, build_worker_toolset
 
 
-class SubagentManager:
+class SubagentManager(BaseWorkerBridge):
     """
     Manages background subagent execution.
     
@@ -40,9 +38,8 @@ class SubagentManager:
         agent_loop_ref: Any = None,
     ):
         from nanobot.config.schema import ExecToolConfig
+        super().__init__(workspace=workspace, bus=bus, provider=provider)
         self.provider = provider
-        self.workspace = workspace
-        self.bus = bus
         self.model = model or provider.get_default_model()
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -113,15 +110,12 @@ class SubagentManager:
             sandbox = self.workspace / "workers" / task_id
             sandbox.mkdir(parents=True, exist_ok=True)
 
-            # Build subagent tools (restricted logic: no message, no spawn, no coordinator, NO EXEC)
-            restricted_tools = ToolRegistry()
-            allowed_dir = sandbox if self.restrict_to_workspace else None
-            restricted_tools.register(ReadFileTool(allowed_dir=allowed_dir))
-            restricted_tools.register(WriteFileTool(allowed_dir=allowed_dir))
-            restricted_tools.register(EditFileTool(allowed_dir=allowed_dir))
-            restricted_tools.register(ListDirTool(allowed_dir=allowed_dir))
-            restricted_tools.register(WebSearchTool(api_key=self.brave_api_key))
-            restricted_tools.register(WebFetchTool())
+            # Build subagent tools
+            restricted_tools = build_worker_toolset(
+                sandbox=sandbox,
+                restrict_to_workspace=self.restrict_to_workspace,
+                brave_api_key=self.brave_api_key
+            )
             
             # Setup context for specific tools that need it
             for name in ["message", "spawn", "cron", "draw_image"]:
@@ -160,40 +154,6 @@ class SubagentManager:
         finally:
             _trace_id_var.reset(t_token)
             _route_tags_var.reset(r_token)
-    
-    async def _announce_result(
-        self,
-        task_id: str,
-        label: str,
-        task: str,
-        result: str,
-        origin: dict[str, str],
-        status: str,
-    ) -> None:
-        """Announce the subagent result to the main agent via the message bus."""
-        from nanobot.utils.trace_context import get_current_trace_id
-        status_text = "completed successfully" if status == "ok" else "failed"
-        
-        announce_content = f"""[Subagent '{label}' {status_text}]
-
-Task: {task}
-
-Result:
-{result}
-
-Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not mention technical details like "subagent" or task IDs."""
-        
-        # Inject as system message to trigger main agent
-        msg = InboundMessage(
-            channel="system",
-            sender_id="subagent",
-            chat_id=f"{origin['channel']}:{origin['chat_id']}",
-            content=announce_content,
-            metadata={"trace_id": get_current_trace_id()},
-        )
-        
-        await self.bus.publish_inbound(msg)
-        logger.debug(f"Subagent [{task_id}] announced result to {origin['channel']}:{origin['chat_id']}")
     
     def _build_subagent_prompt(self, task_id: str, task: str, sandbox: Path) -> str:
         """Build a focused system prompt for the subagent."""

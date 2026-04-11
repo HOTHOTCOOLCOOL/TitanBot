@@ -6,7 +6,7 @@ from nanobot.agent.tools.base import Tool
 from nanobot.agent.capability import CapabilityTag
 
 if TYPE_CHECKING:
-    from nanobot.agent.subagent import SubagentManager
+    from nanobot.agent.worker.bridge import BaseWorkerBridge
 
 
 class SpawnTool(Tool):
@@ -17,7 +17,7 @@ class SpawnTool(Tool):
     to the main agent when complete.
     """
     
-    def __init__(self, manager: "SubagentManager"):
+    def __init__(self, manager: "BaseWorkerBridge"):
         self._manager = manager
         self._origin_channel = "cli"
         self._origin_chat_id = "direct"

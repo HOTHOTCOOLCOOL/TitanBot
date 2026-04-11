@@ -15,6 +15,7 @@ def coordinator(mock_workspace):
     return CoordinatorManager(
         workspace=mock_workspace,
         bus=bus_mock,
+        provider=MagicMock(),
         enabled=True,
         max_workers=2
     )
@@ -30,10 +31,12 @@ async def test_spawn_worker_success(coordinator):
         mock_process.stdout = ["WORKER_READY:12345\n"]
         mock_popen.return_value = mock_process
         
-        with patch('aiohttp.ClientSession.post', new_callable=AsyncMock) as mock_post:
+        with patch('aiohttp.ClientSession.post') as mock_post:
+            mock_cm = MagicMock()
+            mock_post.return_value = mock_cm
             mock_post_resp = AsyncMock()
             mock_post_resp.status = 200
-            mock_post.return_value.__aenter__.return_value = mock_post_resp
+            mock_cm.__aenter__.return_value = mock_post_resp
             
             with patch('asyncio.create_task') as mock_create_task:
                 result = await coordinator.spawn("compute pi", label="pi-calc")

@@ -756,10 +756,10 @@ Feel free to [open an issue](https://github.com/HOTHOTCOOLCOOL/nanobot/issues) o
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Phase 36 | ⏳ Next | Cross-Platform & OS Sandbox (Bubblewrap) |
-| Phase 37 | 📋 Backlog | Execution Trace Archive (Meta-Harness) |
-| Phase 38 | 📋 Backlog | Coordinator Mode |
-| Phase 46 | ⏳ Next | Next steps to be arranged |
+| Phase 38A | ⏳ Next | Manager Base Abstraction (Refactoring) |
+| Phase 38B | ⏳ Next | Manager-SubAgent Orchestration (Coordinator Mode) |
+| Phase 36 | 📋 Backlog | Worker Security v2 (Docker seccomp) |
+| Phase 46 | 📋 Backlog | Next steps to be arranged |
 
 > **Recently Completed**: Browser Automation (Phase 26B+C ✅), Verification Layer & Smart HITL (Phase 31/32 ✅), Cron Retry/SSRS Guard (Phase 44 ✅), Dynamic Sandbox & Tag-Driven L1 Shell Guard (Phase 45 ✅)
 

@@ -35,7 +35,10 @@ def _cleanup_workers():
 atexit.register(_cleanup_workers)
 
 
-class CoordinatorManager:
+from nanobot.agent.worker.bridge import BaseWorkerBridge
+
+
+class CoordinatorManager(BaseWorkerBridge):
     """
     Manages Worker background subprocesses.
     It replaces the coroutine-based SubagentManager for Phase 38 Coordinator Mode.
@@ -44,16 +47,25 @@ class CoordinatorManager:
         self,
         workspace: Path,
         bus: Any,
+        provider: Any = None,
         enabled: bool = False,
         max_workers: int = 4,
-        sandbox_root: str = "workspace/workers"
+        sandbox_root: str = "workspace/workers",
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        brave_api_key: str | None = None,
     ):
-        self.workspace = workspace
-        self.bus = bus
+        super().__init__(workspace=workspace, bus=bus, provider=provider)
         self.enabled = enabled
         self.max_workers = max_workers
         self.sandbox_root = workspace / sandbox_root
         self.sandbox_root.mkdir(parents=True, exist_ok=True)
+        
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.brave_api_key = brave_api_key
         
         self.workers: Dict[str, dict] = {}  # task_id -> {"process": Popen, "port": int, "token": str, "task_desc": str, "status_task": asyncio.Task}
         self.session: aiohttp.ClientSession | None = None
@@ -163,7 +175,17 @@ class CoordinatorManager:
         headers = {"Authorization": f"Bearer {token}"}
         
         try:
-            async with self._get_session().post(url, headers=headers, json={"task": task, "task_id": task_id}) as resp:
+            from nanobot.utils.trace_context import get_current_trace_id
+            payload = {
+                "task": task,
+                "task_id": task_id,
+                "trace_id": get_current_trace_id(),
+                "model": self.model,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+                "brave_api_key": self.brave_api_key,
+            }
+            async with self._get_session().post(url, headers=headers, json=payload) as resp:
                 resp.raise_for_status()
         except Exception as e:
             process.kill()
@@ -241,40 +263,6 @@ class CoordinatorManager:
         # Remove from workers
         self.workers.pop(task_id, None)
 
-    async def _announce_result(
-        self,
-        task_id: str,
-        label: str,
-        task: str,
-        result: str,
-        origin: dict[str, str],
-        status: str,
-    ) -> None:
-        """Announce the worker result to the main agent bus."""
-        from nanobot.utils.trace_context import get_current_trace_id
-        from nanobot.bus.events import InboundMessage
-        
-        status_text = "completed successfully" if status == "completed" else "failed"
-        
-        announce_content = f"""[Worker '{label}' {status_text}]
-
-Task: {task}
-
-Result:
-{result}
-
-Summarize this naturally for the user. Keep it brief. Do not mention technical details like subprocess or task IDs."""
-        
-        msg = InboundMessage(
-            channel="system",
-            sender_id="coordinator",
-            chat_id=f"{origin['channel']}:{origin['chat_id']}",
-            content=announce_content,
-            metadata={"trace_id": get_current_trace_id() or task_id},
-        )
-        
-        await self.bus.publish_inbound(msg)
-        
     def get_running_count(self) -> int:
         return sum(1 for w in self.workers.values() if w["process"].poll() is None)
 

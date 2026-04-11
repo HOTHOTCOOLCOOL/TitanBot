@@ -49,13 +49,7 @@ class WorkerNode:
         
         self.config = get_config()
         self.bus = MessageBus()  # Local bus, not connected to master
-        self.provider = ProviderFactory.get_provider(self.config.agents.defaults.model, self.config)
-        self.agent_loop = AgentLoop(
-            bus=self.bus,
-            provider=self.provider,
-            workspace=self.workspace,
-            restrict_to_workspace=self.config.tools.restrict_to_workspace
-        )
+        # AgentLoop and Provider are instantiated dynamically per task to prevent context leakage
         
         self.current_task_id: str | None = None
         self.status = "idle"  # idle, running, completed, error
@@ -106,6 +100,11 @@ class WorkerNode:
         task_id = data.get("task_id", uuid.uuid4().hex[:8])
         trace_id = data.get("trace_id", task_id)
         
+        model = data.get("model") or self.config.agents.defaults.model
+        temperature = data.get("temperature", 0.7)
+        max_tokens = data.get("max_tokens", 4096)
+        brave_api_key = data.get("brave_api_key")
+        
         if not task_desc:
             return web.json_response({"error": "Task is required"}, status=400)
             
@@ -119,7 +118,9 @@ class WorkerNode:
             self._idle_timeout_task.cancel()
             
         # Spawn execution in background
-        self._task_future = asyncio.create_task(self._execute_agent_loop(task_id, task_desc, trace_id))
+        self._task_future = asyncio.create_task(self._execute_agent_loop(
+            task_id, task_desc, trace_id, model, temperature, max_tokens, brave_api_key
+        ))
         
         return web.json_response({"status": "accepted", "task_id": task_id})
 
@@ -160,22 +161,32 @@ class WorkerNode:
         asyncio.create_task(do_exit())
         return web.json_response({"status": "shutting down"})
 
-    async def _execute_agent_loop(self, task_id: str, task: str, trace_id: str):
+    async def _execute_agent_loop(self, task_id: str, task: str, trace_id: str, model: str, temperature: float, max_tokens: int, brave_api_key: str | None):
         t_token = _trace_id_var.set(trace_id)
         r_token = _route_tags_var.set(frozenset(["worker"]))
         
         try:
+            provider = ProviderFactory.get_provider(model, self.config)
+            agent_loop = AgentLoop(
+                bus=self.bus,
+                provider=provider,
+                workspace=self.workspace,
+                model=model,
+                temperature=float(temperature),
+                max_tokens=int(max_tokens),
+                brave_api_key=brave_api_key,
+                restrict_to_workspace=self.config.tools.restrict_to_workspace
+            )
+            
             sandbox = self.workspace / "workers" / task_id
             sandbox.mkdir(parents=True, exist_ok=True)
             
-            restricted_tools = ToolRegistry()
-            allowed_dir = sandbox if self.agent_loop.restrict_to_workspace else None
-            restricted_tools.register(ReadFileTool(allowed_dir=allowed_dir))
-            restricted_tools.register(WriteFileTool(allowed_dir=allowed_dir))
-            restricted_tools.register(EditFileTool(allowed_dir=allowed_dir))
-            restricted_tools.register(ListDirTool(allowed_dir=allowed_dir))
-            restricted_tools.register(WebSearchTool(api_key=self.agent_loop.brave_api_key))
-            restricted_tools.register(WebFetchTool())
+            from nanobot.agent.worker.bridge import build_worker_toolset
+            restricted_tools = build_worker_toolset(
+                sandbox=sandbox,
+                restrict_to_workspace=agent_loop.restrict_to_workspace,
+                brave_api_key=agent_loop.brave_api_key
+            )
             
             from datetime import datetime
             import time as _time
@@ -205,7 +216,7 @@ When completed, provide a clear summary of findings."""
                 {"role": "user", "content": task},
             ]
 
-            final_content, _, _ = await self.agent_loop._run_agent_loop_v2(
+            final_content, _, _ = await agent_loop._run_agent_loop_v2(
                 initial_messages,
                 channel="system",
                 chat_id=f"worker:{task_id}",

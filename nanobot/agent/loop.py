@@ -299,9 +299,14 @@ class AgentLoop:
         self.coordinator_manager = CoordinatorManager(
             workspace=workspace,
             bus=bus,
+            provider=provider,
             enabled=getattr(coord_cfg, 'enabled', False) if coord_cfg else False,
             max_workers=getattr(coord_cfg, 'max_workers', 4) if coord_cfg else 4,
-            sandbox_root=getattr(coord_cfg, 'sandbox_root', "workspace/workers") if coord_cfg else "workspace/workers"
+            sandbox_root=getattr(coord_cfg, 'sandbox_root', "workspace/workers") if coord_cfg else "workspace/workers",
+            model=self.model,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            brave_api_key=brave_api_key
         )
         
         self._running = False
@@ -705,6 +710,18 @@ class AgentLoop:
                             is_approved = approval_store.is_approved(tc.name, tc.arguments) if approval_store else False
                             
                             if not is_approved:
+                                if str(chat_id).startswith("worker:"):
+                                    logger.warning(f"HITL: Hard blocking high-risk tool '{tc.name}' for worker {chat_id}")
+                                    messages = self.context.add_tool_result(
+                                        messages, tc.id, tc.name,
+                                        f"Error: High-Risk action ({tc.name}) blocked. Worker processes cannot inherit HITL approval dialogs."
+                                    )
+                                    # Fallthrough to block loop
+                                    hitl_suspended = True
+                                    final_content = None # Signal logic to just loop over and not halt
+                                    # Break the tool checking loop, but flag that worker is blocked
+                                    break
+                                
                                 logger.info(f"HITL: Suspending loop for {tc.name} approval")
                                 if channel and chat_id:
                                     session_key = self.sessions.resolve_key(f"{channel}:{chat_id}")
@@ -750,6 +767,8 @@ class AgentLoop:
                                         final_content = hitl_msg
                                         break
                 if hitl_suspended:
+                    if str(chat_id).startswith("worker:"):
+                        continue  # Worker block: let LLM retry instead of breaking entire loop
                     break
 
                 # Phase 40B-1: Write checkpoint WAL before tool execution

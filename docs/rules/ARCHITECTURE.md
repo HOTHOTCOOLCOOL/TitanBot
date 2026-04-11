@@ -133,3 +133,11 @@
 16. **测试 Mock 必须与接口重构同步进化（Test Mock Interface Fidelity）**：
     在重构安全中间件接口（如从 `get_risk_tier()` → `CapabilityTag` / `static_tags` + `get_effective_tags(args, config_override=)` ）后，若测试中的 `FakeTool` / `FakeRegistry` 仅更新属性值而遗漏接口签名变化（如缺少 `static_tags` 属性、`get_effective_tags` 签名不接受 `config_override` 关键字参数），会导致产品代码通过但所有涉及新路径的测试全部 `AttributeError`/`TypeError` 崩溃，制造"绿色 CI 假象"。
     **避坑指南**：在做安全/验证层的 API 重构时，必须在同一 PR 里同步更新所有测试桩（Test Doubles），且对使用真实实例（如 `ExecTool()`）的 Mock 注册表优先于手搓的 FakeTool，以保证 `evaluate_dynamic_tags()` 等运行时动态行为能被测试链条端到端覆盖。（参见 ADR-45B Phase 45B）
+
+17. **子进程模型上下文单例泄露（Subprocess Singleton Context Leak via JSON-RPC）**：
+    在通过 JSON-RPC 将任务派发给长期运行的 Worker 子进程时，如果 Worker 环境在启动（如 `__init__`）时便初始化了 `AgentLoop` 或加载了默认的 `Provider`（如固定加载了 `defaults.model`），那么在支持“异构模型请求”（即主 Agent 要求 Worker 采用特定轻量模型处理任务）时，会导致 Worker 完全无视 HTTP 负载中指定的模型参数。此外，多任务的复用会导致 Worker 在上一个任务中污染的 `ContextVars` 泄露到下一次调用。
+    **避坑指南**：对于基于长轮询/常驻子进程的 RPC 架构，其状态层（如 `AgentLoop` 及 `Provider`）必须保证与 RPC Action 的生命周期绝对对齐。在处理 HTTP Request 时，必须**动态基于 Payload 中的 Context (如 model, temperature, api keys) 重新实例化推理栈**，并保证在 Finally 中重置所有的上文隔离 `ContextVars` 污染，决不能贪图省事在进程启动时共享一个实例，否则状态必毁。（参见 Phase 38A 抽象统一教训）
+
+18. **隐式 HITL 无头死锁与大文本上下文污染 (Headless HITL Deadlocks and Worker Context Bloat)**：
+    在多模型并发协作 (Manager-SubAgent) 架构中，若直接将主框架包含高级安全栅栏的 `AgentLoop` 搬迁至脱离中控的主机或子进程里，此时任何工具在检测到 `CapabilityTag.IS_HIGH_RISK` 并悬挂等待审批反馈（HITL Prompt）时，都会因为 Worker 没有合法的通道句柄接收交互，从而导致该次 SubAgent 任务永久悬挂假死。其次，Worker 输出的全量调试文本如直接回传，将引发父 Agent 产生灾难级别的上下文膨胀。
+    **避坑指南**：必须建立“多级防线代理隔离模式 (Proxy-Isolated Defense)”。① 对于权限继承，必须以硬性特征在底层拦截（如：在安全中间件检测 `chat_id.startswith("worker:")`，对所有 High-Risk 动作执行强行 Abort 而非 Suspend，并返回直白报错使 LLM 主动改变策略，而不是挂起等死）；② 对于上下文回传，必须内建 Outcome-Refining 降维流标管。在 `_announce_result` 返回父总线前，强制剥离无用的过程冗杂并通过轻量 LLM 层级蒸馏文本特征，只将 “Refined Synthesis” 送返核心。 (参见 Phase 38B 多模型协作重构教训)

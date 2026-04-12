@@ -83,7 +83,7 @@ class TraceArchive:
     def _cleanup(self) -> None:
         """Evict oldest traces beyond MAX_TRACES."""
         try:
-            traces = sorted(self.traces_dir.glob("trace_*.json"))
+            traces = sorted(self.traces_dir.glob("trace_*.json"), key=lambda p: p.stat().st_mtime)
             while len(traces) > self.MAX_TRACES:
                 oldest = traces.pop(0)
                 oldest.unlink(missing_ok=True)

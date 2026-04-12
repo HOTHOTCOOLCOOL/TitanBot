@@ -121,6 +121,56 @@ class CommandHandler:
                 channel=msg.channel, chat_id=msg.chat_id,
                 content=i18n_msg("deep_consolidate_started"),
             )
+        if cmd == "/consolidate_experience":
+            async def _run_experience_consolidation():
+                from nanobot.agent.trace_archive import TraceArchive
+                archive = TraceArchive(self.workspace)
+                traces = sorted(archive.traces_dir.glob("trace_*.json"), reverse=True)[:20]
+                failed_traces = []
+                for tf in traces:
+                    try:
+                        data = json.loads(tf.read_text(encoding="utf-8"))
+                        fc = data.get("final_content", "")
+                        tc = data.get("tool_chain", [])
+                        is_failed = False
+                        if fc.startswith("Error:") or fc.startswith("error:"):
+                            is_failed = True
+                        elif tc and isinstance(tc, list) and len(tc) > 0:
+                            last_outcome = tc[-1].get("outcome")
+                            if last_outcome in ("error", "failed"):
+                                is_failed = True
+                        
+                        if is_failed:
+                            failed_traces.append(data)
+                    except Exception:
+                        pass
+
+                if not failed_traces:
+                    logger.info("No failed traces found for consolidation.")
+                    return
+                
+                logger.info(f"SubAgent experience consolidation triggered with {len(failed_traces[:5])} failed traces.")
+                prompt_text = (
+                    "Please analyze the following failed execution traces and extract a single Directive Signal (a {trigger, prompt} pair) to prevent these errors in the future.\n"
+                    "1. Return only the core insight.\n"
+                    "2. Use the save_experience tool to save it. Make sure your trigger is precise.\n"
+                    "3. Important: Your saved prompt text MUST include the tag '[Auto-Generated]'.\n\n"
+                )
+                for i, ft in enumerate(failed_traces[:5]):
+                    prompt_text += f"\n--- Trace {i+1} ---\nFinal Content: {ft.get('final_content')}\nTool Chain: {json.dumps(ft.get('tool_chain', []))}"
+                
+                await agent.subagents.spawn(
+                    task=prompt_text,
+                    label="Offline Experience Consolidation",
+                    origin_channel=msg.channel,
+                    origin_chat_id=msg.chat_id
+                )
+
+            _safe_create_task(_run_experience_consolidation(), name="experience_consolidation")
+            return OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id,
+                content="Offline Experience Consolidation task started."
+            )
         if cmd == "/stats":
             return OutboundMessage(
                 channel=msg.channel, chat_id=msg.chat_id,

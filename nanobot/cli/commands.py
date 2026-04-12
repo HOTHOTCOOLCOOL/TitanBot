@@ -486,6 +486,17 @@ def gateway(
             channel="system",
             to="system"
         )
+        
+    has_offline_consolidation = any(j.name == "Offline Experience Consolidation" for j in cron.list_jobs(include_disabled=True))
+    if not has_offline_consolidation:
+        from nanobot.cron.types import CronSchedule
+        cron.add_job(
+            name="Offline Experience Consolidation",
+            schedule=CronSchedule(kind="cron", expr="0 3 * * *"),
+            message="/consolidate_experience",
+            channel="system",
+            to="system"
+        )
         cron_status = cron.status()
 
     if cron_status["jobs"] > 0:

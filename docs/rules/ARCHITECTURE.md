@@ -141,3 +141,11 @@
 18. **隐式 HITL 无头死锁与大文本上下文污染 (Headless HITL Deadlocks and Worker Context Bloat)**：
     在多模型并发协作 (Manager-SubAgent) 架构中，若直接将主框架包含高级安全栅栏的 `AgentLoop` 搬迁至脱离中控的主机或子进程里，此时任何工具在检测到 `CapabilityTag.IS_HIGH_RISK` 并悬挂等待审批反馈（HITL Prompt）时，都会因为 Worker 没有合法的通道句柄接收交互，从而导致该次 SubAgent 任务永久悬挂假死。其次，Worker 输出的全量调试文本如直接回传，将引发父 Agent 产生灾难级别的上下文膨胀。
     **避坑指南**：必须建立“多级防线代理隔离模式 (Proxy-Isolated Defense)”。① 对于权限继承，必须以硬性特征在底层拦截（如：在安全中间件检测 `chat_id.startswith("worker:")`，对所有 High-Risk 动作执行强行 Abort 而非 Suspend，并返回直白报错使 LLM 主动改变策略，而不是挂起等死）；② 对于上下文回传，必须内建 Outcome-Refining 降维流标管。在 `_announce_result` 返回父总线前，强制剥离无用的过程冗杂并通过轻量 LLM 层级蒸馏文本特征，只将 “Refined Synthesis” 送返核心。 (参见 Phase 38B 多模型协作重构教训)
+
+19. **避免深层结构的大文本上下文污染 (Avoid Heavy Structure Context Bloat in LLMs)**：
+    在执行诸如批量 JSON 解析、复杂日志扫描、二进制分析等“大体量、深结构”的数据整理任务时，绝对禁止采用无脑交由大模型循环读取判断 (`ReadListDir` -> `ReadFile` -> `LLM Context`) 的暴力手法。受限于上下文长度和多层推断注意力衰减（Attention Dilution），极易发生长文本截断、错位分析和大量无意义的试探性能量消耗。
+    **避坑指南**：应坚守 **“确定性优先 (Deterministic First) + 本地逻辑探针引擎”** 的双引擎驱动战略。必须首先编写纯 Native 代码（如 Python 中的条件分支）完成对数据的初筛（如错误拦截 `Error:` 或边界状态过滤），仅在高度浓缩或剪枝提拉后的最终状态集合上，才动用 LLM 去做“主观归因推理与指令产出”。切记：不要用大模型的算力去干正则表达式和过滤器的活。(参见 Phase 46B 离线经验整编教训)
+
+20. **配置合并中的脱敏字段劫持与乐观锁覆盖陷阱 (Masked Fields Hijacking and Optimistic Lock Overwrite in Config Merges)**：
+    在构建全栈的配置编辑器时，为防止 API 泄露高危密钥（如 `API_KEY`），通过在后端将敏感字段替换为占位符（如 `__MASKED__`）是一种常见做法。但在将前端用户提交的修饰层配置写回时，如果采用粗暴的全量反序列化覆盖（如 `json.dump`）或在字典深层合并（Deep Merge）时忽略了对脱敏标记的过滤，就会导致真实的生产环境配置被前端的 `__MASKED__` 字符串无情覆盖损坏。同时，在跨端管理时，因缺失了“乐观锁”控制，很容易引发修改丢失（Lost Update）。
+    **避坑指南**：① 必须在后端反序列化并开启深层补丁合并前，实施精准的**脱敏 Sentinel 探针过滤（Skip Masked Values in Deep Merge）**，对所有值等于脱敏面具特征（如 `__MASKED__`）的属性保持不覆盖，以保留磁盘原始真值；② **强校验乐观锁防篡改 (Optimistic Lock Hash Check)**。强制每次 GET 读取都附带文件的 `mtime` 或特征值，并在写入节点（Write API）行尾校验比对，一遇突变立即抛出 409 Conflict 警告并中断写入，严防并发和多 Tabs 开启造成的覆盖损坏。(参见 Phase 48 仪表盘安全配置编辑教训)

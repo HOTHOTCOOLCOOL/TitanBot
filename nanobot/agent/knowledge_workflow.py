@@ -200,6 +200,121 @@ class KnowledgeWorkflow:
         logger.debug(f"KnowledgeWorkflow: no match found for key '{key}'")
         return None
 
+    async def query_expansion_fallback(self, key: str) -> dict[str, Any] | None:
+        """Phase 46A: Last-resort semantic expansion when all 3 layers miss.
+
+        When Exact/Substring/Hybrid all return None, this method triggers a
+        lightweight LLM call to infer 1-3 implicit concept words from the
+        user's query, then re-runs hybrid_retrieve() with each expanded term.
+
+        Safety:
+        - 3s timeout circuit breaker (asyncio.wait_for)
+        - Silent degradation: timeout/error → None, no disruption to caller
+        - Skips entirely if provider is None (e.g. ReadOnly worker process)
+
+        Returns:
+            Matched task dict with _match_method="query_expansion", or None.
+        """
+        if not self.provider or not self.knowledge_store:
+            return None
+
+        tasks = self.knowledge_store.get_all_tasks()
+        if not tasks:
+            return None
+
+        # P29-2: Workflow Model Routing — reuse key_extraction lightweight model
+        from nanobot.config.loader import get_config
+        config = get_config()
+        wf_models = getattr(config.agents, 'workflow_models', {})
+        exp_model = wf_models.get('key_extraction', self.model)
+        exp_provider = self.provider
+        if exp_model != self.model:
+            from nanobot.providers.factory import ProviderFactory
+            exp_provider = ProviderFactory.get_provider(exp_model, config) or self.provider
+
+        prompt = (
+            "The following user query did not match any known task in the knowledge base.\n"
+            "Infer 1-3 alternative concept words or short phrases (synonyms, related terms, "
+            "or implicit meanings) that the user might be referring to.\n\n"
+            f"User query: {key}\n\n"
+            "Return ONLY a JSON array of strings, e.g. [\"term1\", \"term2\"]. "
+            "No markdown fences, no explanation."
+        )
+
+        import asyncio
+        try:
+            response = await asyncio.wait_for(
+                exp_provider.chat(
+                    messages=[
+                        {"role": "system", "content": "You are a query expansion component. Respond ONLY with a JSON array of strings."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    model=exp_model,
+                    temperature=0.3,
+                    max_tokens=80,
+                ),
+                timeout=3.0,
+            )
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.debug(f"Phase 46A: query expansion failed/timed out: {e}")
+            return None
+
+        # Parse expanded terms
+        text = (response.content or "").strip()
+        from nanobot.utils.think_strip import strip_think_tags
+        text = strip_think_tags(text)
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+        try:
+            import json_repair
+            expanded_terms = json_repair.loads(text)
+        except Exception:
+            logger.debug(f"Phase 46A: failed to parse expansion response: {text[:100]}")
+            return None
+
+        if not isinstance(expanded_terms, list):
+            return None
+
+        # Limit to 3 terms max to bound latency
+        expanded_terms = [str(t).strip() for t in expanded_terms[:3] if str(t).strip()]
+        if not expanded_terms:
+            return None
+
+        logger.debug(f"Phase 46A: expanded '{key}' → {expanded_terms}")
+
+        # Re-run hybrid retrieval with each expanded term, take best
+        threshold = self._adaptive_threshold(len(tasks))
+        best_match = None
+        best_score = 0.0
+
+        for term in expanded_terms:
+            match, score = hybrid_retrieve(
+                query=term,
+                candidates=tasks,
+                text_field="key",
+                extra_text_field="triggers",
+                match_key_field="key",
+                vector_memory=self.vector_memory if self.knowledge_store else None,
+                vector_source_filter="knowledge",
+                threshold=threshold,
+            )
+            if match and score > best_score:
+                best_score = score
+                best_match = match
+
+        if best_match:
+            logger.info(
+                f"Phase 46A: query expansion matched '{best_match.get('key')}' "
+                f"(score={best_score:.2f}, expanded from '{key}')"
+            )
+            best_match["_match_confidence"] = round(best_score, 3)
+            best_match["_match_method"] = "query_expansion"
+            return best_match
+
+        logger.debug(f"Phase 46A: query expansion found no matches for '{key}'")
+        return None
+
     def match_experience(self, action_context: str) -> str | None:
         """Find action-level tactical prompts from the Experience Bank (P12 feature).
 

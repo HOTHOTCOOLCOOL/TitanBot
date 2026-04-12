@@ -1705,6 +1705,10 @@ class AgentLoop:
                 history = session.get_history(max_messages=10)
                 task_key = await kw.extract_key(msg.content, history=history)
                 match = kw.match_knowledge(task_key)
+
+                # Phase 46A: Fallback query expansion (only when all 3 layers miss)
+                if match is None and task_key:
+                    match = await kw.query_expansion_fallback(task_key)
             except Exception as e:
                 logger.error(f"Knowledge workflow error (non-fatal): {e}")
                 metrics.increment("knowledge_fallback_count")

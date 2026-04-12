@@ -64,7 +64,7 @@ def load_config(config_path: Path | None = None) -> Config:
     return Config(**data)
 
 
-def save_config(config: Config, config_path: Path | None = None) -> None:
+def save_config(config: Config, config_path: Path | None = None, exclude_unset: bool = False) -> None:
     """
     Save configuration to file.
 
@@ -74,6 +74,7 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     Args:
         config: Configuration to save.
         config_path: Optional path to save to. Uses default if not provided.
+        exclude_unset: Only dump fields explicitly set.
     """
     import os
     import tempfile
@@ -82,7 +83,7 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     path = config_path or get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    data = config.model_dump(by_alias=True)
+    data = config.model_dump(by_alias=True, exclude_unset=exclude_unset)
     content = json.dumps(data, indent=2)
 
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
@@ -96,6 +97,26 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
         except OSError:
             pass
         raise
+
+
+def save_config_with_backup(config: Config, config_path: Path | None = None, exclude_unset: bool = False) -> None:
+    """
+    Save configuration with a local backup (e.g. config.json.bak)
+    before writing the new data.
+    """
+    import shutil
+    from loguru import logger
+    
+    path = config_path or get_config_path()
+    if path.exists():
+        backup_path = path.with_suffix(".json.bak")
+        try:
+            shutil.copy2(path, backup_path)
+            logger.debug(f"Created config backup at {backup_path}")
+        except Exception as e:
+            logger.warning(f"Failed to create config backup: {e}")
+            
+    save_config(config, path, exclude_unset=exclude_unset)
 
 
 def _migrate_config(data: dict) -> dict:

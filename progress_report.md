@@ -20,7 +20,9 @@
  - [x] **Phase 46A: Fallback-Driven Query Expansion (KG 末端语义扩展)** *(P0)*
    - `match_knowledge()` 三层全 Miss 后触发 LLM 推断隐式概念词，静默二次 `hybrid_retrieve()`，3s timeout 熔断保护，主路径 P50 零影响。
  - [x] **Phase 46B: Offline Experience Consolidator (离线经验整编器)** *(P1, ~2天)*
- - [x] **Phase 47: Dashboard 配置编辑器 (Config Editor UI)** *(P1)* 
+ - [x] **Phase 47: 论文分析架构决策与演进评级 (Paper Analysis & Architecture Audit)** *(P1)*
+   - 完成了《SkillClaw》《BubbleRAG》等前沿 Agent 论文分析，并落地为 ADR-47 及后续的 46A/46B。
+ - [x] **Phase 48: Dashboard 配置编辑器 (Config Editor UI)** *(P1)* 
    - 实现了基于乐观锁和脱敏合并机制的双模式配置编辑器，解决权限配置的不透明性。
   - [ ] **Phase 49: In-Flight Context Condensation (IFCC)** *(P1, ~1.5天)*
     - 来源: MemPO (arXiv 2603.00680v3)，借鉴 `<mem>` 标签信号，纯工程实现无需 RL 训练。

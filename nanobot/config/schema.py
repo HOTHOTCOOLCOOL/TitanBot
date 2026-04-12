@@ -295,12 +295,12 @@ class BrowserConfig(Base):
 class SandboxConfig(Base):
     """Execution sandbox configuration (Phase 28B)."""
 
-    python_timeout_seconds: int = 300
-    shell_timeout_seconds: int = 60
-    tool_timeout_seconds: int = 120  # Default timeout for all tool executions (BP-3)
-    allow_network: bool = False
-    restrict_workspace: bool = True
-    capability_overrides: dict[str, int] = Field(default_factory=dict)  # Phase 45C: Sandbox Tool Tag Overrides
+    python_timeout_seconds: int = Field(default=300, description="Max execution time for Python scripts securely evaluated.")
+    shell_timeout_seconds: int = Field(default=60, description="Max execution time for terminal shell commands.")
+    tool_timeout_seconds: int = Field(default=120, description="Default timeout for all tool executions (BP-3).")
+    allow_network: bool = Field(default=False, description="Whether to allow network requests during sandboxed execution.")
+    restrict_workspace: bool = Field(default=True, description="Constrain file system IO to the defined workspace path.")
+    capability_overrides: dict[str, int] = Field(default_factory=dict, description="Phase 45C: Bitmask mapping for high-risk Sandbox Tool Tags.")
 
 
 class VerificationConfig(Base):

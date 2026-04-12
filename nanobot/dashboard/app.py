@@ -215,6 +215,146 @@ async def broadcast_ws_message(msg_type: str, data: Any):
             _active_websockets.discard(ws)
 
 # ====================================================================
+# Configuration Editor API (Phase 48)
+# ====================================================================
+
+_MASKED_ = "__MASKED__"
+
+def _mask_sensitive_fields(data: dict | list | Any) -> Any:
+    """Recursively mask sensitive fields (tokens, keys, passwords)."""
+    if isinstance(data, dict):
+        result = {}
+        for k, v in data.items():
+            k_lower = k.lower()
+            if any(s in k_lower for s in ("token", "secret", "api_key", "apikey", "password", "encrypt_key", "client_id")) and v:
+                result[k] = _MASKED_
+            elif isinstance(v, (dict, list)):
+                result[k] = _mask_sensitive_fields(v)
+            else:
+                result[k] = v
+        return result
+    elif isinstance(data, list):
+        return [_mask_sensitive_fields(item) for item in data]
+    return data
+
+def _deep_merge(original: dict, updates: dict) -> dict:
+    """Recursively merge updates into original. If update value is __MASKED__, keep original."""
+    result = original.copy()
+    for k, v in updates.items():
+        if v == _MASKED_:
+            continue
+        if isinstance(v, dict) and k in result and isinstance(result[k], dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+@app.get("/api/config", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
+async def get_dashboard_config():
+    """Phase 48: Read raw config with sensitive fields masked + optimistic lock hash."""
+    from nanobot.config.loader import get_config_path
+    
+    path = get_config_path()
+    if not path.exists():
+        return {"config": {}, "version_hash": ""}
+        
+    try:
+        raw_json = json.loads(path.read_text(encoding="utf-8"))
+        mtime = str(path.stat().st_mtime)
+        return {"config": _mask_sensitive_fields(raw_json), "version_hash": mtime}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/config", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
+async def update_dashboard_config(request: Request):
+    """Phase 48: Safe update config with optimistic lock and deep merge."""
+    from nanobot.config.loader import get_config_path, save_config_with_backup
+    from nanobot.config.schema import Config
+    
+    body = await request.body()
+    if len(body) > 1_048_576:
+        raise HTTPException(status_code=413, detail="Payload too large (max 1MB)")
+        
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON format")
+        
+    updates = data.get("config", {})
+    client_version_hash = data.get("version_hash", "")
+    
+    path = get_config_path()
+    if path.exists():
+        current_mtime = str(path.stat().st_mtime)
+        if client_version_hash and current_mtime != client_version_hash:
+            raise HTTPException(status_code=409, detail="Config modified on disk. Please refresh.")
+        try:
+            original = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            original = {}
+    else:
+        original = {}
+        
+    merged_data = _deep_merge(original, updates)
+    
+    try:
+        # Validate merged config through Pydantic pipeline
+        validated_config = Config.model_validate(merged_data)
+        save_config_with_backup(validated_config, path, exclude_unset=True)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+@app.get("/api/capabilities", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
+async def get_capabilities():
+    """Phase 48: Provide CapabilityTags for the Sandbox Config Editor UI."""
+    from nanobot.agent.capability import CapabilityTag
+    
+    items = []
+    for tag in CapabilityTag:
+        if tag == CapabilityTag.NONE or tag.name == "IS_HIGH_RISK":
+            continue
+            
+        risk = "low"
+        if tag in (CapabilityTag.SHELL_EXECUTION, CapabilityTag.CODE_EVALUATION):
+            risk = "medium"
+        elif tag in (CapabilityTag.DESTRUCTIVE, CapabilityTag.UNTRUSTED_EXTERNAL):
+            risk = "high"
+        elif tag == CapabilityTag.MUTATIVE:
+            risk = "medium"
+
+        title, desc = tag.name, ""
+        if tag == CapabilityTag.DATA_READ:
+            title, desc = "Data Read", "Allow reading local data and workspace files"
+        elif tag == CapabilityTag.DATA_WRITE:
+            title, desc = "Data Write", "Allow creating or modifying local files"
+        elif tag == CapabilityTag.INFO_RETRIEVAL:
+            title, desc = "Info Retrieval", "Allow fetching data from external APIs or resources"
+        elif tag == CapabilityTag.SYS_COMMUNICATION:
+            title, desc = "System Communication", "Allow sending outbound notifications to humans (e.g., email, message)"
+        elif tag == CapabilityTag.SHELL_EXECUTION:
+            title, desc = "Shell Execution", "Allow executing shell scripts or OS terminal commands"
+        elif tag == CapabilityTag.CODE_EVALUATION:
+            title, desc = "Code Evaluation", "Allow compiling and executing arbitrary code dynamically (e.g., Python)"
+        elif tag == CapabilityTag.MUTATIVE:
+            title, desc = "State Mutation", "Allow state-changing side effects that persist in the system"
+        elif tag == CapabilityTag.DESTRUCTIVE:
+            title, desc = "Destructive Operation", "Allow data deletion or formatting operations. (Extremely dangerous)"
+        elif tag == CapabilityTag.UNTRUSTED_EXTERNAL:
+            title, desc = "Untrusted External", "Tool originates from unverified third parties (e.g., external MCP servers)"
+            
+        items.append({
+            "name": tag.name,
+            "title": title,
+            "desc": desc,
+            "value": tag.value,
+            "risk": risk
+        })
+        
+    return {"capabilities": items}
+
+
+# ====================================================================
 # API Endpoints for Knowledge & Memory
 # ====================================================================
 

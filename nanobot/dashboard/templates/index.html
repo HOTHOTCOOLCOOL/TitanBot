@@ -330,6 +330,9 @@
         <div class="nav-item" onclick="switchTab('system', this)">
             <span class="nav-icon">📊</span> System & Stats
         </div>
+        <div class="nav-item" onclick="switchTab('config', this)">
+            <span class="nav-icon">⚙️</span> Configuration
+        </div>
         <div class="sidebar-version">Nanobot v19 · Phase 19+</div>
     </div>
 
@@ -375,6 +378,37 @@
             <div class="logs-container" id="stats-container" style="white-space: pre-wrap;">
                 Loading system metrics...
             </div>
+        </div>
+
+        <!-- Configuration Tab -->
+        <div id="tab-config" class="tab-content">
+            <div id="config-banner" style="display: none; background: var(--warning); color: #000; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; margin-bottom: 10px;">
+                ⚠️ App Restart Required: Please restart the process for configuration changes to take effect.
+            </div>
+            
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <button class="btn" id="btn-visual-mode" onclick="toggleConfigMode('visual')" style="background: var(--accent-hover);">Visual Editor</button>
+                <button class="btn" id="btn-raw-mode" onclick="toggleConfigMode('raw')" style="background: var(--card-bg); color: var(--text-color); border: 1px solid var(--border-color);">Raw JSON</button>
+            </div>
+            
+            <div id="config-visual-editor">
+                <!-- Visual Editor Categories -->
+                <div class="stats-grid" id="config-capabilities" style="grid-template-columns: 1fr;">
+                    <div class="stat-card">
+                        <div class="label" style="margin-bottom:10px;">Sandbox Capability Overrides</div>
+                        <div id="capability-checklist" style="display: flex; flex-direction: column; gap: 8px; font-size: 0.9rem;">
+                            Loading capabilities...
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="config-raw-editor" style="display: none;" class="editor-container">
+                <span class="editor-label">config.json (Sensitive fields are masked)</span>
+                <textarea id="config-editor" style="font-family: 'Fira Code', monospace; min-height: 400px;"></textarea>
+            </div>
+            
+            <button class="btn" onclick="saveConfiguration()" style="margin-top: 15px;">Save Config</button>
         </div>
     </div>
 
@@ -500,13 +534,15 @@
                 'activity': 'Activity Log',
                 'memory': 'L1/L2 Memory Management',
                 'knowledge': 'Knowledge Base (Tasks)',
-                'system': 'System & Metrics Dashboard'
+                'system': 'System & Metrics Dashboard',
+                'config': 'Configuration Editor'
             };
             document.getElementById('page-title').textContent = titles[tabId];
 
             if (tabId === 'memory') fetchMemory();
             if (tabId === 'knowledge') fetchKnowledge();
             if (tabId === 'system') fetchStats();
+            if (tabId === 'config' && window.fetchConfiguration) window.fetchConfiguration();
 
             closeSidebar();
         }
@@ -579,5 +615,6 @@
             }
         }
     </script>
+    <script src="/static/js/config.js"></script>
 </body>
 </html>

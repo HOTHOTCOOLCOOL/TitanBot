@@ -12,22 +12,37 @@ def format_kb_list(knowledge_store: TaskKnowledgeStore | None, lang: str | None 
         return msg("kb_list_empty", lang=lang)
 
     tasks = knowledge_store.get_all_tasks()
-    if not tasks:
+    experiences = getattr(knowledge_store, "get_experiences", lambda: [])()
+    
+    if not tasks and not experiences:
         return msg("kb_list_empty", lang=lang)
 
     lines = [msg("kb_list_header", lang=lang)]
-    for i, t in enumerate(tasks, 1):
-        key = t.get("key", "?")
-        version = t.get("version", 1)
-        sc = t.get("success_count", 0)
-        fc = t.get("fail_count", 0)
-        total = sc + fc
-        rate = int(sc / total * 100) if total > 0 else 100
-        use_count = t.get("use_count", 0)
-        lines.append(
-            f"{i}. **{key}** — v{version} | "
-            f"成功率 {rate}% | 使用 {use_count} 次"
-        )
+    
+    if tasks:
+        lines.append("--- Tasks ---")
+        for i, t in enumerate(tasks, 1):
+            key = t.get("key", "?")
+            version = t.get("version", 1)
+            sc = t.get("success_count", 0)
+            fc = t.get("fail_count", 0)
+            total = sc + fc
+            rate = int(sc / total * 100) if total > 0 else 100
+            use_count = t.get("use_count", 0)
+            lines.append(
+                f"{i}. **{key}** — v{version} | "
+                f"成功率 {rate}% | 使用 {use_count} 次"
+            )
+            
+    if experiences:
+        lines.append("--- Experience Bank ---")
+        for i, exp in enumerate(experiences, 1):
+            trigger = str(exp.get("trigger", "?"))
+            trigger_disp = trigger[:30] + ("..." if len(trigger) > 30 else "")
+            prompt = str(exp.get("prompt", "?"))
+            prompt_disp = prompt[:80] + ("..." if len(prompt) > 80 else "")
+            lines.append(f"{i}. 🎯 **{trigger_disp}**\n   💡 {prompt_disp}")
+            
     return "\n".join(lines)
 
 

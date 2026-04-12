@@ -68,7 +68,7 @@ class SaveExperienceTool(Tool):
             return "Failed to save: Knowledge system is disabled in this session."
 
         try:
-            self._knowledge_store.add_experience(trigger=trigger, prompt=prompt)
+            self._knowledge_store.add_experience(context_trigger=trigger, tactical_prompt=prompt)
             return f"Successfully saved tactical experience for trigger: '{trigger}'"
         except Exception as e:
             return f"Error saving experience: {e}"

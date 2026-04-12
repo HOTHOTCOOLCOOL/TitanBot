@@ -117,6 +117,11 @@ class SubagentManager(BaseWorkerBridge):
                 brave_api_key=self.brave_api_key
             )
             
+            # Phase 46B: Allow Subagents to save experiences if task_knowledge is available
+            if self.agent_loop_ref and hasattr(self.agent_loop_ref, "knowledge_workflow") and self.agent_loop_ref.knowledge_workflow.knowledge_store:
+                from nanobot.agent.tools.save_experience import SaveExperienceTool
+                restricted_tools.register(SaveExperienceTool(knowledge_store=self.agent_loop_ref.knowledge_workflow.knowledge_store))
+            
             # Setup context for specific tools that need it
             for name in ["message", "spawn", "cron", "draw_image"]:
                 tool = restricted_tools.get(name)

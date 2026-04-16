@@ -58,6 +58,12 @@ async def extract_key(
                 text_content = " ".join(text_parts)
                 prompt_parts.append(f"[{role}]: {text_content[:500]}\n")
 
+    # If the user request is effectively empty (e.g., just an image placeholder), the LLM will hallucinate based entirely on history.
+    # Fallback to the user request instead of running the LLM in this case.
+    if not user_request.strip() or user_request.strip().startswith("[Image:"):
+        logger.info("key_extractor: detected pure image/empty request, skipping extraction.")
+        return fallback_key(user_request)
+
     prompt_parts.append(f"\nUser request: {user_request}\n\nKey:")
     prompt = "".join(prompt_parts)
 

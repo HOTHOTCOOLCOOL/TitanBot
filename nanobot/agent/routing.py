@@ -75,7 +75,16 @@ class ModelRouter:
         
         if not target_model_override and config.agents.vlm.enabled and config.agents.vlm.model:
             has_image = False
-            recent_msgs = messages[-cls._VLM_RECENCY_WINDOW:] if len(messages) > cls._VLM_RECENCY_WINDOW else messages
+            
+            # Find the most recent user message's index, fallback to last 5 messages if none found
+            start_idx = max(0, len(messages) - 5)
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i].get("role") == "user":
+                    start_idx = min(i, start_idx)  # Include the last user message
+                    break
+                    
+            recent_msgs = messages[start_idx:]
+            
             for msg in recent_msgs:
                 if isinstance(msg.get("content"), list):
                     for block in msg["content"]:
@@ -87,7 +96,7 @@ class ModelRouter:
             
             if has_image:
                 target_model = config.agents.vlm.model
-                logger.debug(f"Image detected in recent {cls._VLM_RECENCY_WINDOW} messages. Routing to VLM: {target_model}")
+                logger.debug(f"Image detected in recent context (from user turn). Routing to VLM: {target_model}")
                 
                 # B4: Graceful fallback if VLM provider config is missing
                 p_conf = config.get_provider(target_model)
@@ -99,7 +108,7 @@ class ModelRouter:
                         target_model, config, vlm_provider_cache
                     )
             else:
-                logger.debug(f"No images in recent {cls._VLM_RECENCY_WINDOW} messages. Using main model: {target_model}")
+                logger.debug(f"No images in recent context. Using main model: {target_model}")
         
         return target_model, provider_for_turn
 

@@ -20,6 +20,7 @@ from nanobot.agent.tools.task_memory import TaskMemoryTool
 from nanobot.agent.tools.memory_search_tool import MemorySearchTool
 from nanobot.agent.tools.screen_capture import ScreenCaptureTool
 from nanobot.agent.tools.rpa_executor import RPAExecutorTool
+from nanobot.agent.tools.excel_actuator import ExcelActuatorTool
 from nanobot.agent.tools.draw import DrawImageTool
 from nanobot.agent.memory import MemoryStore
 from nanobot.plugin_loader import scan_plugins, unload_plugins
@@ -99,9 +100,11 @@ def _register_default_tools(agent: "AgentLoop") -> None:
     memory_tool.set_memory_store(MemoryStore(agent.workspace))
     agent.tools.register(memory_tool)
     
-    # Vision tools
+    # Vision & Desktop Actuation tools
     agent.tools.register(ScreenCaptureTool(agent.workspace))
     agent.tools.register(RPAExecutorTool())
+    # ADR-53: Excel OLAP automation (Windows-only; gracefully no-ops if pywin32 missing)
+    agent.tools.register(ExcelActuatorTool(workspace=agent.workspace))
 
 
 def _register_dynamic_tools(agent: "AgentLoop") -> None:

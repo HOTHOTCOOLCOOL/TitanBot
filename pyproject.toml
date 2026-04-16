@@ -67,6 +67,11 @@ ssrs = [
 yolo = [
     "ultralytics>=8.0.0",
 ]
+# ADR-53: Excel OLAP automation via COM + UIAutomation (Windows-only)
+excel = [
+    "pywin32>=306",      # win32com.client — Excel COM Automation
+    "pywinauto>=0.6.8",  # UIAutomation API — OAuth popup watchdog thread
+]
 
 [project.scripts]
 nanobot = "nanobot.cli.commands:app"

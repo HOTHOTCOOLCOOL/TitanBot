@@ -35,3 +35,21 @@
    - 触发: CLI (`nanobot wiki sync`)、Dashboard Sync 按钮、Cron 旁路任务 — 三者均不经 AgentLoop，零 LLM 调用，零主路径影响。
    - 开关: `config.features.wiki_export = false`（默认关闭，显式 opt-in）。
    - 详见 `docs/adr/ADR-50-kg-wiki-export.md`
+  - [ ] **Phase 51: K-V 解耦索引 (M-RAG Pattern)** *(P0, ~2.5天)*
+    - 来源: M-RAG (arXiv 2603.26667v1)，借鉴"检索键与注入值解耦"的工程模式，非追求 Benchmark 分数。
+    - 核心: `marker_extractor.py` 将文档提炼为 MetaMarker(key, value)；Dense 向量匹配 key（短句意图），BM25 索引 value（完整上下文），命中后注入 value 给 LLM。
+    - 安全: Lazy Opt-in 旁路（--deep 参数或 Cron 空闲），sha256(content + prompt_version) Hash 缓存，覆盖率 < 0.95 自动退化 Chunking，主路径 P50 零影响。
+    - 开关: `config.features.marker_indexing = false`（默认关闭）。
+    - 详见 `docs/adr/ADR-51-52-mv-rag-group-aware-retrieval.md`
+  - [ ] **Phase 52: Group-Aware 并发推理 (GroupRAG Pattern)** *(P1, ~3天)*
+    - 来源: GroupRAG (arXiv 2603.26807v1)，借鉴"分散→收敛 (Convergent Reasoning Net)"拓扑，应用于 Phase 38B SubagentManager。
+    - 核心: `complexity_detector.py` 纯确定性触发（满足 Token>500 / 实体>8 / /parallel 指令 / 结构化关键词 任意 2 条，零 LLM 调用），N 个 SubAgent 并行局部推理，余弦距离冲突检测（阈值 0.3），冲突时 HITL 上报而非 LLM 自行裁决。
+    - 安全: 零 RL/微调依赖，RestrictedWorkerToolset(scope="readonly_search") 约束边界，人类对矛盾结论的裁决主权不可旁路。
+    - 开关: `config.features.parallel_reasoning = false`（默认关闭）。
+    - 详见 `docs/adr/ADR-51-52-mv-rag-group-aware-retrieval.md`
+   - [x] **Phase 53: Excel OLAP 周报自动化 (ExcelActuatorTool)** *(P0, ~1天)*
+     - 背景: IT 封禁 Azure 直连权限，每周一 Gross Sales 报告只能通过 Excel GUI 刷新获取。
+     - 核心: ExcelActuatorTool — 原生 Python Tool（非 ExecTool subprocess，绕过 L1 .py 黑名单），syncio.to_thread 隔离 COM 阻塞，内嵌 pywinauto Watchdog 线程毫秒级点击 OAuth 弹窗（0 LLM Token），wb.SaveAs(workspace/tmp/) 规避 OneDrive StorageSync 锁。
+     - Harness: 经历 5 阶辩证，Opus 暴露了 COM Modal Dialog 死锁、L1 拦截、OneDrive 竞争锁 3 个致命缺陷，Gemini Pro 全盘重构为单工具内聚模型。
+     - 目标文件: EURO DATA CUBE CONNECTION Sales & FF.xlsm | Sheet: Occupancy Details | Cron: 每周一 08:00 CST。
+     - 详见 docs/adr/ADR-53-excel-actuator-rpa.md

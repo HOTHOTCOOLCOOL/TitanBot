@@ -81,6 +81,15 @@ CRITICAL: If a task matches a Skill listed below, you MUST use the read_file too
 Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
 
 {skills_summary}""")
+
+        # Phase 49: IFCC Protocol
+        try:
+            from nanobot.config.loader import get_config as _get_cfg_c
+            _ifcc_enabled = getattr(getattr(_get_cfg_c().agents, 'memory_features', None), 'ifcc_enabled', True)
+            if _ifcc_enabled:
+                parts.append("## Context Condensation\nWhen you have definitively resolved a step (confirmed root cause, completed analysis),\nsummarize the key finding in <mem>concise conclusion ≤200 chars</mem>.\nPlace it AFTER any <think> block. This milestone survives context truncation.")
+        except Exception:
+            pass
         
         return "\n\n---\n\n".join(parts)
     
@@ -323,8 +332,20 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         min_keep = 4  # always keep at least the last N messages
 
         trimmed = list(history)
-        while len(trimmed) > min_keep and self._estimate_chars(trimmed) > target:
-            trimmed.pop(0)
+        eviction_idx = 0
+        while len(trimmed) - eviction_idx > min_keep and self._estimate_chars(trimmed) > target:
+            msg_to_evict = trimmed[eviction_idx]
+            if msg_to_evict.get("milestone_summary") and not msg_to_evict.get("is_skeleton"):
+                # Downgrade message to its milestone skeleton
+                trimmed[eviction_idx] = {
+                    "role": "assistant",
+                    "content": f"（上下文已压缩） {msg_to_evict['milestone_summary']}",
+                    "is_skeleton": True,
+                    "milestone_summary": msg_to_evict['milestone_summary']
+                }
+                eviction_idx += 1
+            else:
+                trimmed.pop(eviction_idx)
 
         dropped = len(history) - len(trimmed)
         if dropped:
@@ -431,6 +452,7 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         content: str | None,
         tool_calls: list[dict[str, Any]] | None = None,
         reasoning_content: str | None = None,
+        milestone_summary: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Add an assistant message to the message list.
@@ -440,11 +462,15 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
             content: Message content.
             tool_calls: Optional tool calls.
             reasoning_content: Thinking output (Kimi, DeepSeek-R1, etc.).
+            milestone_summary: Optional phase 49 IFCC summary.
         
         Returns:
             Updated message list.
         """
         msg: dict[str, Any] = {"role": "assistant"}
+        
+        if milestone_summary:
+            msg["milestone_summary"] = milestone_summary
 
         # Some backends reject empty text blocks, but require content explicitly set to None or empty.
         # We set it to None if empty so Litellm/OpenAI serializes it as null.

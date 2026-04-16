@@ -24,24 +24,25 @@
    - 完成了《SkillClaw》《BubbleRAG》等前沿 Agent 论文分析，并落地为 ADR-47 及后续的 46A/46B。
  - [x] **Phase 48: Dashboard 配置编辑器 (Config Editor UI)** *(P1)* 
    - 实现了基于乐观锁和脱敏合并机制的双模式配置编辑器，解决权限配置的不透明性。
-  - [ ] **Phase 49: In-Flight Context Condensation (IFCC)** *(P1, ~1.5天)*
+ - [x] **Phase 49: In-Flight Context Condensation (IFCC)** *(P1, ~1.5天)*
     - 来源: MemPO (arXiv 2603.00680v3)，借鉴 `<mem>` 标签信号，纯工程实现无需 RL 训练。
     - 核心: 模型步骤完成后输出 `<mem>结论</mem>`，写入 Message.milestone_summary；_trim_history() 截断时将有 Milestone 的消息降级为骨架而非丢弃，防止"遗忘循环"。
     - 安全: 解析器严格 role-gate，仅处理 role='assistant' 输出，阻断 Prompt Injection。
     - 详见 `docs/adr/ADR-49-ifcc-context-condensation.md`
+    - **状态**: 核心功能与全部 3 项（提取过滤、极值截断、防注入）Manual Tests 验证均已通过，交付闭环。
  - [ ] **Phase 50: Knowledge Graph Wiki Export (KG-Wiki)** *(P2, ~4天)*
    - 来源: Karpathy LLM Wiki (2026)，借鉴 Wiki 可见性理念，不照搬其"Markdown 作为后端核心"设计。
    - 核心: `wiki_syncer.py` 旁路观测模式 — 基于 `graph.json.updated_at` 时间戳对比，纯代码将 L7 KG 实体投影为 Obsidian 兼容 Markdown Vault（YAML Frontmatter 解决 Alias 映射，`sanitize_title` 防 Windows 非法字符）。
    - 触发: CLI (`nanobot wiki sync`)、Dashboard Sync 按钮、Cron 旁路任务 — 三者均不经 AgentLoop，零 LLM 调用，零主路径影响。
    - 开关: `config.features.wiki_export = false`（默认关闭，显式 opt-in）。
    - 详见 `docs/adr/ADR-50-kg-wiki-export.md`
-  - [ ] **Phase 51: K-V 解耦索引 (M-RAG Pattern)** *(P0, ~2.5天)*
+  - [x] **Phase 51: K-V 解耦索引 (M-RAG Pattern)** *(P0, ~2.5天)*
     - 来源: M-RAG (arXiv 2603.26667v1)，借鉴"检索键与注入值解耦"的工程模式，非追求 Benchmark 分数。
     - 核心: `marker_extractor.py` 将文档提炼为 MetaMarker(key, value)；Dense 向量匹配 key（短句意图），BM25 索引 value（完整上下文），命中后注入 value 给 LLM。
     - 安全: Lazy Opt-in 旁路（--deep 参数或 Cron 空闲），sha256(content + prompt_version) Hash 缓存，覆盖率 < 0.95 自动退化 Chunking，主路径 P50 零影响。
     - 开关: `config.features.marker_indexing = false`（默认关闭）。
     - 详见 `docs/adr/ADR-51-52-mv-rag-group-aware-retrieval.md`
-  - [ ] **Phase 52: Group-Aware 并发推理 (GroupRAG Pattern)** *(P1, ~3天)*
+  - [x] **Phase 52: Group-Aware 并发推理 (GroupRAG Pattern)** *(P1, ~3天)*
     - 来源: GroupRAG (arXiv 2603.26807v1)，借鉴"分散→收敛 (Convergent Reasoning Net)"拓扑，应用于 Phase 38B SubagentManager。
     - 核心: `complexity_detector.py` 纯确定性触发（满足 Token>500 / 实体>8 / /parallel 指令 / 结构化关键词 任意 2 条，零 LLM 调用），N 个 SubAgent 并行局部推理，余弦距离冲突检测（阈值 0.3），冲突时 HITL 上报而非 LLM 自行裁决。
     - 安全: 零 RL/微调依赖，RestrictedWorkerToolset(scope="readonly_search") 约束边界，人类对矛盾结论的裁决主权不可旁路。

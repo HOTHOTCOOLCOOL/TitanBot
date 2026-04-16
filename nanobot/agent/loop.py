@@ -63,6 +63,7 @@ _FAIL_INDICATORS = [
     "无法完成此任务", "无法执行此操作", "不能执行此操作",
     "not found", "no emails found",
     "执行失败", "操作失败", "执行出错", "运行失败", "获取失败",
+    "multiple consecutive tool failures", "circuit breaker",
 ]
 
 # Phase 39 / 42C: Chitchat routing extracted to nanobot.agent.routing
@@ -653,6 +654,19 @@ class AgentLoop:
                     total=response.usage.get("total_tokens", 0),
                 )
 
+            # Phase 49 IFCC extraction
+            _resp_content = response.content
+            _milestone_summary = None
+            if _resp_content:
+                try:
+                    from nanobot.config.loader import get_config as _get_cfg_l
+                    if getattr(getattr(_get_cfg_l().agents, 'memory_features', None), 'ifcc_enabled', True):
+                        from nanobot.agent.tag_extractor import extract_mem_content
+                        _clean, _milestone_summary = extract_mem_content(_resp_content)
+                        response.content = _clean
+                except Exception as e:
+                    logger.debug(f"IFCC extraction failed: {e}")
+
             if response.has_tool_calls:
                 tool_call_dicts = [
                     {
@@ -668,6 +682,7 @@ class AgentLoop:
                 messages = self.context.add_assistant_message(
                     messages, response.content, tool_call_dicts,
                     reasoning_content=response.reasoning_content,
+                    milestone_summary=_milestone_summary,
                 )
 
                 # Log and record all tool calls
@@ -998,7 +1013,7 @@ class AgentLoop:
                     
                     # Add to context
                     messages = self.context.add_assistant_message(
-                        messages, final_content, tool_calls=None, reasoning_content=response.reasoning_content
+                        messages, final_content, tool_calls=None, reasoning_content=response.reasoning_content, milestone_summary=_milestone_summary
                     )
                     
                     # Force it to call tools
@@ -1015,7 +1030,7 @@ class AgentLoop:
                     
                     # Add to context
                     messages = self.context.add_assistant_message(
-                        messages, final_content, tool_calls=None, reasoning_content=response.reasoning_content
+                        messages, final_content, tool_calls=None, reasoning_content=response.reasoning_content, milestone_summary=_milestone_summary
                     )
                     
                     # Force it to call tools
@@ -1168,6 +1183,7 @@ class AgentLoop:
         loop_injection_used = injection_used
 
         pipeline = self._get_middleware_pipeline()
+        _milestone_summary = None
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -1190,6 +1206,19 @@ class AgentLoop:
                     total=response.usage.get("total_tokens", 0),
                 )
 
+            # Phase 49 IFCC extraction
+            _resp_content = response.content
+            _milestone_summary = None
+            if _resp_content:
+                try:
+                    from nanobot.config.loader import get_config as _get_cfg_l
+                    if getattr(getattr(_get_cfg_l().agents, 'memory_features', None), 'ifcc_enabled', True):
+                        from nanobot.agent.tag_extractor import extract_mem_content
+                        _clean, _milestone_summary = extract_mem_content(_resp_content)
+                        response.content = _clean
+                except Exception as e:
+                    logger.debug(f"IFCC extraction failed: {e}")
+
             # 2. Non-tool response: wait-phrase / fake-completion detection
             if not response.has_tool_calls:
                 final_content = response.content
@@ -1206,6 +1235,7 @@ class AgentLoop:
                     messages = self.context.add_assistant_message(
                         messages, final_content, tool_calls=None,
                         reasoning_content=response.reasoning_content,
+                        milestone_summary=_milestone_summary,
                     )
                     messages.append({"role": "user", "content": i18n_msg("agent_wait_nudge")})
                     continue
@@ -1216,6 +1246,7 @@ class AgentLoop:
                     messages = self.context.add_assistant_message(
                         messages, final_content, tool_calls=None,
                         reasoning_content=response.reasoning_content,
+                        milestone_summary=_milestone_summary,
                     )
                     messages.append({"role": "user", "content": i18n_msg("agent_fake_completion_nudge")})
                     continue
@@ -1237,6 +1268,7 @@ class AgentLoop:
             messages = self.context.add_assistant_message(
                 messages, response.content, tool_call_dicts,
                 reasoning_content=response.reasoning_content,
+                milestone_summary=_milestone_summary,
             )
 
             # Record tool calls for return value
@@ -1299,7 +1331,14 @@ class AgentLoop:
             except Exception as e:
                 logger.debug(f"Failed to dump tool calls for {tid} in v2 loop: {e}")
 
-        return final_content, tools_used, tool_calls_with_args
+        final_milestone = _milestone_summary
+        if not final_milestone:
+            for m in reversed(messages):
+                if m.get("role") == "assistant" and "milestone_summary" in m:
+                    final_milestone = m["milestone_summary"]
+                    break
+
+        return final_content, tools_used, tool_calls_with_args, final_milestone
 
     # ── Phase 21E: streaming helper ──────────────────────────────
 
@@ -1954,7 +1993,7 @@ class AgentLoop:
                 initial_messages[0]["content"] += f"\n\n{memory_hint}"
                 injection_used += len(memory_hint)
 
-        final_content, tools_used, tool_calls_with_args = await self._run_agent_loop(
+        final_content, tools_used, tool_calls_with_args, final_milestone = await self._run_agent_loop(
             initial_messages, channel=msg.channel, chat_id=msg.chat_id,
             injection_used=injection_used,
             target_model_override=target_model_override,
@@ -1990,6 +2029,7 @@ class AgentLoop:
         session.add_message(
             "assistant", final_content,
             tools_used=tools_used if tools_used else None,
+            milestone_summary=final_milestone,
         )
         session.message_count_since_consolidation += 2  # user + assistant
 
@@ -2075,10 +2115,14 @@ class AgentLoop:
             except Exception as e:
                 logger.error(f"Failed to generate TTS: {e}")
 
+        outbound_content = final_content
+        if not outbound_content.strip() and not tool_calls_with_args:
+            outbound_content = "*(系统上下文记忆已更新)*"
+            
         return OutboundMessage(
             channel=msg.channel,
             chat_id=msg.chat_id,
-            content=final_content + save_prompt,
+            content=outbound_content + save_prompt,
             media=media_attachments,
             metadata=msg.metadata or {},
         )

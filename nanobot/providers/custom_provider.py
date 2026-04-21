@@ -1,6 +1,7 @@
+from __future__ import annotations
+import asyncio
 """Direct OpenAI-compatible provider — bypasses LiteLLM."""
 
-from __future__ import annotations
 
 from typing import Any
 
@@ -31,6 +32,8 @@ class CustomProvider(LLMProvider):
             _valid_tools = frozenset(t["function"]["name"] for t in (tools or []) if "function" in t)
             return self._parse(await self._client.chat.completions.create(**kwargs), valid_tools=_valid_tools)
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Error calling custom provider at {self._client.base_url} (HTTP 502/Gateway timeout is common for LocalLLM during cold starts). Full exception: {e}", exc_info=True)
             return LLMResponse(
                 content=f"Error: {str(e)}",

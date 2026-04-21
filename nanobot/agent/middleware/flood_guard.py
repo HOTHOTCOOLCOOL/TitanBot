@@ -1,10 +1,10 @@
+from __future__ import annotations
 """Phase 41: FloodGuardMiddleware — message() call flood prevention.
 
 Post: Counts message() tool invocations and triggers abort when the
       safety threshold (_MAX_MESSAGE_CALLS) is exceeded.
 """
 
-from __future__ import annotations
 
 from loguru import logger
 

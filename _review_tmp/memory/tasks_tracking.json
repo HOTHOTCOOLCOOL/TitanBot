@@ -1,0 +1,46 @@
+{
+  "tasks": {
+    "demo_20260420_142839_c1fe": {
+      "task_id": "demo_20260420_142839_c1fe",
+      "key": "demo",
+      "user_request": "do something",
+      "status": "planning",
+      "analyzed_from": "",
+      "steps": [
+        {
+          "step_id": 1,
+          "name": "first",
+          "description": "",
+          "tool_name": "",
+          "params": {},
+          "status": "pending",
+          "result": "",
+          "start_time": null,
+          "end_time": null
+        },
+        {
+          "step_id": 2,
+          "name": "second",
+          "description": "",
+          "tool_name": "",
+          "params": {},
+          "status": "pending",
+          "result": "",
+          "start_time": null,
+          "end_time": null
+        }
+      ],
+      "params": {},
+      "current_step": 0,
+      "step_results": [],
+      "result_summary": "",
+      "knowledge_to_save": {},
+      "created_at": "2026-04-20T14:28:39.831591",
+      "updated_at": "2026-04-20T14:28:39.831593",
+      "start_time": null,
+      "end_time": null
+    }
+  },
+  "active_task_id": "demo_20260420_142839_c1fe",
+  "updated_at": "2026-04-20T14:28:39.834316"
+}

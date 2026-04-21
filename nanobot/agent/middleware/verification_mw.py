@@ -1,3 +1,5 @@
+from __future__ import annotations
+import asyncio
 """Phase 41 (P41-4): VerificationMiddleware — L1 rule interception & L3 audit.
 
 Pre:  Runs L1 rigid rules against proposed tool calls. If violations are found,
@@ -9,7 +11,6 @@ File named verification_mw.py to avoid module name collision with
 nanobot.agent.verification.
 """
 
-from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
@@ -72,4 +73,6 @@ class VerificationMiddleware(AgentMiddleware):
                 tool_calls_with_args
             )
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.debug(f"L3 anti-pattern audit error (non-critical): {e}")

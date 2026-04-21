@@ -1,6 +1,6 @@
+from __future__ import annotations
 """Telegram channel implementation using python-telegram-bot."""
 
-from __future__ import annotations
 
 import asyncio
 import re
@@ -171,6 +171,8 @@ class TelegramChannel(BaseChannel):
             await self._app.bot.set_my_commands(self.BOT_COMMANDS)
             logger.debug("Telegram bot commands registered")
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.warning(f"Failed to register bot commands: {e}")
         
         # Start polling (this runs until stopped)
@@ -237,6 +239,8 @@ class TelegramChannel(BaseChannel):
                 with open(media_path, 'rb') as f:
                     await sender(chat_id=chat_id, **{param: f})
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 filename = media_path.rsplit("/", 1)[-1]
                 logger.error(f"Failed to send media {media_path}: {e}")
                 await self._app.bot.send_message(chat_id=chat_id, text=f"[Failed to send: {filename}]")
@@ -248,10 +252,14 @@ class TelegramChannel(BaseChannel):
                     html = _markdown_to_telegram_html(chunk)
                     await self._app.bot.send_message(chat_id=chat_id, text=html, parse_mode="HTML")
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     logger.warning(f"HTML parse failed, falling back to plain text: {e}")
                     try:
                         await self._app.bot.send_message(chat_id=chat_id, text=chunk)
                     except Exception as e2:
+                        if isinstance(e2, asyncio.CancelledError):
+                            raise
                         logger.error(f"Error sending Telegram message: {e2}")
     
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -358,6 +366,8 @@ class TelegramChannel(BaseChannel):
                     
                 logger.debug(f"Downloaded {media_type} to {file_path}")
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Failed to download media: {e}")
                 content_parts.append(f"[{media_type}: download failed]")
         
@@ -406,6 +416,8 @@ class TelegramChannel(BaseChannel):
         except asyncio.CancelledError:
             pass
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.debug(f"Typing indicator stopped for {chat_id}: {e}")
     
     async def _on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

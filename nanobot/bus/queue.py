@@ -41,6 +41,8 @@ class MessageBus:
             try:
                 await callback(msg)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Error in inbound subscriber: {e}")
                 
     def subscribe_inbound_global(self, callback: Callable[[InboundMessage], Awaitable[None]]) -> None:
@@ -91,6 +93,8 @@ class MessageBus:
                     try:
                         await callback(msg)
                     except Exception as e:
+                        if isinstance(e, asyncio.CancelledError):
+                            raise
                         logger.error(f"Error dispatching to global subscriber: {e}")
                         
                 # Dispatch to specific channel subscribers
@@ -99,6 +103,8 @@ class MessageBus:
                     try:
                         await callback(msg)
                     except Exception as e:
+                        if isinstance(e, asyncio.CancelledError):
+                            raise
                         logger.error(f"Error dispatching to {msg.channel}: {e}")
             except asyncio.TimeoutError:
                 continue
@@ -130,6 +136,8 @@ class MessageBus:
             try:
                 await callback(event)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Error in stream subscriber: {e}")
 
     # ── Phase 22D: Domain Event Pub/Sub ─────────────────────────────
@@ -172,6 +180,8 @@ class MessageBus:
             try:
                 await callback(event)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Error in event subscriber ({event.event_type}): {e}")
 
         # Wildcard subscribers
@@ -179,4 +189,6 @@ class MessageBus:
             try:
                 await callback(event)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Error in global event subscriber: {e}")

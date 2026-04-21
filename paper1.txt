@@ -1,0 +1,361 @@
+Reading PDF: C:\Users\davidliu\Downloads\2602.12735v1.pdf
+Total Pages: 32
+
+--- Page 0 ---
+TechnicalReport TongyiDeepResearch
+VimRAG: Navigating Massive Visual Context in
+Retrieval-Augmented Generation via Multimodal Memory Graph
+QiuchenWang,ShihangWang,YuZeng,QiangZhang,FanruiZhang,ZhuoningGuo,
+BosiZhang,WenxuanHuang,LinChen,ZehuiChen,PengjunXie,RuixueDing†
+TongyiLab,AlibabaGroup
+Abstract
+Effectivelyretrieving,reasoning,andunderstandingmultimodalinformationremains
+acriticalchallengeforagenticsystems. TraditionalRetrieval-augmentedGeneration
+(RAG) methods rely on linear interaction histories, which struggle to handle long-
+context tasks, especially those involving information-sparse yet token-heavy visual
+data in iterative reasoning scenarios. To bridge this gap, we introduce VimRAG, a
+frameworktailoredformultimodalRetrieval-augmentedReasoningacrosstext,images,
+and videos. Inspired by our systematic study, we model the reasoning process as a
+dynamicdirectedacyclicgraphthatstructurestheagentstatesandretrievedmultimodal
+evidence. Buildinguponthisstructuredmemory, weintroduceaGraph-Modulated
+VisualMemoryEncodingmechanism,withwhichthesignificanceofmemorynodes
+isevaluatedviatheirtopologicalposition,allowingthemodeltodynamicallyallocate
+high-resolutiontokenstopivotalevidencewhilecompressingordiscardingtrivialclues.
+Toimplementthisparadigm,weproposeaGraph-GuidedPolicyOptimizationstrategy.
+Thisstrategydisentanglesstep-wisevalidityfromtrajectory-levelrewardsbypruning
+memorynodesassociatedwithredundantactions,therebyfacilitatingfine-grainedcredit
+assignment. ExtensiveexperimentsdemonstratethatVimRAGconsistentlyachieves
+state-of-the-art performance on diverse multimodal RAG benchmarks. The code is
+availableathttps://github.com/Alibaba-NLP/VRAG.
+1 Introduction
+RecentadvancesinMultimodalLargeLanguageModelsBaietal.(2025);Teametal.(2025);Singh
+etal.(2025);Teametal.(2023)havefundamentallyexpandedthecapabilitiesofmultimodalagentic
+Retrieval-augmentedGeneration(RAG)Choetal.(2024);Arslanetal.(2024);Wangetal.(2025a);Yu
+etal.(2024).WiththehelpofsearchenginespoweredbyunifiedembeddingmodelsGuoetal.(2025);
+Lietal.(2026);Mengetal.(2025);Sunetal.(2025b);Faysseetal.(2024),agentspoweredbyMLLMs
+canretrieveandreasonoverlarge-scalecorporathatcontaininterleavedtextandimages.Suetal.
+(2025);Wangetal.(2025b);Yuetal.(2025b);Jeongetal.(2025);Yeoetal.(2025);Gengetal.(2025).
+However, incontrasttotext, visualdataistoken-heavyandoftenperformssemanticallysparse
+relativetoaspecificqueryMaetal.(2024);Tanakaetal.(2023);Wangetal.(2025c). Asmemory
+and context management strategies have been recognized as effective approaches to optimize
+long-contexttasksZhouetal.(2025);Yuetal.(2025a);Wuetal.(2025);Xuetal.(2025);Chhikara
+etal.(2025);Chenetal.(2024a);Yeetal.(2025),transferringthisparadigmtoefficientlymanage
+massivevisualcontextswithoutlosingcrucialinformationisapromisingdirection.
+Inspiredbytheseadvances,weintroduceVimRAG,anovelframeworkspecificallydesignedfor
+iterativeretrieval-augmentedreasoningviaamultimodalagenticmemoryparadigm. Ourapproach
+ismotivatedbythreecriticalobservationsregardingthechallengesofadaptingcontextmanagement
+andmemory-basedmethodstomultimodalsettings: (i)Misalignmentbetweenactionhistoryand
+contextprior. Thereisafundamentalmismatchbetweentheagent’sactualexecutionhistoryandthe
+reshapedpromptpresentedtothemodel. Thisstructuralblindnessmaskscrucialstateparameters;
+specificallyinRAGtasks,itleadstorepetitivequeriesanduselessinteractionswithsearchengines.
+1
+6202
+beF
+31
+]VC.sc[
+1v53721.2062:viXra
+--- Page 1 ---
+TechnicalReport TongyiDeepResearch
+(a) Multimodal Memory Graph Driven Context Management Framework (c) Graph-Modulated Encoding
+Instructions & Human Query Interaction with external environment Context Reshaping Relevance Extraction during perception
+Iterative Updated Memory Graph Po ( l M icy L L M M od ) el S G e r a a r p c h h M En e g m in or e y ( T M e a x n t, a I g m e a F g u e n , V ct i i d o e n o) E O x r t i r g a in c a t l e d V i V si i o s n io T n o T k o e k n e s n s U Gr p a d p a h ted Coa T rs r e u - e g raine F d a l J s u e dgement F P i r n io e r - i g ty r : a 2 i 0 ne ∈ d [ 1 S ,5 c ] ore /6789=10?)(2+3))4*@∆A
+Disentanglement of retrieval and perception Graph Guided Token Re-allocation Token-wise global energy calculation
+Node mapping Action Text summary Topological position Output: Sem Graph & Vision Tokens Topology (out degree /) Intrinsic Energy
+Semantic stream Visual stream Thinkin A g r & gu m R e e n t t r s ieval Perception V i & sio E n x to tr k a e c n t s ion Node C M o e n m s o tr r u y c t t o i k o e n ns Update the Memory at Step t+1 Time Decay ∆1 /6789=10?(2+3)4*@∆A (c) Graph Guided Visual Token Allocation
+Back-propagation Energy of vision tokens
+(b) The Evolution of Structured Reasoning Topology /:;<=>=5∑/6 :;<=> .=/6789+/:;<=>
+Initialization with human’s query Reasoning and perception at step t
+Init Graph Insert node at step 1 Prev Graph Insert nodeto retrieval or conclusion Adaptive token density via linear mapping
+(User’ R s 7 o G q o u t e stion) R 7 o G ot A A 4E c r → g t F i s o : N n s : o 7 u s d H b e e a q 1 r u c e h ry … Root Root 8 8 4 C J J→ 4C A A A → c r A g ti s N o : 7 n I o s : d u a m e n m s t w a e r r y D (H e i n g s h e E vi n s e io r n g y t o 9 ke ↑ n ) &; S ( p L a o M r w se a E v p n is p e i i o r n g n y g to 9 ke ↓ n ) S D T T ' o o i e s m k ( x ( c 9 e t e a n ) t r D < o d * k e V e : s + n A c i ; s r o B i i ; o p ) n n t l i y on (i) Semantic V … R id e e l o evanc T V i P s e r i e _ s i x o u u J t r a s u u i l e t l a y d f y l u g R D S l m i o ( c c C c o h e o u r I a n e m r m t e ( s F a n e g i t n g e : e r s “ a : T g i S r i n t a e l l i i e d d n : ) e e : … s d , ) ; : R C T e [ o p r 1 n , u o 5 t e r ] e t / n , F t … a : l s … e ”
+Frame of Timestamps (Videos only): <%.1f Seconds>
+Interest
+(ii) Token-wise Global Energy Calculation
+Figure1: InferencepipelineoftheVimRAGframework. (a)Thecyclicinferenceloopconsisting
+Intrinsic Energy: #!"#$=('0)(1+&./-))%*+∆-
+ofreasoning,retrieval,andmemoryevolution. (b)detailstheEvolutionofStructuredReasoning
+Out degree: &./- Temporal decay: %*+∆-
+Topology,whereeachnodestoresagent-specificmemory,includingtheaction,dynamicallycom-
+pressedmultimo
+A
+Ad
+c
+rg
+ti
+sa
+o
+:
+n
+ls
+:
+u
+s
+bo
+e a
+qb
+r
+u
+c
+es
+h
+rey rvations,anditscorrespondingtemporalandtopologicalstructure. (c)
+Back-propagation: #%&'()=
+)2
+1
+34
+∑#%&'()
+illustratesthestep-by-stepprocessofGraph-ModulatedVisualMemoryEnc ! o!"d#$i = ng. Thismech- (i E ii n ) e A r d gy a p o t f i v V e i s t u o a k l e t n o k d e e n n s s : i t ! y = via # ! l " in #$ e + ar # m %& a '() pping
+Back propagation (Recursive Feedback)
+突出a中 an 三 is 个 m 动 mi 作 m 解 ics 构 humanforgettingbyintegratingtemporal,topological,aTnodkens ealmloc # aat = nio ! tn ! i " c #$+ re ∑ l ! e %& v '() anceto D ( e H ns ig e h V E is n u e a r l g T y o * ke ↑ n ) s Sp ( a L r o s w e E V n is e u r a g l y T * ok ↓ e ) ns Textu (* al < De - s -& c 5 r ) iption
+adjustvisiontokendensity,effectivelyfilteringoutnoisetopreservetrulyvaluableclues. Discard
+B中node⾥要体现action agentic的特性我们解决了 Visual Tokens
+(b) Information Perception & Token Re-allocation based Topology-Aware Energy
+(ii) Inconsistency between textual memory and visual observation. While compressing visual Discard (!<#): No relevance
+informationintotextualmemorysignificantlyimprovestokenefficiency,theinherentlossoffine-
+graineddetailscreatesasemanticgap,oftenmakingtheImnteermactoiorny dientaeilfsf wecitthi venevifroonrmveenrt iafit cstaetpi ot n. (iii)
+Sparse Visual Tokens
+Insufficientandinefficientsupervision. Currentrejectionsamplingstrategiesmerelybroadcastthe (Low Energy*↓)
+finaloutcome-basedrewardtoeverystepandcomputegrNaoddei: eCnallt sSefaorcrh aEnlglinreesponsePotliocyk Menodselw ithina
+longtrajectory. Thiscausesmisleadingsupervisioninmulti-stepagenticRAGtask(VsL,Mws)herevalid
+Multimodal memory Update
+retrievalispenalizedduetoincorrectfinalanswers,whileinefficientqueriesarerewardedsolely
+basedoncorrectoutcomes.
+To further validate these insights, we conduct a pilot study focusing on three key aspects: the
+topologicalorganizationofinteractionhistory,thetrade-offbetweenresolutionandefficiencyin
+multimodalmemory,andthereliabilityofsupervisionbasedonourmulti-stepmemorization. This
+leadstoourfirstresearchquestion: 1)Howshouldthereasoningprocessbestructuredtoprevent
+thelossofcriticalinformationduringcontextcompression? Furthermore,thehightokencostof
+preservingvisualdetailsraisesasecondchallenge: 2)Howcanagentsresolvethevisualmemory
+resolutiondilemmaunderstricttokenconstraints? Buildingonthesetwoinsights,weposeathird
+researchquestion: 3)Howcanwedisentangleintermediateinteractionsfromoutcomerewardsto
+enablefine-grainedsupervision?
+Inresponsetothesechallenges,VimRAGfundamentallyreconstructstheagenticreasoningparadigm
+throughthreecorrespondinginnovations: (i)Toaddressthestructuralbottleneck,weproposethe
+MultimodalMemoryGraph,modelingthereasoningprocessasadynamicdirectedacyclicgraph,
+whereeachnodeencodestheagent’sactionandmultimodalobservations. AsillustratedinFigure1
+(b),thistopologycapturesagent-specificdetailsalongsidethetemporalandlogicaldependencies
+(formalizedasstateS anddirectededgesE). Actingaspriorsforreasoning,thisstructureshapes
+the context for the decomposition of the original question and enables the agent to distinguish
+betweenadead-endbranchandanewinquiry,avoidingthepotentialredundancyfoundinsimple
+memoryappendingandtheinefficiencyofiterativere-summarization. (ii)Toshapethecontextfor
+next-statepredictionratherthansimplystoringfacts,weimplementamechanismcalledGraph-
+ModulatedVisualMemoryEncoding,builtdirectlyuponthegraphtopology. AsshowninFigure1
+(c),byevaluatingnodesignificanceviatopologicalcentralityandrecursivefeedback,thismodule
+adaptivelyallocatesvisualtokendensity. Itpreserveshigh-resolutiontokensforcriticalevidence
+whilecompressingordiscardingtrivialdetails,aligningreasoningwithvaluableobservationwithin
+2
+--- Page 2 ---
+TechnicalReport TongyiDeepResearch
+acompacttokenbudget. (iii)Observingthatthegraphtopologyisnaturallysuitableforstep-wise
+evaluation,weproposeaGraph-GuidedPolicyOptimizationstrategyforfine-grainedsupervision.
+AsshowninFigure4,insteadofbroadcastingsparseoutcomerewardstothesampleswithinthe
+entiretrajectory,weutilizethememorygraphtoperformnodepruningbyidentifyingthecritical
+pathfromtheroottotheanswernode. Bydisentanglingtheretrievalprocessfromthefinaloutcome,
+wemaskbothfalsepositives(irrelevantnodesdespitecorrectanswers)andfalsenegatives(valuable
+retrievalswithinincorrectanswers)duringactorupdating. Thismechanismenhancesbothtraining
+efficiencyandeffectivenessbyfocusinggradientupdatessolelyonvalidandvaluablesamples.
+Ourmajorcontributionsareasfollows:
+• WesystematicallyinvestigatethemultimodalagenticmemoryparadigmforRAGtasks,
+identifyingcriticalbottlenecksincontextmisalignmentandsupervisionsparsity.
+• WeproposeVimRAG,anovelframeworkthatintegratesaMultimodalMemoryGraphwith
+Graph-ModulatedVisualMemoryEncodingtostructurereasoningtopology.
+• WeintroduceaGraph-GuidedPolicyOptimizationstrategytodisentangleretrievalvalidity
+fromsparserewards,enablingfine-grainedcreditassignmentduringtraining.
+• ExtensiveexperimentsdemonstratethatVimRAGconsistentlydeliverssignificantimprove-
+ments,achievingstate-of-the-artperformanceonmultimodalRAGbenchmarks.
+2 PilotStudy
+In this section, we formulate the problem and investigate challenges of memory paradigms in
+multimodalRAG,motivatingthedesignoftheproposedVimRAGinSection3.
+2.1 Preliminary
+Taskdefinition. Givenahumanqueryqandalarge-scalecorpusC consistingoftextualdocuments,
+visuallyrichimages,andvideostreams,ourgoalistoefficientlyretrieve,accuratelyperceive,and
+reasonoverthecomplexcross-modalinformationtogeneratetheansweratoqueryq.
+History-Accumulating Paradigm. Standard agents typically act within a Thought τ, Action a,
+Observationoloop:
+H t = [q,τ 1 ,a 1 ,o 1 ,...,τ t−1 ,a t−1 ,o t−1 ] (1)
+Thepolicy π (·|H ) generatesthenextactionwiththeentiresequence. Thisleadstosignificant
+θ t
+distractionfromcriticalinformationO ,particularlyforsparsemultimodalcues. Theinformation
+crit
+density|O |/|H | ≪ ϵastincreases.
+crit t
+Memory-BasedAgenticParadigm. Incontrast,memory-augmentedapproachesshiftfrompassive
+historyaccumulationtoactivecontextmanagement. Themodelupdatesmemorystatem basedon
+t
+themostrecentobservationo :
+t
+m t−1 − π −θ− ( → ·) (τ t ,a t ) − E − n → v o t − π −θ ( − ·| − τt− ,a −t,m −t−−→1 ) m t (2)
+Thismechanismmaintainsahighattentionconcentration,astheinformationdensityremainsstable
+(i.e.,|O |/|m | ≈ C). However,relyingsolelyonthecompressedstatem introducesMarkovian
+crit t t
+blindness,leadingtopotentialinformationlossanddisjointedreasoning,whichposeschallengesfor
+designingarobustmemoryparadigm.
+2.2 ImpactofMemoryStructureonAgenticReasoning
+This subsection investigates the impact of memory structure on the fundamental capabilities of
+multimodalRAGagents.
+3
+--- Page 3 ---
+TechnicalReport TongyiDeepResearch
+15
+10
+5
+0
+0 5k 10k 15k 20k 25k 30k
+Total Token Consumption
+)%(
+selpmaS
+fo
+egatnecreP
+(a) Token Consumption Distribution
+5
+4
+3
+2
+1
+0 5k 10k 15k 20k
+Total Observation Tokens
+)tnuoC(
+snoitcA
+dilavnI
+ExperimentalSettings. Wecomparethreeagen- (b) Robustness to the Next Action
+tic memory paradigms based on current con-
+text management method: 1) Traditional Re-
+Act Yao et al. (2022), which simply concate-
+natesthe(τ,a,o)toformtheentirecontext;2)
+Iterative Summarization as Memory Zhou et al.
+(2025),whichiterativelycompressestheobser-
+vationintothepreviousmemorystate;and3)
+StructuredGraphasMemory,whichmaintainsa
+structuredtopologyofagent’sreasoningstate.
+ReAct Iterative Summary Graph as Memory
+Weimplementtheseparadigmsbyprompting
+Qwen3VL-30B-A3B-Instruct. SeeAppendixC.1 Figure2: Quantitativeanalysisofmemorystruc-
+forthedetailedworkflow. tures. (a) Distribution of total token consump-
+tion for complete samples. (b) Count of Invalid
+Observations. Figure 2 (a) confirms that
+Retrieval Action. By modeling the agent’s cur-
+memory-based paradigms (Summary and
+rentstateratherthanjuststoringfacts,theGraph-
+Graph)significantlyreducetokenconsumption
+based paradigm effectively avoids repetitive re-
+compared to ReAct. Regarding action robust-
+trievalcomparedtothesummary-basedmethod.
+ness(Figure2(b)),ReActdegradesmostsharply
+ascontextexpands. TheSummary-basedapproachalsosuffersfromstateblindness: theagentloses
+trackofitshistoricalretrieval-perceptionactions,leadingtorepetitivequeriescommoninmulti-
+hopscenarios. Incontrast,bysystematicallytrackingtheagent’sstate,theGraph-basedmemory
+effectivelyminimizesredundantsearchesandcyclicerrors.
+Insights. Thetruevalueofmemoryliesinshapingfuturebehaviorforagents,notmerelystoring
+factsfrompastobservations.Wearguethatagraph-basedstructureprovidesthenecessarystructural
+biastomaintaintheagent’sreasoningstate,enablingittobridgevalidpathsfrompasttofuture.
+2.3 ImpactofInformationCompressioninMemory
+Thissubsectioninvestigatesthesemanticalignmentbetweenobservationsandmemory,aswellas
+thetrade-offbetweencompressionratioandcriticalinformationpreservation.
+ExperimentalSettings. Wecomparefourcross- Table1: Comparisonofcross-modalitymemory
+modalitycompressionstrategiesonthememory strategies. Semantically-RelatedVisualMemory
+paradigmZhouetal.(2025): 1)Pre-Captioning: achieves a superior trade-off between compres-
+The visual component of the corpus is pre- sionratioandcriticalinformationpreservation.
+captioned. Theagentperformspurelytextual
+Modality Average Performance(%)
+retrievalandmemorization. 2)VisualObserva- MemoryStrategy Retrieval→Memory Tokens Image Video
+tionasMemory: Theagentdirectlystoresobser- (1)Pre-Caption Text→Text 0.9k 14.5% 17.2%
+(2)RawVisualTokens Vision→Vision 15.8k 45.6% 30.4%
+vationsasrawmultimodaltokens. 3)Context- (3)Context-AwareCaption Vision→Text 1.5k 52.8% 39.5%
+(4)Semantically-Related Vision→SelectiveVision 2.7k 58.2% 43.7%
+AwareCaptioning: Theagentretrievesrawmul-
+timodaldataasobservationsbutmemorizesitastextualsummaries. 4)Semantically-RelatedVisual
+Memory: After retrieving visual data, the agent selectively retains relevant vision tokens, while
+irrelevanttokensarediscarded. PleaseseeAppendixC.2forimplementationdetails.
+Observations. AsshowninTable1,puretextstrategy(strategy1)minimizestokenconsumption
+butsuffersfromtherepresentationgapbetweentextandvision. Meanwhile, simplystoringall
+raw observations in the context (strategy 2) performs poorly due to a decreasing signal-to-noise
+ratio,consistentwithourinsightsinSection2.2. Thesuperiorityofselectivevision(strategy4)over
+textualsummaries(strategy3)demonstratesthenecessityofpreservingcriticalvisualfeaturesfor
+theagent’sfinalverification.
+Insights. Allocatingvisiontokensspecificallytocriticalvisualdetailsinmemoryisessentialfor
+verificationinmultimodaltasks,therebyretaininghigh-valueevidencewhilediscardingnoisefor
+optimaltokenefficiency.
+4
+--- Page 4 ---
+TechnicalReport TongyiDeepResearch
+2.4 ImpactofSparseRewardSignalonCreditAssignmentwithintheMemoryParadigm
+Thissubsectioninvestigatesthereliabilityofoutcomerewardsforcreditassignmentinmulti-step
+agenttrajectories.
+(a) Distribution of Step Validity (b) Counterfactual Ablations
+100 100 Suboptimal performance from
+contextual distribution shifts. 80 90
+Repeated or
+60 i r n et e r f i f e e v c a ti l v . e 80 Reason based on 50 internal knowledges.
+40 Insufficient 20 Perception Capabilities
+perception & recover after denoising.
+20 reasoning. 10
+Unable to
+answer. 0 0
+Reward=1 Reward=0 Positive Samples Negative Samples
+Ineffective Repetitive Evidence Original Remove Redundancy Remove Evidence
+)%(
+spetS fo
+egatnecreP
+)%(
+ecnamrofreP
+dne-ot-dnE
+Experimental Settings. Let a trajectory
+beasequenceofstepsτ = {s ,s ,...,s } 1 2 T
+Zhou et al. (2025). We decompose steps intotwodisjointsubsets: 1)EvidenceRe-
+trieval(S ),containingstepsthatcapture
+evd
+critical clues, and 2) Noise/Redundancy
+(S ), containing irrelevant actions. To noise
+evaluatethecontributionofspecificsteps,
+weconductacounterfactualablationstudy.
+Figure3:Empiricalanalysisofmisalignmentbetween
+Weconstructcounterfactualtrajectoriesτˆ
+outcome rewardsand step validity. (a) Distribution
+by masking specific subsets of steps and
+ofstepcategoriesacrossbinaryoutcomerewards. (b)
+reconstructingtheremainingstepsintoa
+Impact of removing redundancy or evidence steps,
+completehistoryforre-evaluation. Specif-
+demonstratingthecoarsenessofrewards.
+ically,forpositivesamples(wherereward
+r = 1), we evaluate τˆ = τ\S and τˆ = τ\S . For negative samples (r = 0) that contain
+evd noise
+validretrievalsteps(s ∈ S ),wetestifperformancerecoversbydenoising,i.e.,retainingonlythe
+t evd
+evidencesetτˆ = S . PleaserefertoAppendixC.3formoredetails.
+evd
+Observations. Figure3(a)illustratesacriticalmisalignmentbetweentherewardrandstep-wise
+samples. Sampleswithr = 1arenotpurelyefficient;theyfrequentlycontains ∈ S towhich
+t noise
+outcome-basedsupervisionwouldincorrectlyassignpositivegradients. Sampleswithr =0should
+notbeuniversallypenalized,astheymaycontainvalids ∈ S despitethefinalfailure. Figure3
+t evd
+(b)demonstratesthisviacounterfactualablation. Fornegativesamples,simplyremovingredundant
+stepsrecoversperformance. Thisindicatesthatthefailureresultsfromreasoningovernoiserather
+thanalackofevidence.Forpositivesamples,removingevidencesteps(τ\S )resultsinanon-zero
+evd
+performance,confirmingthemodelpartiallyreliesonparametricinternalknowledge.
+Insights. Thememoryparadigmnaturallydecomposestheagenticreasoningprocessintodiscrete
+states,allowingustodisentangleretrievalqualitytoaddresstheinsufficiencyofcoarseoutcome
+reward. Thisenablesustocalibratecreditassignment,drivingthemodeltolearnthedistributionof
+constructiveactionsatthefine-grainedstep-level.
+3 VimRAG
+Inthissection,drawingontheinsightsandfoundationalideasestablishedinthepilotstudy,we
+present a comprehensive description of our VimRAG framework. We first detail the Structured
+ReasoningTopology(§3.1)asthestructuralbackboneofouragenticmemory. Next,weintroduce
+Graph-Modulated Visual Memory Encoding (§ 3.2) to perform dynamic resolution scaling within
+memory. Finally,weproposeGraph-GuidedRejectionSampling(§3.3)forfine-grainedoptimization
+viatopologicalcreditassignment.
+3.1 StructuredReasoningTopology
+Weformulatethemultimodalreasoningprocessasthesequentialevolutionofadirectedacyclic
+graph(DAG),denotedasG = (V ,E ),wheretindicatesthediscretereasoningstep. Addressing
+t t t
+thestructurallimitationsoflinearhistoryhighlightedinour 1st insight, thistopologyexplicitly
+capturesthelogicaldependenciesbetweenagentactions.
+GraphNodeasEpistemicState. Wedefineeachnodev ∈ G asadiscreteunitofagenticepistemic
+i t
+state.
+v ≜(p,q,s,m ), (3)
+i i i i i
+5
+
+[Output limited to first 5 pages.]

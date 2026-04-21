@@ -1,3 +1,5 @@
+from loguru import logger
+import asyncio
 """Screen capture tool for multi-modal vision."""
 
 import json
@@ -212,7 +214,9 @@ class ScreenCaptureTool(Tool):
                     yolo_enabled = vision_cfg.yolo_enabled
                     yolo_confidence = vision_cfg.yolo_confidence
                     yolo_model = vision_cfg.yolo_model
-                except Exception:
+                except Exception as _e:
+                    if isinstance(_e, asyncio.CancelledError):
+                        raise
                     ocr_enabled = True
                     ocr_min_confidence = 0.7
                     uia_threshold = 3
@@ -225,7 +229,7 @@ class ScreenCaptureTool(Tool):
                     uia_threshold = 999999  # Force OCR regardless of UIA count
 
                 try:
-                    print(f"\n[ScreenCapture] Annotating UI elements. Monitor: idx={monitor_idx}, "
+                    logger.info(f"\n[ScreenCapture] Annotating UI elements. Monitor: idx={monitor_idx}, "
                           f"offset=({offset_x},{offset_y}), size={monitor_width}x{monitor_height}")
                     anchor_summary = extract_and_draw_anchors(
                         filepath, filepath, anchors_json_path,
@@ -241,9 +245,11 @@ class ScreenCaptureTool(Tool):
                         yolo_confidence=yolo_confidence,
                         yolo_model=yolo_model,
                     )
-                    print(f"[ScreenCapture] Detected {len(anchor_summary)} elements total")
+                    logger.info(f"[ScreenCapture] Detected {len(anchor_summary)} elements total")
                 except Exception as e:
-                    print(f"\n[ScreenCapture] ERROR in ui_anchors.py: {e}\n")
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
+                    logger.info(f"\n[ScreenCapture] ERROR in ui_anchors.py: {e}\n")
                     anchor_summary = [f"Failed to annotate UI: {e}"]
 
             # Keep only the latest 5 screenshots in tmp to avoid disk bloat
@@ -268,6 +274,8 @@ class ScreenCaptureTool(Tool):
             return result_str
             
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error capturing screen: {str(e)}"
             
     def _cleanup_old_captures(self) -> None:

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Phase 37: Execution Trace Archive — developer-only debug dump.
 
 Saves raw execution traces to ``memory/traces/`` for offline human
@@ -11,7 +12,6 @@ Design:
   • No index file, no retrieval system, no Agent-side filesystem access.
 """
 
-from __future__ import annotations
 
 import json
 from datetime import datetime

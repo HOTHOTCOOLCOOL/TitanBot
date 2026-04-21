@@ -1,0 +1,77 @@
+## Relevant Historical Context
+
+**1. [docs:epoch_49_ifcc_details.md]** (relevance: 82%)
+Implemented the IFCC protocol as described in ADR-49. This introduces a pure-engineering context condensation path (using `<mem>` tags) rather than relying on RL tuning.
+
+**2. [docs:context.py]** (relevance: 81%)
+class _WaterfallBudget:
+    """Priority-ordered cascading context budget allocator."""
+
+**3. [docs:context.py]** (relevance: 81%)
+__all__ = [
+    "ContextBuilder", 
+    "_WaterfallBudget", "_downgrade_old_images", "_VISUAL_HOT_STEPS", 
+    "_CONTEXT_BUDGET", "_KG_ENTITY_CAP", "_EXPERIENCE_CAP", 
+    "_ACTION_HIST_CAP", "_REMINDER_CAP", "_ACTION_HISTORY_SENTINEL"
+]
+
+**4. [docs:ADR-57-context-intelligence-upgrade.md]** (relevance: 80%)
+在 `context.py` 内新增 `_WaterfallBudget` 内部私有类，按**优先级顺序**分配上下文字符配额，未消费额度自动顺延至下级。
+
+**5. [docs:ADR-57-context-intelligence-upgrade.md]** (relevance: 80%)
+```python
+class _WaterfallBudget:
+    """Priority-ordered cascading context budget allocator."""
+
+**6. [docs:context.py]** (relevance: 80%)
+# Phase 49: IFCC Protocol
+try:
+from nanobot.config.loader import get_config as _get_cfg_c
+_ifcc_enabled = getattr(getattr(_get_cfg_c().agents, 'memory_features', None), 'ifcc_enabled', True)
+if _ifcc_enabled:
+parts.append("## Context Condensation\nWhen you have definitively resolved a step (confirmed root cause, completed analysis),\nsummarize the key finding in <mem>concise conclusion ≤200 chars</mem>.\nPlace it AFTER any <think> block. This milestone survives context truncation.")
+
+**7. [docs:context.py]** (relevance: 79%)
+# Feature A: Waterfall Budget Context Building
+        waterfall = _WaterfallBudget(total=_CONTEXT_BUDGET)
+
+**8. [docs:context.py]** (relevance: 79%)
+built_injection = waterfall.build()
+        if built_injection:
+            system_prompt += f"\n\n{built_injection}"
+
+**9. [docs:context.py]** (relevance: 79%)
+## 🧠 Memory Strategy
+**What to remember:** user preferences, profile facts, project context, important decisions, long-term instructions.
+**What NOT to remember:** temporary debugging info, large data blobs, passwords/API keys, one-time task results.
+When the user says "记住"/"remember"/"别忘了"/"don't forget", actively store it using the `memory` tool.
+
+**10. [docs:epoch_49_ifcc_details.md]** (relevance: 79%)
+## Execution Points
+1. **Config Toggle**: Added `ifcc_enabled: bool` to `MemoryFeaturesConfig`.
+2. **Context Builder System Prompt**: Injects a 45-token sequence guiding R1/Assistant model to generate `<mem>...</mem>` if it hits a key task milestone. Addressed *under* `# Skills` section.
+3. **Loop Extraction Pivot**: Inside `_run_agent_loop` and `_run_agent_loop_v2`, LLM responses are intercepted. They hit `tag_extractor.py:extract_mem_content()`.
+
+**11. [docs:ADR-57-context-intelligence-upgrade.md]** (relevance: 79%)
+### Feature A: 瀑布流上下文预算 (Waterfall Context Budgeting)
+
+**12. [docs:context.py]** (relevance: 78%)
+# Memory context
+        memory = self.memory.get_memory_context()
+        if memory:
+            parts.append(f"# Memory\n\n{memory}")
+
+**13. [docs:epoch_49_ifcc_details.md]** (relevance: 78%)
+# Epoch 49: Context Condensation (IFCC) Implementation Details
+
+**14. [docs:ADR-57-context-intelligence-upgrade.md]** (relevance: 78%)
+waterfall.add(kg_context,          cap=_KG_ENTITY_CAP)    # 层①
+waterfall.add(experience_hint,     cap=_EXPERIENCE_CAP)   # 层②
+waterfall.add(action_history,      cap=_ACTION_HIST_CAP)  # 层③
+waterfall.add(reminder_text,       cap=_REMINDER_CAP)     # 层④ (条件性)
+waterfall.add(rag_context,         cap=None)              # 层⑤ 兜底无上限
+
+**15. [docs:ADR-57-context-intelligence-upgrade.md]** (relevance: 78%)
+```python
+# context.py::build_messages() 重构后伪代码
+waterfall = _WaterfallBudget(total=_CONTEXT_BUDGET)

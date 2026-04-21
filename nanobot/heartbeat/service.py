@@ -97,6 +97,8 @@ class HeartbeatService:
             except asyncio.CancelledError:
                 break
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Heartbeat error: {e}")
     
     async def _tick(self) -> None:
@@ -121,6 +123,8 @@ class HeartbeatService:
                     logger.info(f"Heartbeat: completed task")
                     
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Heartbeat execution failed: {e}")
     
     async def trigger_now(self) -> str | None:

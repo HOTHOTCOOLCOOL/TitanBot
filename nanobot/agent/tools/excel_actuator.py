@@ -157,6 +157,8 @@ class ExcelActuatorTool(Tool):
                 "Please check if Excel is still open or the VR_BI Model connection is responding."
             )
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"ExcelActuator: Unexpected failure — {e}")
             return f"Error: ExcelActuator unexpected failure — {e}"
 

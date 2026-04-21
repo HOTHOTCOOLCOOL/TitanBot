@@ -1,3 +1,5 @@
+from __future__ import annotations
+import asyncio
 """Phase 31→32: Verification Layer — funnel-shaped verification pipeline (L0→L1→L3).
 
 This module implements three progressive verification layers around the AgentLoop:
@@ -20,7 +22,6 @@ Design constraints (from ARCHITECTURE.md):
   • Total context injection stays within ``_INJECTION_BUDGET`` (8000 chars).
 """
 
-from __future__ import annotations
 
 import fnmatch
 import json
@@ -305,58 +306,68 @@ def _check_rule_ssrs_fatal(tool_calls: list[Any], messages: list[dict] | None = 
     return violations
 
 
-def _check_rule_shell_guard(
+def _check_rule_destructive_guard(
     tool_calls: list[Any],
     *,
     registry: Any | None = None,
     config_overrides: dict | None = None,
 ) -> list[str]:
-    """R-SHELL-GUARD: Tag-Driven DESTRUCTIVE shell command hard-block (Phase 45B / ADR-45).
+    """R-DESTRUCTIVE-GUARD: 全局 Tag-Driven 毙灭性操作硬阻断 (ADR-61 重构自 R-SHELL-GUARD).
 
-    Detects all tools declaring SHELL_EXECUTION and evaluates their runtime
-    arguments via evaluate_dynamic_tags(). If the resolved effective tags contain
-    DESTRUCTIVE, the tool call is blocked immediately — no HITL approval path.
+    对所有工具一视同仁：只要 evaluate_dynamic_tags() 合成出的 effective_tags
+    包含 DESTRUCTIVE，无视工具名称，L1 立即硬阻断。
 
-    Falls back to _DESTRUCTIVE_PATTERNS regex scan when no registry is available
-    (e.g. unit tests that don't wire up a full ToolRegistry).
+    ADR-45B 中原始版本限制于具有 SHELL_EXECUTION 静态标签的工具，
+    这使得 RPA 等工具返回的 DESTRUCTIVE 标签无法被任何 L1 规则捕获（时序漏洞）。
+    本规则通层泪汾这个盲区。
+
+    降级兼容：当 registry 为 None 时（如单元测试运行环境），回退到针对
+    'exec' 工具的 _DESTRUCTIVE_PATTERNS 静态正则扫描。
     """
     from nanobot.agent.capability import CapabilityTag
     violations = []
     for tc in tool_calls:
-        # Type-safe argument access
         if not hasattr(tc, "arguments") or not isinstance(tc.arguments, dict):
             continue
 
         tool_impl = registry.get(tc.name) if registry else None
 
         if tool_impl is None:
-            # No registry: fallback to static regex scan on the well-known 'exec' tool
+            # 无 registry：回退针对 'exec' 的静态正则扫描
             if tc.name != "exec":
                 continue
             cmd = tc.arguments.get("command", "")
             for pat in _DESTRUCTIVE_PATTERNS:
                 if pat.search(cmd):
                     violations.append(
-                        f"R-SHELL-GUARD: Destructive command pattern detected in 'exec': "
+                        f"R-DESTRUCTIVE-GUARD: Destructive command pattern detected in 'exec': "
                         f"'{cmd[:100]}'. This has been automatically blocked."
                     )
                     break
             continue
 
-        # Tag-Driven path: only process SHELL_EXECUTION-capable tools
-        if not (tool_impl.static_tags & CapabilityTag.SHELL_EXECUTION):
-            continue
+        # 【核心变更】：移除 SHELL_EXECUTION 前置限制，所有工具一视同仁
+        # ADR-45B 原始版仅对 SHELL_EXECUTION 工具生效，导致
+        # RPA evaluate_dynamic_tags() 返回的 DESTRUCTIVE 标签无人消费。
 
-        # Resolve effective tags (static | config_override | dynamic)
         override_val = config_overrides.get(tc.name) if config_overrides else None
         config_override = CapabilityTag(override_val) if override_val is not None else None
-        effective = tool_impl.get_effective_tags(tc.arguments, config_override=config_override)
+
+        try:
+            effective = tool_impl.get_effective_tags(tc.arguments, config_override=config_override)
+        except Exception as e:
+            # evaluate_dynamic_tags 抛异常时：fallback 到 static_tags 并打印可见日志
+            # 注意：不能静默降级（会掩盖 Tool 实现中的隐蛘 Bug）
+            logger.error(
+                f"R-DESTRUCTIVE-GUARD: evaluate_dynamic_tags failed for tool '{tc.name}': {e}. "
+                f"Falling back to static_tags only."
+            )
+            effective = tool_impl.static_tags
 
         if effective & CapabilityTag.DESTRUCTIVE:
-            cmd = tc.arguments.get("command", "")
             violations.append(
-                f"R-SHELL-GUARD: DESTRUCTIVE capability detected on tool '{tc.name}'. "
-                f"Command: '{cmd[:100]}'. Blocked automatically — no approval path exists."
+                f"R-DESTRUCTIVE-GUARD: DESTRUCTIVE capability detected on tool '{tc.name}'. "
+                f"Blocked automatically — no approval path exists."
             )
     return violations
 
@@ -373,7 +384,7 @@ _L1_RULES = [
     _check_rule_network_exfiltration,
     _check_rule_browser_use_ssrf,
     _check_rule_ssrs_fatal,
-    _check_rule_shell_guard,  # Phase 45B: Tag-Driven DESTRUCTIVE hard-block (must run last)
+    _check_rule_destructive_guard,  # ADR-61: 全工具通用 DESTRUCTIVE 硬阻断（取代 R-SHELL-GUARD）
 ]
 
 
@@ -430,6 +441,54 @@ class VerificationLayer:
             return 0
 
         injection_used = 0
+
+        # 0. KI Rules (Phase 59: Short-circuit tactical rules)
+        try:
+            import os
+            import json
+            ki_dir = None
+            if hasattr(self, 'config') and hasattr(self.config, 'workspace'):
+                ki_dir = os.path.join(self.config.workspace, ".nanobot/ki_rules")
+            elif hasattr(self, 'knowledge_workflow') and self.knowledge_workflow and hasattr(self.knowledge_workflow, 'workspace'):
+                ki_dir = os.path.join(self.knowledge_workflow.workspace, ".nanobot/ki_rules")
+            else:
+                import pathlib
+                ki_dir = os.path.join(pathlib.Path.cwd(), ".nanobot/ki_rules")
+                
+            if os.path.exists(ki_dir):
+                mtime = os.stat(ki_dir).st_mtime
+                for f in os.listdir(ki_dir):
+                    if f.endswith(".ki.json"):
+                        f_mtime = os.stat(os.path.join(ki_dir, f)).st_mtime
+                        if f_mtime > mtime:
+                            mtime = f_mtime
+
+                if getattr(self, "_ki_rules_cache", None) is None or getattr(self, "_ki_rules_mtime", 0) < mtime:
+                    self._ki_rules_cache = []
+                    self._ki_rules_mtime = mtime
+                    for f in os.listdir(ki_dir):
+                        if f.endswith(".ki.json"):
+                            try:
+                                with open(os.path.join(ki_dir, f), "r", encoding="utf-8") as fp:
+                                    data = json.load(fp)
+                                    self._ki_rules_cache.append({
+                                        "name": f,
+                                        "keywords": [k.lower() for k in data.get("keywords", [])],
+                                        "rule": data.get("rule", "")[:500]  # Runtime strict truncation
+                                    })
+                            except Exception:
+                                pass
+
+                request_lower = request_text.lower()
+                for ki in self._ki_rules_cache:
+                    if any(k in request_lower for k in ki["keywords"]):
+                        rule_text = f"\n\n## 🛡️ Tactical Rule ({ki['name']}):\n{ki['rule']}\n"
+                        if injection_used + len(rule_text) <= _INJECTION_BUDGET:
+                            system_messages[0]["content"] += rule_text
+                            injection_used += len(rule_text)
+                            logger.debug(f"L0: Injected KI rule {ki['name']}")
+        except Exception as e:
+            logger.debug(f"KI Rules injection skipped: {e}")
 
         # 1. Experience Bank tactical hints
         if (getattr(memory_features, 'experience_enabled', True)
@@ -497,7 +556,7 @@ class VerificationLayer:
                 violations = rule_fn(tool_calls, extra_deny=extra_deny)
             elif rule_fn is _check_rule_ssrs_fatal:
                 violations = rule_fn(tool_calls, messages=messages)
-            elif rule_fn is _check_rule_shell_guard:
+            elif rule_fn is _check_rule_destructive_guard:
                 violations = rule_fn(
                     tool_calls,
                     registry=registry,
@@ -691,4 +750,6 @@ class VerificationLayer:
                 )
 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"L3: Success pattern extraction failed: {e}")

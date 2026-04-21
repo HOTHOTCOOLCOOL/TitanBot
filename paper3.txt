@@ -1,0 +1,383 @@
+Reading PDF: C:\Users\davidliu\Downloads\2603.03296v1.pdf
+Total Pages: 49
+
+--- Page 0 ---
+PlugMem: A Task-Agnostic Plugin Memory Module for LLM Agents
+KeYang*1 ZixiChen*2 XuanHe*1 JizeJiang*1
+MichelGalley3 ChenglongWang3 JianfengGao3 JiaweiHan1 ChengXiangZhai1
+*Equalcontribution
+1UniversityofIllinoisUrbana-Champaign 2TsinghuaUniversity 3MicrosoftResearch
+{key4,xuanhe4,jizej2,hanj,czhai}@illinois.edu
+chenzixi23@mails.tsinghua.edu.cn
+{mgalley,chenwang,jfgao}@microsoft.com
+Abstract
+Long-term memory is essential for large lan-
+guage model (LLM) agents operating in com-
+plex environments, yet existing memory de-
+signsareeithertask-specificandnon-transferable,
+or task-agnostic but less effective due to low
+task-relevance and context explosion from raw
+memory retrieval. We propose PLUGMEM, a
+task-agnostic plugin memory module that can
+be attached to arbitrary LLM agents without
+task-specific redesign. Motivated by the fact
+thatdecision-relevantinformationisconcentrated Num of Mem Token (Normalized)
+as abstract knowledge rather than raw experi-
+ence, we draw on cognitive science to struc-
+ture episodic memories into a compact, exten-
+sible knowledge-centric memory graph that ex-
+plicitlyrepresentspropositionalandprescriptive
+knowledge. Thisrepresentationenablesefficient
+memoryretrievalandreasoningovertask-relevant
+knowledge,ratherthanverboserawtrajectories,
+anddepartsfromothergraph-basedmethodslike
+GraphRAGbytreatingknowledgeastheunitof
+memoryaccessandorganizationinsteadofenti-
+tiesortextchunks. WeevaluatePLUGMEMun-
+changedacrossthreeheterogeneousbenchmarks
+(long-horizonconversationalquestionanswering,
+multi-hop knowledge retrieval, and web agent
+tasks). The results show that PLUGMEM con-
+sistentlyoutperformstask-agnosticbaselinesand
+exceedstask-specificmemorydesigns,whilealso
+achievingthehighestinformationdensityundera
+unifiedinformation-theoreticanalysis. Codeand
+dataareavailableathttps://github.com/TIMAN-
+group/PlugMem.
+1Eachpointcorrespondstoamemorymethodevaluatedon
+)dezilamroN(
+IMP
+PlugMem (WA)
+LiCoMemory
+HippoRAG2
+PlugMem (HPQA)
+RAPTOR
+Vanilla Retrieval
+A-Mem
+PlugMem (LME)
+Higher utility
+AWM Lower cost
+Figure 1. A utility–cost visualization of agentic memory ap-
+proaches.1PLUGMEM,evaluatedunchangedacrossheteroge-
+neous benchmarks requiring processing multiple memory
+types, achieves the highest decision-making utility of mem-
+oryatthelowestagent-sidememorycost.
+1.Introduction
+Largelanguagemodel(LLM)agentsincreasinglyoperate
+insettingsthatrequirelong-termmemory,whererelevant
+informationisdistributedacrosslonginteractionhistories
+andmustbereusedtosupportfuturedecisions(Wangetal.,
+2024a;Parketal.,2023). However,naivelyaccumulating
+pastinteractionsasrawcontextquicklyleadstounbounded
+memorygrowth,highcomputationalcost,anddegradedper-
+formance(Packeretal.,2024;Liuetal.,2023). Toaddress
+atleastoneofthreebenchmarks,i.e.,LongMemEval(Wuetal.,
+2024),HotpotQA(Yangetal.,2018)andWebArena(Zhouetal.,
+2024),plottedinanormalizedutility–costspacetoenablecross-
+taskvisualizationandtoaccommodatebaselinesthatarenotap-
+plicabletoallbenchmarks. Bothaxesaremin–maxnormalized,
+whichlinearlyrescalesvaluestoafixedrange(e.g.,[0,1])while
+preservingrelativeorderingacrossmethods.Curvesareobtained
+bysweepingthememorytokenbudget.Thenormalizationisap-
+pliedsolelyforvisualization;detailedbenchmark-specificanalyses
+usingrawPMIvaluesandtokennumbersarereportedinSection4
+andFigure5.
+1
+6202
+beF
+6
+]LC.sc[
+1v69230.3062:viXra
+--- Page 1 ---
+PlugMem:ATask-AgnosticPluginMemoryModuleforLLMAgents
+PlugMem
+Memory
+Structuring Retrieval
+Reasoning helping agent
+Module Module task...
+Module
++ Thinking
+··· & Reflection
+Input: Heterogeneous Standardized & Retrieved Output: Task-
+Unstructured Memory Knowledge-Dense Memory Memory Relevant Memory Base ZAgent
+Figure2. PLUGMEMorganizesrawmemoryandoutputsrefinedmemorytokenstohelpthebaseagent’sdecision-making.
+this,manyagentarchitecturesrelyonexternalmemorymod- memoryorweb-basedagents,implicitlyassumingasingle
+ulestostoreandretrievepastexperience. Yetmostexisting dominanttypeofmemory(Wangetal.,2024b;Gutie´rrez
+memorydesignstightlycouplememoryrepresentationand etal.,2025). Whenappliedtoadifferenttaskdomain,these
+retrievaltospecifictasksorbenchmarks,relyingonhand- designsrarelytransferwithoutsignificanttask-specificmod-
+craftedheuristicsforwhattostoreandhowtouseit(Wang ifications. Thisraisesakeychallenge: howcanwedesigna
+et al., 2024b; Gutie´rrez et al., 2025). While effective in general-purposememorymodulethatsimultaneouslysup-
+narrowsettings,suchtask-specificmemorymodulesfailto portsmultiplememorytypesandadaptstothediversede-
+generalize: amemorysystemoptimizedforlong-horizon mandsofagentictasks,andevaluateitinawaythatjointly
+conversationsdoesnotreadilytransfertowebnavigation, reflectsdecisionutilityandagent-sidecost,whileallowing
+andviceversa. Thislimitationmotivatestheneedforatask- cross-taskcomparability?
+agnosticplug-and-playmemorymodulethatcanbeattached
+To address the design side of this challenge, we ground
+toarbitraryLLMagentswithouttask-specificredesign,re-
+ourapproachinaprincipledaccountofmemoryorganiza-
+ducingper-taskengineeringoverheadandenablingasingle
+tionfromcognitivescience. Decadesofresearchsuggest
+memorymoduletobereusedacrossdiverseagenticsettings.
+thatthehumanbrainmakesafundamentaldistinctionbe-
+Designingsuchageneralpluginmemorymoduleischal- tween episodic memory (detailed records of experience)
+lenging. Themoststraightforwardtask-agnosticapproach andknowledge-levelmemory,whichcanbefurtherdivided
+isretrieval-basedmemory,whereallpastexperiencesare intosemanticmemory(knowingthat;factualpropositions)
+stored as raw text chunks and retrieved by relevance (op- and procedural memory (knowing how; action-oriented
+tionallyaugmentedwithreasoning,asinRAG).However, prescriptions) (Tulving, 1972; Squire, 2004). Episodic
+thisparadigmoftenfailsinpracticeduetoknowledgespar- memory serves as the source from which propositional
+sity. Memories that are truly useful for decision-making andprescriptiveknowledgeareabstracted,whilethelatter
+aretypicallycondensedandabstractformsofknowledge, formsaremostdirectlyusefulforreasoninganddecision-
+whereas raw memories are verbose, episodic, and domi- making. Thisperspectivesuggeststhateffectiveagentmem-
+natedbylow-levelinformation. Forexample,whenrecom- oryshouldnotmerelyretrievepastexperiences,butactively
+mendingrecipes,anagentbenefitsfromknowingauser’sdi- transformrawepisodicmemoryintostructured,knowledge-
+etarypreferencesandrestrictions,whicharecompactfactual denserepresentations.
+propositionsdistilledfrommanyinteractions,ratherthanre-
+Based on these principles, we introduce a novel plugin
+readinglongconversationhistories. Similarly,whenshop-
+memory module PLUGMEM, that performs memory-to-
+pingonapreviouslyunseenwebinterface,anagentneeds
+knowledge abstraction and supports the unified manage-
+generalizableproceduralknowledge,i.e.,howtosearch,fil-
+mentofmultiplekeymemorytypesacrossagentictasks. As
+ter,andcheckout,notrawtrajectoriescontainingfull-page
+showninFigure2,ourapproachconsistsof: i)astructuring
+observationswiththousandsofirrelevanttokens. Treating
+modulethatstandardizesheterogeneousrawmemoriesand
+rawepisodicmemoryasdirectlyusableknowledgethere-
+extractspropositionalandprescriptiveknowledgethrough
+foreimposesanunnecessarycontextburdenandobscures
+hierarchical abstraction, organizing them into a memory
+theinformationmostrelevantfordecision-making.
+graph;ii)aretrievalmodulethatselectstask-relevantsub-
+Priorworkhasattemptedtobridgethisgapbycompressing graphs;andiii)areasoningmodulethatfurtheradaptsand
+orsummarizingmemory,butlargelyintask-specificways. compresses retrieved knowledge for the base agent. Un-
+Memorymodulesareoftenengineeredtoperformwellon like conventional knowledge graphs that operate on enti-
+aparticularbenchmark,suchasconversationallong-term ties and relations, our memory graph operates on knowl-
+2
+--- Page 2 ---
+PlugMem:ATask-AgnosticPluginMemoryModuleforLLMAgents
+edgeunits(i.e.,propositionsandprescriptions)whichform tilledintosemanticmemory(Lietal.,2025),whileaction
+thefundamentalunitsofmemoryaccessandmanipulation. strategiescanbeabstractedasproceduralmemory(Wang
+PLUGMEMcanbeviewedasaknowledge-centricformof et al., 2024b). These abstractions align with more gen-
+GraphRAG(Edgeetal.,2025)tailoredformemorymanage- eralknowledgenotions: propositionalknowledgeasfactual
+ment,wheregraphnodesareknowledgeratherthanentities statementsandprescriptiveknowledgeasgeneralizedgoal-
+ortextchunks. directedprocedures(Diebolt&Perrin,2013).
+Complementarytothedesignofageneral-purposememory Buildingontheseinsights,recentsystemsincorporatedif-
+module,wecontributeanovelutility-costanalysisframe- ferent memory types to support long-context understand-
+workthatenablesfaircomparisonbetweendifferentmemory ing(Leeetal.,2024),long-terminteractions(Lietal.,2025),
+designsacrosstasks,capturingbothperformanceimprove- structuredmemoryorganization(Anokhinetal.,2024;Ras-
+ments and memory efficiency. Specifically, we measure mussenetal.,2025),andexperience-drivenstrategyrefine-
+theinformationdensityofmemory,definedasthedecision- ment (Zhao et al., 2024; Wang et al., 2024b; Fang et al.,
+relevant information gain provided to the base agent per 2025). However, most approaches are task-specific and
+memorytoken. WeimplementPLUGMEMandevaluateit donotjointlysupportmultiplememorytypes. Incontrast,
+onthreeheterogeneousandchallengingbenchmarks: long- PLUGMEMstandardizesheterogeneousepisodicexperience
+horizonconversationalquestionanswering(Wuetal.,2024), and organizes extracted knowledge into a propositional-
+multi-hopknowledgeretrievaloverWikipedia(Yangetal., prescriptivestructure,enablingtask-agnosticreuse.
+2018),andweb-basedagenttasks(Zhouetal.,2024).Using
+thesamememorymoduleimplementationacrossallsettings,
+Table1. Comparisonofrepresentativeagenticmemorysystems.
+wedemonstrateconsistentperformancegainsovervanilla
+M2K indicates if a system transforms working memories into
+task-agnosticbaselinesandtask-specificmemorymodules,
+reusable, abstract knowledge that’s generalizable across tasks.
+whileincurringloweragent-sidememorycost,asillustrated KaUmeansifitadoptsknowledgeasthememoryunit. Mech.
+inFigure1. Ablationstudiesfurtherclarifytherolesofdif- characterizesthedesignofthememorymodules,includingStr.
+ferentcomponents. Sinceagenticmemoryultimatelyserves (structuredmemoryrepresentations),Ret.(refinedretrievalstrate-
+gies),andRea.(post-retrievalreasoningorcompression).Mem.
+decision-making,taskperformanceisprimarilydetermined
+denotes the memory type that the system supports, including
+bywhetherretrievalbringsthemostusefulmemorytobear
+Episodic, Semantic, and Procedural memory. Agn. indicates
+atdecisiontime. Ourstructuringmoduleincrementallyen- whetherthememorydesignistask-agnostic.
+hances retrieval by organizing heterogeneous experience
+intoknowledge-centricmemoryunits,yieldingadditional Meth. M2K KaU Mech. Mem. Agn.
+performancegains. Meanwhile,thereasoningmodulesub- Str. Ret. Rea. E S P
+stantiallyimprovesefficiency,reducingmemorytokenusage VanillaRetrieval ✗ ✗ ✗ ✗ ✓ ✓ ✗ ✗ ✓
+VanillaRAG ✗ ✗ ✗ ✗ ✗ ✓ ✗ ✗ ✓
+byonetotwoordersofmagnitudethroughtask-adaptive GraphRAG ✓ ✗ ✓ ✓ ✓ ✗ ✓ ✗ ✓✗
+A-Mem ✓ ✓ ✓ ✗ ✗ ✓ ✓ ✗ ✓
+condensation. Weprovideillustrativebenchmarkexamples
+Zep ✗ ✗ ✓ ✓ ✗ ✓ ✓ ✗ ✗
+inAppendixA. MemoryOS ✗ ✗ ✗ ✓ ✗ ✓ ✓ ✗ ✗
+HippoRAG2 ✓ ✗ ✓ ✓ ✓ ✗ ✓ ✗ ✗
+Insummary,ourcontributionsarefourfold: AWM ✓ ✓ ✗ ✗ ✗ ✗ ✗ ✓ ✗
+ReasoningBank ✓ ✓ ✗ ✗ ✗ ✓ ✗ ✓ ✗
+PLUGMEM ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓ ✓
+• Designprinciples: cognitivelymotivatedprinciplesfor
+task-agnosticmemoryinLLMagents. MemoryModuleDesigns Manyagentmemorysystems
+• Evaluationframework: aninformation-theoreticmea- adopt retrieval-based external memory, storing past inter-
+sureofmemoryutilityandefficiency. actionsandretrievingthematinferencetime. Earlytask-
+• Generalmemorymodule: apluginmemorysystemap- agnostic methods rely on flat retrieval over unstructured
+plicableacrossheterogeneousagenticbenchmarks. episodicmemory,suchasvanillaretrievalandRAG(Lewis
+• Reproducibility: releasedcodeandexperimentalresults. etal.,2021;Wangetal.,2024a),resultinginredundantand
+episode-specificmemoryreuse.Laterworkintroducesstruc-
+2.RelatedWork tureoverepisodicmemory,includinghierarchicalandgraph-
+basedretrieval(e.g.,GraphRAG)tosupportmulti-hoprea-
+CognitiveScienceBasedAgentMemory Cognitivesci- soning(Edgeetal.,2025;Sarthietal.,2024;Gutie´rrezetal.,
+ence characterizes long-term memory as persistent stor- 2025; Wang & Han, 2025). While improving access effi-
+age, and distinguishing episodic, semantic, and procedu- ciency, these methods largely preserve episodic traces as
+ral memory (Atkinson & Shiffrin, 1968; Tulving, 1972; theprimarymemoryunit. Inparallel,task-specificsystems
+Squire,2004). Inagenticsettings,interactionsarenaturally explicitlytransformexperienceintohigher-levelrepresenta-
+episodic,fromwhichreusableabstractionscanbederived, tions,suchastemporalknowledgegraphsorworkflowmem-
+e.g.,factualinformationsuchasuserpreferencescanbedis- ories(Gutie´rrezetal.,2025;Wangetal.,2024b;Ouyang
+3
+--- Page 3 ---
+PlugMem:ATask-AgnosticPluginMemoryModuleforLLMAgents
+etal.,2025). Althougheffectivewithinfixedtasks,theirab- tails,enablingmemorytogeneralizeacrossheterogeneous
+stractionsaretightlycoupledtotaskassumptionsandlimit environments. Theseprinciplesimplythatdifferentmem-
+transferability. orytypesshouldberepresentedusingstructuralunitsand
+organizationlogicsalignedwiththeirproperties. Table2
+Overall,asshowninTable1,priorworkhighlightsadistinc-
+summarizeshowepisodic,semantic,andproceduralmemo-
+tionbetweenimprovingretrievaloverepisodicmemoryand
+riesaremappedtocorrespondinggraphunitsandstructuring
+transformingexperienceintoreusableknowledge,withonly
+mechanisms,reflectingtheirfunctionalrolesinabstraction,
+thelattersupportingcross-taskgeneralization. PLUGMEM
+retrieval,andverification.
+adoptsthisprinciplebyorganizingmemoryaroundpropo-
+sitional and prescriptive knowledge units, enabling more Buildingonthisdesign,thestructuringmoduleoperational-
+effectiveretrievalofdecision-relevantinformation, while izes memory abstraction in two stages: i) standardizing
+retainingepisodictracesasverifiableevidence. heterogeneousinteractiontracesintoaunifiedepisodicrep-
+resentation,andii)inducingpropositionalandprescriptive
+Foramoredetaileddiscussionofrelatedwork,includingthe
+knowledgethatcanbeindependentlyindexedandreused
+fullversionsoftheabovesectionsandadditionaldiscussion
+acrosstasks. Wedescribeeachstageasfollows.
+onmemorybenchmarks,seeAppendixB.
+3.1.1.STANDARDIZE
+3.Methodology
+Episodic memory constitutes the fundamental substrate
+WepresentPLUGMEM,atask-agnosticpluginmemorymod- from which semantic and procedural memories are de-
+uletosupportlong-termdecision-makingforLLMagents. rived(Tulving,1972). Foragents,episodicmemoriesorig-
+Ratherthantreatingpastinteractionsasflatepisodictext, inate from heterogeneous sources, including user–agent
+PLUGMEMstructuresexperienceintoknowledge-levelrep- interactions (Wu et al., 2024), factual documents (Yang
+resentationsthataremorecompact,generalizable,anddi- et al., 2018), and action trajectories in complex environ-
+rectlyrelevanttodownstreamretrievalandreasoning. ments(Zhouetal.,2024). Thisheterogeneitymotivatesa
+unified,task-agnosticrepresentationthatcansupportdown-
+As shown in Figure 2, PLUGMEM consists of three core
+streamknowledgeinduction.
+components: a structuring module that standardizes het-
+erogeneousepisodicmemoriesandinducespropositional
+andprescriptiveknowledge;aretrievalmodulethatselects EpisodicFormalization. Werepresentarawinteraction
+relevant knowledge from structured memory graphs via traceasasequenceofobservation-actionpairs:
+abstraction-aware retrieval; and a reasoning module that
+furtheradaptsretrievedknowledgeintoactionableguidance τ =[(o ,a )]T
+t t t=1
+forthebaseagent. Inthefollowingsections,wedescribe
+eachcomponentindetail. Whileepisodicmemoryiswidelyusedinagentsystems,its
+internal structure is often treated as unstructured text. In
+3.1.StructuringModule contrast, we explicitly formalize episodic memory at the
+step level by mapping each interaction into a structured
+As shown in Figure 3, the structuring module serves as
+tuple. Specifically,eachpair(o ,a )isstandardizedas:
+t t
+thefoundationofPLUGMEMbytransformingrawepisodic
+experience,suchasdialogueturns,documentsnippets,or
+e =(o ,s ,a ,r ,g )
+episodictrajectories,intoknowledgerepresentationsthatare t t t t t t
+reusable,compact,andalignedwithagentdecision-making.
+where s denotes the agent state at time t, g denotes the
+Specifically,westructurememorytoreflecttheroledifferent t t
+subgoal associated with executing a , and r denotes the
+informationplaysinreasoningandactionselection. t t
+rewardoftheactionwithrespecttog .
+t
+Ourdesignisguidedbythreeprinciplesmotivatedbycog-
+Thestates isderivedfrom(s ,a ,o )viaLLM-based
+nitivetheoriesofhumanmemory. First,episodicmemory t t−1 t−1 t
+informationextraction. Bothg andr areannotatedbyan
+capturesconcreteinteractiontracesandservesprimarilyas t t
+LLMconditionedonthetaskinstructionandlocalinterac-
+verifiable evidence rather than directly actionable knowl-
+tioncontext. Aggregatingallstandardizedstepsyieldsan
+edge. Second,decision-relevantinformationismosteffec-
+episodicmemorysequence
+tivelyrepresentedattheknowledgelevel,wheresemantic
+memoryencodesfactualpropositions(“knowingthat”)and
+M =[e ]T
+proceduralmemoryencodesreusablestrategies(“knowing epi t t=1
+how”). Third,effectivelong-termmemoryrequiresseparat-
+Implementationdetailsofepisodicstandardization,includ-
+ingknowledgeabstractionfromtask-specificexecutionde-
+ingtheprompttemplate,areprovidedinAppendixC.1.
+4
+--- Page 4 ---
+PlugMem:ATask-AgnosticPluginMemoryModuleforLLMAgents
+PlugMem Structuring Module 2. Extract
+Knowledge Extract Carpenter released
+User: I just picked up a 1. Standardize Proposition &Yesterday Once More. Album
+Concepts
+Revell kit.
+Assistant: Sounds good! (g,s,a,r,s') User purchased a Revell
+1. Turn into stepwise Revell kit on Jun 5.
+observation (o) and (g,s,a,r,s')
+Para 3: Yesterday Once action (a) pairs. Segment (g,s,a,r,s') Go to
+More is the album... 2. Label subgoals (g,s,a,r,s') Workflow by (g,s,a,r,s') Extract "Contact Us"
+(g), states (s), and Subgoal Prescription Step 1... Step 2...
+Obs: [Shopping Website] rewards (r). (g,s,a,r,s') Similarity (g,s,a,r,s') & Intent
+Act: Click "Contact Us" 3. Form standardized Draft the
+(g,s,a,r,s') (g,s,a,r,s')
+(g, s, a, r, s') tuples. Email
+··· [Any other raw memory] (g,s,a,r,s') Step 1... Step 2...
+Figure3. ThestructuringmoduleinPLUGMEMtransformsheterogeneousmemoryintoaformalizedknowledge-densememorygraph.
+Table2.MappingMemoryPropertiestoGraphArchitecture.Weanalyzelong-termmemorypropertiestoderiveourmemorygraph
+design.Themainrationaleisaligningmemorystructurewiththegranularityatwhichknowledgeisacquired,stored,andreasoned
+over,reflectedhereasensuringcorenodesrepresentcomplete,self-contained,andverifiableknowledgeblocks(Propositions/Prescrip-
+tions),thusimprovingtheefficiencyandfidelityofdownstreamgraphoperations.
+MemoryType Nature&Description Knowledge-DenseUnit SubgraphStructuringLogic
+Concept-CentricSemanticMemStructuring
+Declarative&Static TheProposition(FactBlock)
+Logic:Conceptsactsaslightweightindices
+Semantic Context-independentconcepts, Acompletestatementconveying
+pointingtoheavyPropositionpayloads.
+facts,andworldknowledge. verifiabletruth.
+Structure:Concept←m−e−n−ti−o−n−s Proposition
+Intent-CentricProceduralMemStructuring
+Executive&Goal-Oriented ThePrescription(WorkflowBlock)
+Logic:Intents(UserGoals)serveaskeysto
+Procedural Dynamic“how-to”knowledge Afullactionsequencetoexecutea
+findholisticSolutionblocks.
+forproblemsolving. complextask.
+Structure:Intent←s−o−lv−e−s Prescription
+EpisodicMemastheAnchor
+Autobiographical&Linear TheSourceTrace(EventWindow)
+Logic:Episodicactsasthe“groundtruth”layer
+Episodic Rawrecordofpastinteractions Atrajectorysegmentforgroundingand
+validatingtheabstractknowledgegraphs.
+andobservations.Largevolume. verification. Structure:Knowledge← p − ro − v − e − s Source
+3.1.2.EXTRACTKNOWLEDGE quality,weapplyseveralconstraintsduringLLMextraction,
+includingcoreferenceresolution,propositiondeduplication,
+We focus this section on the design of the knowledge ex-
+andlengthcontrol.
+tractionandorganizationprocess. Implementationdetails,
+including model choices, parameter settings, and prompt Theextractedpropositionsandconceptsarestoredinase-
+configurations,aredeferredtoAppendixC.2. manticgraphGS. Eachpropositionandconceptisinstanti-
+atedasanodewithacacheddenseembedding.Twotypesof
+GivenstandardizedepisodicmemoryM ,weinducetwo
+epi edgesareconstructed: i)membershipedgeslinkingproposi-
+complementary forms of long-term memory: semantic
+tionstotheirassociatedconcepts,andii)provenanceedges
+memoryandproceduralmemory. Bothareextractedfrom
+linking propositions to their source episodic units in the
+episodic experience and organized as structured memory
+episodicgraphGE. Thisdesignallowsretrievedsemantic
+graphswithprovenance.
+knowledgetobetracedbacktoitsoriginatingexperience.
+Semantic Memory. The semantic memory module ex-
+tractsandstoresfactualknowledgefromepisodicmemory ProceduralMemory. Theproceduralmemorymoduleex-
+to support later retrieval. Given an episodic unit e , the tractsreusableactionstrategiesfromepisodictrajectoriesto
+t
+moduleusesanLLMtoextractasetofatomicpropositions supportfuturedecisionmaking.Givenanepisodicsequence
+thatdescribesalientfactsimpliedbytheinteraction. Each M ,themodulefirstsegmentsthetrajectoryintocoherent
+epi
+propositionisaccompaniedbyasetofassociatedconcepts, sub-trajectoriesbydetectingboundarieswherethesimilar-
+which serve as semantic tags for indexing. For example, ity between adjacent subgoals g and g falls below a
+t−1 t
+a proposition may be: “Tam Sventon, known in Swedish predefinedthreshold. Foreachtrajectorysegment,themod-
+as Ture Sventon, is a fictional private detective based in uleusesanLLMtoinduceacompact(intent,prescription)
+Stockholm.” The associated concept set is {Tam Sventon, pair. Theintentrepresentstheobjectivepursuedwithinthe
+fictionalprivatedetective,Stockholm}. Toensureextraction segment,whiletheprescriptionspecifiesanenvironment-
+5
+
+[Output limited to first 5 pages.]

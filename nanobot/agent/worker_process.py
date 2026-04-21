@@ -231,6 +231,8 @@ When completed, provide a clear summary of findings."""
             output_json.write_text(json.dumps({"status": "completed", "result": self.result}, ensure_ascii=False))
 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.exception("Worker agent loop failed")
             self.error = str(e)
             self.status = "error"

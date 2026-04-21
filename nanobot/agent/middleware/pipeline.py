@@ -1,3 +1,5 @@
+from __future__ import annotations
+import asyncio
 """Phase 41: MiddlewarePipeline — iterative two-phase executor (zero closures).
 
 Eliminates the call_next closure recursion from classical onion patterns
@@ -5,7 +7,6 @@ Eliminates the call_next closure recursion from classical onion patterns
 Tracebacks remain clean and readable.
 """
 
-from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
@@ -46,6 +47,8 @@ class MiddlewarePipeline:
             try:
                 await mw.pre_process(ctx)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(
                     f"Middleware {mw.__class__.__name__}.pre_process error: {e}"
                 )
@@ -62,6 +65,8 @@ class MiddlewarePipeline:
             try:
                 await self._executor.execute(ctx)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(
                     f"ToolExecutor.execute error: {e}", exc_info=True
                 )
@@ -75,6 +80,8 @@ class MiddlewarePipeline:
             try:
                 await mw.post_process(ctx)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(
                     f"Middleware {mw.__class__.__name__}.post_process error: {e}"
                 )

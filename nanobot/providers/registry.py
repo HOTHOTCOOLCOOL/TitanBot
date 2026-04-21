@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Provider Registry — single source of truth for LLM provider metadata.
 
@@ -10,7 +11,6 @@ Order matters — it controls match priority and fallback. Gateways first.
 Every entry writes out all fields so you can copy-paste as a template.
 """
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any

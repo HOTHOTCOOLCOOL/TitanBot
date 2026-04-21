@@ -1,0 +1,371 @@
+Reading PDF: C:\Users\davidliu\Downloads\2602.19127v1.pdf
+Total Pages: 34
+
+--- Page 0 ---
+AgenticRAGTracer: A Hop-Aware Benchmark for Diagnosing Multi-Step
+Retrieval Reasoning in Agentic RAG
+QijieYou1*,WenkaiYu2*,WentaoZhang2,3,4
+1UniversityofScienceandTechnologyBeijing
+2PekingUniversity
+3ZhongguancunAcademy
+4BeijingKeyLaboratoryofDataIntelligenceandSecurity(PekingUniversity)
+u202342615@xs.ustb.edu.cn,{ywk,wentao.zhang}@pku.edu.cn
+Abstract 1 Introduction
+Withtherapidevolutionoftheagenticparadigm,
+With the rapid advancement of agent-based
+Large Language Models (LLMs) have expanded
+methodsinrecentyears,AgenticRAGhasun-
+doubtedlybecomeanimportantresearchdirec- beyondsimpletextgenerationtomastercomplex
+tion. Multi-hopreasoning,whichrequiresmod- workflowsandbroadtoolusage. Amongtheseca-
+elstoengageindeliberatethinkingandmulti- pabilities,Retrieval-AugmentedGeneration(RAG)
+stepinteraction,servesasacriticaltestbedfor
+ispivotal,enablingLLMstoaccessinformationbe-
+assessing such capabilities. However, exist-
+yondtheirparametricmemory,therebyenhancing
+ing benchmarks typically provide only final
+generalizationandmitigatinghallucinations. Con-
+questions and answers, while lacking the in-
+sequently, advancing the capabilities of Agentic termediatehop-levelquestionsthatgradually
+connect atomic questions to the final multi- RAG—systems that autonomously plan, retrieve,
+hopquery. Thislimitationpreventsresearchers andreason—hasbecomeacentralresearchfocus.
+from analyzing at which step an agent fails Compared to single-hop queries (e.g.,
+and restricts more fine-grained evaluation of
+NQ (Kwiatkowski et al., 2019), TriviaQA (Joshi
+model capabilities. Moreover, most current
+et al., 2017)), multi-hop questions serve as a
+benchmarksaremanuallyconstructed,which
+rigoroustestbedforAgenticRAGbydemanding
+is both time-consuming and labor-intensive,
+iterative reasoning and multi-document retrieval.
+whilealsolimitingscalabilityandgeneraliza-
+tion. Toaddressthesechallenges,weintroduce However, current evaluations predominantly rely
+AgenticRAGTracer , the first Agentic RAG onbenchmarksdesignedfortraditionalRAG,such
+benchmark that is primarily constructed au- as HotpotQA (Yang et al., 2018), 2WikiMulti-
+tomaticallybylargelanguagemodelsandde-
+hopQA (Ho et al., 2020), and MuSiQue (Trivedi
+signedtosupportstep-by-stepvalidation. Our
+et al., 2022). These datasets generally provide
+benchmarkspansmultipledomains, contains
+onlyfinalQApairswithshortsupportingpassages,
+1,305 data points, and has no overlap with
+assumingaretrieve-then-readparadigmwhereall
+existing mainstream benchmarks. Extensive
+experiments demonstrate that even the best content is processed at once. For Agentic RAG,
+largelanguagemodelsperformpoorlyonour which inherently relies on dynamic, multi-step
+dataset. For instance, GPT-5 attains merely interactions, evaluating performance solely on
+22.6%EMaccuracyonthehardestportionof the final outcome fails to capture the intricate
+ourdataset. Hop-awarediagnosisrevealsthat
+decision-making process. Through a rigorous
+failures are primarily driven by distorted rea-
+analysisofexistingbenchmarks(seeAppendixB),
+soningchains—eithercollapsingprematurely
+we identify four critical limitations that hinder
+or wandering into over-extension. This high-
+the effective diagnosis of Agentic RAG systems:
+lightsacriticalinabilitytoallocatestepsconsis-
+tentwiththetask’slogicalstructure,providing Authenticity of Multi-hop Reasoning. The
+adiagnosticdimensionmissingintraditional complexity labels in existing datasets are often
+evaluations. Webelieveourworkwillfacilitate inflated. We find that questions labeled as
+research in Agentic RAG and inspire further
+multi-hopcanfrequentlybeanswereddirectlyby
+meaningfulprogressinthisarea. Ourcodeand
+the model’s internal knowledge or require fewer
+data are available at https://github.com/
+reasoningstepsthanclaimed. Thismisalignment
+YqjMartin/AgenticRAGTracer.
+compromisesthevalidityofreasoningevaluations.
+*Equalcontribution. FaithfulnesstoRAGSettings. Whilethelogical
+6202
+beF
+22
+]LC.sc[
+1v72191.2062:viXra
+--- Page 1 ---
+Step1: Initial Data Filtering Step2: Atomic QA Generation
+Ensure diversity: Input Doc: Amherst, Victoria ... By 1857, there was also a Wesleyan (Methodist) church
+Art Sports Economics Politics ······ Generated atomic QA pairs:
+Q: What type of church was established in Amherst, Victoria by the year 1857?
+Avoid Overlap: A: Wesleyan (Methodist) church
+LLM
+Hotpotqa 2WikiMultihopQA MuSiQue BamboogleQA
+Step3: Atomic QA Filtering
+Step4: MultiHop QA Generation
+overly long responses multi-part answers only numbers answer
+Wesleyan (Methodist) church Retrieved Doc: Wesleyanism ...
+the Wesleyan tradition has been Query LLM with Generated Question:
+associated with Arminianism
+① Direct Inference without Support. ——Too Simple QA pairs
+Generated new atomic QA pairs:
+② Inference Failure with Support. ——Too Hard QA pairs
+Q: With which theological perspective is the Wesleyan (Methodist) LLM ③ Successful Inference with Support. ——Valid QA pairs
+church closely associated?
+LLM A: Arminianism Step5: MultiHop QA Filtering
+Merged multihop QA pairs:
+lacks key information from a specific hop
+Q: With which theological perspective is the type of church established in
+Amherst, Victoria by the year 1857 associated? simply copy one of the atomic sub-questions
+LLM A: Arminianism Check question directly include an intermediate answer
+Query LLM with Generated Question:
+Inference Semantic Filtering Comparison Semantic Filtering
+① Direct Inference without Info. ——Too Simple QA pairs LLM
+② Successful Inference with Insufficient Info. ——Too Simple QA pairs Step6: Final Filtering and Human Review
+LLM ③ Inference Failure with Sufficient Info. ——Too Hard QA pairs
+Disambiguation via
+④Successful Inference with Sufficient Info. ——Valid QA pairs Manual Check
+Wikipedia SPARQL
+Figure1: Dataconstructionworkflow.
+connections between hops may appear plausible with final human verification. Evaluation results
+to humans, the provided supporting documents onmainstreamLLMsrevealsignificantchallenges
+oftenfailtosupplyexplicitlinks. insuchcases,the inmulti-hopreasoning, highlightingtheneedfor
+modelisforcedtoimplicitlyrelyonhumanprior thisdiagnostictool.
+knowledgeratherthanactualretrievableevidence, Ourmaincontributionsaresummarizedasfol-
+violatingthefundamentalpremiseofRAGsystems. lows:
+Neglect of Intermediate Reasoning. Most
+benchmarks provide only the final supporting • WeproposeAgenticRAGTracer,abenchmark
+documents (or sentences) without the complete consistingof1,305examples,allofwhichare
+reasoningtrajectory. Formodernagentsequipped rigorouslyhuman-verifiedtoensurelogicalin-
+with retrieval tools, errors often occur at specific tegrity. Tothebestofourknowledge,itisthe
+intermediate steps (e.g., query formulation or firstbenchmarktoenablehop-awareanalysis,
+document selection). Current benchmarks fail providingthegranularevidencenecessaryto
+to capture which step fails, treating the agent as diagnosemodelperformanceateachspecific
+a black box. Lack of Knowledge Bases and reasoningandretrievalstep.
+Indices. Existing benchmarks typically do not
+• We design an automatic pipeline for con-
+releasethespecificcorpusandretrievalindexused
+structinghigh-qualitymulti-hopAgenticRAG
+duringconstruction. Thisomissionnotonlymakes
+data,featuringamulti-stageverificationproto-
+evaluationcumbersomebutalsoseverelyhinders
+colthatblendsautomatedlogicfilteringwith
+reproducibility,asretrievalperformanceishighly
+human-in-the-loopadjudication. Thisframe-
+sensitivetotheunderlyingindexconstruction.
+workenablesthescalableandconvenientgen-
+Toaddresstheselimitations,weproposeAgenti- erationofdiverse,high-fidelitydatasetsspan-
+cRAGTracer,aHop-Awarebenchmarkspecifically ningmultipledomains.
+designed for diagnosing multi-step retrieval rea-
+soninginAgenticRAG.Wedesignanautomated • Through a comprehensive evaluation of 13
+pipeline to generate high-quality questions with mainstream models, we demonstrate that
+cleartopologicalstructures: Inference(Sequential) existing LLMs—even state-of-the-art sys-
+and Comparison (Parallel). By simulating the in- tems—exhibit severe degradation on com-
+teractive workflow of agents, we iteratively com- plexmulti-hopagenticreasoning. Leveraging
+bineatomicquestionsandapplyrigorousfiltering hop-awareanalysis,ourbenchmarkuncovers
+--- Page 2 ---
+howerrorsaccumulateacrossreasoningsteps, MINTQA(Heetal.,2025). Yet,theseapproaches
+specifically how the mismatch between rea- also face shortcomings: MoreHopQA simply ex-
+soning steps and task structure leads to col- tends the hop length of existing benchmarks,
+lapsed or over-extended trajectories that di- while MultiHop-RAG and MINTQA rely on di-
+verge from the required logical progression, rectlypromptingLLMstogeneratequestionsfrom
+highlightinglimitationsthatarenotcaptured rawWikipediadocuments,withoutensuringfine-
+byconventionalend-taskevaluations. grainedqualitycontrol.
+2 RelatedWork 2.3 DataSynthesis
+2.1 AgenticRAG Recently, data synthesis has emerged as an im-
+portanttechniqueforimprovingtheperformance
+Retrieval-AugmentedGeneration(RAG)wasorigi-
+of large language models (LLMs) (Liang et al.,
+nallyintroducedtocombinesequencegeneration
+2026;Baietal.,2024;Anetal.,2025;Guoetal.,
+with retrieval, allowing models to leverage exter-
+2025;Linetal.,2025;Anetal.,2024;Luoetal.,
+nal knowledge (Lewis et al., 2020). Subsequent
+2024). Prior work has extensively explored data
+researchdevelopedAdvanced(Gaoetal.,2024a),
+synthesisforbothtextualandmultimodaldomains.
+Modular(Gaoetal.,2024b),andGraphRAG(Peng
+In the text domain, LLM-driven data synthesis
+etal.,2024)systems,whichimprovedperformance
+pipelinesaretypicallyconstructedusingcomplex,
+but largely operated as static pipelines. Recently,
+workflow-basedsystemssuchasDataFlow(Liang
+thefieldhasshiftedtowardsAgenticRAG,which
+et al., 2025a; Cai et al., 2025; Shen et al., 2025;
+integratesautonomousagentcapabilities—suchas
+Zheng et al., 2024; Liang et al., 2024), enabling
+planning,tooluse,andreflection—intotheretrieval
+high-qualitysyntheticdatagenerationandachiev-
+framework. Recentstudiesformalizethesesystems,
+ing strong performance across a wide range of
+highlighting how agents can dynamically decide
+downstreamtasks. Inthemultimodaldomain,data
+what to retrieve and orchestrate multi-step inter-
+synthesishasalsoproveneffective. Forexample,
+actions (Singh et al., 2025; Liang et al., 2025b).
+priorstudiessynthesizelarge-scaleimagecaption
+Paralleleffortsexplorereinforcementlearningto
+datasets (Liu et al., 2024) or multimodal verifi-
+optimize these reasoning-search trajectories (Jin
+cation trajectories (Sun et al., 2025) to enhance
+etal.,2025;Chenetal.,2025),transformingRAG
+the training and reasoning capabilities of vision-
+fromastaticprocessintoanadaptive,goal-oriented
+languagemodels.
+workflow. Formoreadvanceddata-centricagenti-
+cragapproaches,pleasereferto Dengetal.(2025).
+3 DataConstruction
+2.2 BenchmarksforMulti-hopRetrieval
+3.1 InitialDataFiltering
+With the rapid development of Agentic RAG in
+recent years, there is a growing need for bench- AsshowninFigure1,wefirstrandomlysampleda
+marksthatcaneffectivelyevaluateitsperformance. collectionofdocumentsfromtheWikipediadump1.
+Multi-hop questions are particularly suitable for Toavoidoverlapwithexistingbenchmarks(includ-
+this purpose, as they require logical decomposi- ing HotpotQA, 2Wiki, and MuSiQue), we com-
+tion and the use of multiple documents, making paredtheirtitlesagainstthoseprovidedintheexist-
+themanaturaltestbedforassessingagentcapabil- ingdatasetsandremovedduplicates. Wethenem-
+ities. Currently,mostevaluationsstillrelyonear- ployedanLLM2 toannotatetheirtypes. Thisstep
+lierbenchmarkscreatedthroughmanualsynthesis, preventsanoverrepresentationofanysingleques-
+suchasHotpotQA,2WikiMultihopQA,MuSiQue, tion type and ensures diversity within our bench-
+andBamboogleQA.However,theconstructionof mark.
+thesedatasetsislabor-intensive,asitrequiresman-
+uallyconsultinglargenumbersofdocuments,and 1Given that numerous recent Agentic RAG training
+efforts have adopted the index and corpus released by
+theyalsosufferfromseveralinherentlimitations.
+FlashRAG, we follow the same collection to construct
+Morerecently,benchmarkssupportedbyLLM- our benchmark, https://www.modelscope.cn/datasets/
+assisted question generation have been proposed, hhjinjiajie/FlashRAG_Dataset thereby ensuring a fair
+andcomparableevaluationofmodelperformance.
+including MoreHopQA (Schnitzler et al., 2024),
+2bydefaultGPT-4o-mini,unlessotherwisespecifiedinthe
+MultiHop-RAG (Tang and Yang, 2024), and paper
+--- Page 3 ---
+ ' D W D  6 W D W L V W L F V  R I  W K H  ' D W D V H W  ' L V W U L E X W L R Q  R I  ' D W D  ' R P D L Q V
+   K R S    K R S  $ U W       
+ 6 S R U W V       
+       
+ & X O W X U H       
+   K R S  , Q I H U H Q F H
+    ( F R Q R P L F V  % X V L Q H V V       
+ 3 R O L W L F V      
+ + L V W R U \      
+      K R S  6 F L H Q F H  7 H F K Q R O R J \      
+ ( G X F D W L R Q      
+ ( W K Q L F L W \      
+ & R P S D U L V R Q
+         ( F R O R J \      
+   K R S
+   K R S  0 L O L W D U \      
+ 2 W K H U      
+                                   
+ 3 H U F H Q W D J H    
+Figure2: DataStatistics
+3.2 AtomicQuestionGeneration tionprotocol:
+1) Structural Integrity Filtering. We discard
+WesynthesizedatomicQApairsfromthefiltered
+candidateswithobvioussyntacticorlogicalflaws.
+WikipediadocumentsusinganLLM,followedby
+Crucially,wefilteroutquestionsexhibitinginfor-
+arigorousqualityassurancepipeline. Theprompts
+mation leakage (where intermediate answers are
+used for data construction are provided in Ap-
+explicitlyrevealedinthequestiontext)andthose
+pendix C. First, we applied heuristic filtering to
+resulting from trivial concatenation (where sub-
+remove malformed responses; crucially, we ex-
+questionsaresimplyjoinedwithoutsemanticinte-
+cluded answers consisting solely of numbers to
+gration).
+preservesemanticcontext,therebypreventingrel-
+2) Semantic Logic Verification. An LLM au-
+evancedriftinsubsequentretrievalhops. Next,to
+ditor is employed to reject incoherent reasoning
+ensurethenecessityofretrieval,wediscardedques-
+chains. Forinferencequestions,weeliminatespu-
+tions that the LLM could correctly answer using
+riouslinks,suchasforcefullyconnectingunrelated
+onlyitsparametricknowledge. Finally,weverified
+entitiesorconflatingdistinctentitieswithsimilar
+grounding solvability by re-prompting the LLM
+names. Forcomparisonquestions,wediscardin-
+with the source document, retaining only those
+validcomparisonsbetweendissimilarconceptsor
+questionswheretheprovidedcontextwassufficient
+thoselackingaclearcomparativebasis.
+toderivethecorrectanswer.
+3)Multi-hopNecessity&SolvabilityCheck. To
+guarantee the validity of the reasoning chain, we
+3.3 DesignofMulti-hopQuestions
+enforcethreecriteria: (i)RetrievalNecessity: The
+Tocomprehensivelyevaluateagenticreasoning,we question must not be answerable by the model’s
+design two distinct question topologies: Sequen- parametric memory alone; (ii) Dependency Irre-
+tial(Inference),whichrequiresastepwiselogical ducibility: Giventhefulldocumentset,removing
+chain where intermediate answers bridge to the any single supporting document must render the
+nextstep;andParallel(Comparison),whichne- questionunanswerable;(iii)GroundedSolvability:
+cessitatesgatheringindependentinformationabout Themodelmustsuccessfullyderivethecorrectan-
+multipleentitiesbeforesynthesizingafinalanswer. swer when provided with the complete evidence
+Constructionof2-hopQuestions. Wesynthesize set.
+2-hopqueriesbyretrievingadditionaldocuments Extension to 3–4 Hop Questions. To challenge
+relevanttoouratomicQApairs,explicitlyexclud- thelimitsofsequentialandparallelplanning, we
+ingdocumentspresentinexistingbenchmarksto iteratively extend verified 2-hop questions by ap-
+prevent leakage. An LLM is then prompted to pendingadditionalinferencesteps. Thesehigher-
+combine original and retrieved atomic pairs into order questions undergo the same stringent filter-
+complex queries, dynamically selecting between ingpipelinedescribedabovetoensuretheyremain
+inferenceorcomparisontemplates. Eachcandidate natural and logically solvable, yielding the final
+questionundergoesarigorousthree-stageverifica- benchmark.
+--- Page 4 ---
+Table1: ResultsofClosed-SourcedandOpen-SourcedLLMsonourAgenticRAGTracer.
+Comparison Inference
+Models 2hop 3hop 4hop 2hop 3hop 4hop
+EM F1 LLM EM F1 LLM EM F1 LLM EM F1 LLM EM F1 LLM EM F1 LLM
+Closed-SourcedLLMs
+o4-mini 77.7 85.1 86.0 67.6 74.0 79.1 35.9 47.7 54.7 47.8 57.2 66.2 41.4 45.4 48.7 21.4 31.8 34.5
+GPT-5 76.2 85.4 88.1 69.8 76.0 81.3 26.6 39.3 45.3 48.4 59.0 70.0 33.3 40.3 42.3 22.6 34.0 39.3
+GPT-4o 69.2 76.3 75.2 51.7 58.5 59.9 15.6 23.8 20.3 24.9 33.0 35.1 13.5 18.4 17.1 4.8 10.0 7.1
+Grok-4 80.7 87.0 89.0 66.5 73.8 81.9 32.8 46.9 53.1 41.7 51.9 61.6 34.2 40.4 40.5 20.2 28.9 31.0
+Grok-3 75.6 84.3 83.4 63.7 70.8 75.8 23.4 37.7 39.1 34.6 43.4 50.4 19.8 24.4 24.3 4.8 10.8 10.7
+Open-SourcedLLMs
+DeepSeek-R1 74.1 82.0 81.7 43.4 52.7 59.9 15.6 24.3 32.8 27.7 37.7 43.3 16.2 21.8 20.7 4.8 10.7 7.1
+DeepSeek-V3 66.0 72.1 72.2 37.4 41.7 44.0 15.6 23.7 23.4 22.9 30.1 33.3 10.8 15.3 15.3 2.4 7.5 6.0
+Qwen2.5-72B 78.8 85.0 84.3 62.1 73.2 81.9 21.9 34.1 35.9 37.7 46.8 53.4 18.0 25.1 26.1 8.3 14.3 11.9
+Qwen2.5-32B 70.7 77.5 76.7 50.6 60.3 64.8 18.8 26.8 26.6 34.6 42.4 48.4 11.7 14.5 16.2 6.0 9.1 9.5
+Qwen2.5-7B 52.4 65.1 70.5 36.8 44.0 47.3 7.8 16.1 9.4 24.7 32.8 35.1 7.2 13.1 13.5 2.4 8.2 4.8
+R-Search 72.2 80.9 78.3 39.0 47.7 51.7 14.1 22.3 15.6 26.0 36.0 41.5 13.5 23.8 20.7 7.1 13.0 9.5
+Search-R1 64.5 74.5 65.4 44.5 53.9 48.9 15.6 25.7 12.5 25.5 34.8 37.4 11.7 16.4 14.4 6.0 9.5 7.1
+ReSearch 60.3 69.9 67.7 47.3 56.6 55.0 12.5 25.7 21.9 28.2 37.5 41.2 17.1 20.3 20.7 4.8 9.2 7.1
+3.4 HumanReviewandQualityControl abalancedevaluation. Thequestiontopology(left)
+featuresabalancedcompositionofInferenceand
+In the final stage, we apply Wikipedia SPARQL
+Comparisontypes,facilitatingacomprehensiveas-
+queries to remove potentially ambiguous cases
+sessmentofbothsequentialandparallelreasoning
+where multiple entities share the same name in
+capabilities. Moreover, the dataset spans a diffi-
+Wikipedia. Followingthisautomateddisambigua-
+cultyspectrumfromfundamental2-hopqueriesto
+tion, to strictly guarantee data quality, we con-
+complex3-and4-hopchallenges. Thisprogressive
+ductedafull-scalemanualverificationoftheentire
+designallowsforafine-grainedanalysis,stepwise
+dataset.
+unveilingthecapabilityboundariesofagenticmod-
+Specifically,eachgenerateddatawereindepen-
+els. Duetospaceconstraints,representativeexam-
+dentlyevaluatedbythreetrainedhumanannotators.
+plesofourbenchmarkareprovidedinAppendixA
+The evaluation was formulated as a binary deci-
+toillustrateitsstructureandcomplexity.
+sion (Retain or Discard) driven by two primary
+dimensions: (1) general quality checks to ensure
+4 Experiments
+strictfactuality,faithfulnesstothesourcetext,and
+grammaticalfluency;and(2)type-specificchecks
+4.1 Setup
+to validate the validity of intermediate reasoning
+stepsandthedimensionalconsistencyforcompari- We evaluate a diverse set of LLMs on our bench-
+sonquestions. mark, including closed-source models (GPT and
+To assess the reliability of the human evalua- Grok series), open-source models (DeepSeek
+tion, we calculated Fleiss’ Kappa (κ), achieving (DeepSeek-AI et al., 2025b,a) and Qwen (Qwen
+a score of 0.65, which indicates substantial inter- etal.,2025)series),aswellascheckpointsofrecent
+annotator agreement. For non-unanimous cases, Agentic RAG models trained from Qwen2.5-7B-
+thefinallabelswererigorouslydeterminedthrough Instruct (Search-R1 (Jin et al., 2025), ReSearch
+aconsensusdiscussioninvolvingboththeannota- (Chen et al., 2025), and R-Search (Zhao et al.,
+torsandtheauthors. Furtherdetailsareprovided 2025)). To ensure a fair comparison, all models
+inAppendixE. areevaluatedunderaunifiedexperimentalsetting
+usingtheQwen-Agentframework,whichfollows
+3.5 Datastatistics
+theReAct(Yaoetal.,2023)paradigmtointerleave
+AsshowninFigure2,ourbenchmarkexhibitsboth reasoning and actions. We report Exact Match
+semanticdiversityandstructuralcomplexity. The (EM),F1score,andLLM-as-a-Judgescores,com-
+domaindistribution(right)spansover11categories biningobjectivemetricswithmodel-basedevalu-
+rangingfromArttoMilitary,withnosingledomain ation. RegardingtheLLM-as-a-Judgescores,we
+dominatingmorethan16%ofthedataset,ensuring employGPT-4o-miniwiththetemperaturesetto0
+
+[Output limited to first 5 pages.]

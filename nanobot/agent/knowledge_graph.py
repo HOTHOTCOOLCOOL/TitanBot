@@ -1,3 +1,4 @@
+import asyncio
 """Lightweight Entity-Relation Graph for structured memory.
 
 Phase 24 (MDER-DR): Enhanced with triple descriptions, entity disambiguation,
@@ -313,6 +314,8 @@ Do not include markdown fences."""
                 logger.warning(f"KnowledgeGraph extraction failed, invalid JSON list: {result}")
                 return 0
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"KnowledgeGraph triple extraction failed: {e}")
             return 0
 
@@ -503,6 +506,8 @@ Do not include markdown fences."""
                             )
             return count
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Entity summary generation failed: {e}")
             return 0
 
@@ -575,6 +580,8 @@ Do not include markdown fences. If no meaningful bridging facts can be deduced, 
                 logger.info(f"P29-3: Generated {added} bridging facts.")
             return added
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Bridging facts generation failed: {e}")
             return 0
 

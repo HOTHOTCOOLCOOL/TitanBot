@@ -55,6 +55,8 @@ class SlackChannel(BaseChannel):
             self._bot_user_id = auth.get("user_id")
             logger.info(f"Slack bot connected as {self._bot_user_id}")
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.warning(f"Slack auth_test failed: {e}")
 
         logger.info("Starting Slack Socket Mode client...")
@@ -70,6 +72,8 @@ class SlackChannel(BaseChannel):
             try:
                 await self._socket_client.close()
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.warning(f"Slack socket close failed: {e}")
             self._socket_client = None
 
@@ -90,6 +94,8 @@ class SlackChannel(BaseChannel):
                 thread_ts=thread_ts if use_thread else None,
             )
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Error sending Slack message: {e}")
 
     async def _on_socket_request(
@@ -164,6 +170,8 @@ class SlackChannel(BaseChannel):
                     timestamp=event.get("ts"),
                 )
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.debug(f"Slack reactions_add failed: {e}")
 
         await self._handle_message(

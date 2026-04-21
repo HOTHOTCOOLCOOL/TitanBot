@@ -227,6 +227,14 @@ class LiteLLMProvider(LLMProvider):
                     logger.info(f"LLM call: model={model}, duration={_elapsed:.1f}s, tokens={_tokens}")
                 return parsed
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
+                
+                err_str = str(e).lower()
+                if "content_filter" in err_str or "content filter" in err_str:
+                    from nanobot.utils.exceptions import AzureContentFilterException
+                    raise AzureContentFilterException(str(e))
+
                 _elapsed = _time.monotonic() - _start
                 last_error = e
                 if attempt < self._MAX_RETRIES and self._is_retryable(e):
@@ -415,7 +423,9 @@ class LiteLLMProvider(LLMProvider):
                         args = acc["args"]
                         try:
                             args_dict = json_repair.loads(args) if args else {}
-                        except Exception:
+                        except Exception as _e:
+                            if isinstance(_e, asyncio.CancelledError):
+                                raise
                             args_dict = {}
                         parsed_tool_calls.append(ToolCallRequest(
                             id=acc["id"],
@@ -436,7 +446,9 @@ class LiteLLMProvider(LLMProvider):
                                 getattr(cfg.agents, "experimental", None),
                                 "xml_fallback_enabled", True,
                             )
-                        except Exception:
+                        except Exception as _e:
+                            if isinstance(_e, asyncio.CancelledError):
+                                raise
                             pass
 
                         if _cfg_enabled and _valid_tools:
@@ -462,6 +474,14 @@ class LiteLLMProvider(LLMProvider):
                     return
 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
+            
+            err_str = str(e).lower()
+            if "content_filter" in err_str or "content filter" in err_str:
+                from nanobot.utils.exceptions import AzureContentFilterException
+                raise AzureContentFilterException(str(e))
+
             logger.warning(f"Streaming failed, falling back to non-streaming: {e}")
             # Fallback: use the base-class default (non-streaming chat)
             async for chunk in super().stream_chat(

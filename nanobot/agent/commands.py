@@ -142,7 +142,9 @@ class CommandHandler:
                         
                         if is_failed:
                             failed_traces.append(data)
-                    except Exception:
+                    except Exception as _e:
+                        if isinstance(_e, asyncio.CancelledError):
+                            raise
                         pass
 
                 if not failed_traces:
@@ -197,6 +199,8 @@ class CommandHandler:
                     origin_chat_id=msg.chat_id
                 )
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 result = f"Error spawning coordinator: {e}"
             finally:
                 agent.coordinator_manager.enabled = was_enabled

@@ -1,0 +1,5 @@
+{
+  "keywords": ["async", "coroutine", "timeout", "cancellederror", "task"],
+  "rule": "在所有异步工作流 (尤其是 Worker Queue) 中，必须捕获 `asyncio.CancelledError` 并向外重新抛出（`raise`），绝不能吞咽它，否则会阻断优雅关闭（Graceful Shutdown）。",
+  "lesson_ref": "lesson-15-async-cancel.md"
+}

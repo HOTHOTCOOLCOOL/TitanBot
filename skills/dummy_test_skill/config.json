@@ -1,0 +1,6 @@
+{
+    "name": "dummy_test_skill",
+    "version": "1.0.0",
+    "description": "Dummy skill for Phase 56 testing.",
+    "enabled": true
+}

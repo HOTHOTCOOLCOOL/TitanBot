@@ -256,6 +256,8 @@ class KnowledgeWorkflow:
                 timeout=3.0,
             )
         except (asyncio.TimeoutError, Exception) as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.debug(f"Phase 46A: query expansion failed/timed out: {e}")
             return None
 
@@ -269,7 +271,9 @@ class KnowledgeWorkflow:
         try:
             import json_repair
             expanded_terms = json_repair.loads(text)
-        except Exception:
+        except Exception as _e:
+            if isinstance(_e, asyncio.CancelledError):
+                raise
             logger.debug(f"Phase 46A: failed to parse expansion response: {text[:100]}")
             return None
 
@@ -550,6 +554,8 @@ No markdown fences.'''
                     )
                 logger.info(f"P29-1: Extracted and saved directive for '{result['trigger']}'")
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Failed to extract directive signal: {e}")
 
     # ----------------------------------------------------------------

@@ -1,0 +1,753 @@
+Reading PDF: C:\Users\davidliu\Downloads\2602.14470v1.pdf
+Total Pages: 12
+
+--- Page 0 ---
+HyperRAG: Reasoning N-ary Facts over Hypergraphs for
+Retrieval Augmented Generation
+Wen-ShengLien Yu-KaiChan Hao-LungHsiao
+NationalYangMingChiaoTung NationalYangMingChiaoTung NationalYangMingChiaoTung
+University University University
+Hsinchu,Taiwan Hsinchu,Taiwan Hsinchu,Taiwan
+vincentlien.ii13@nycu.edu.tw ctw33888.ee13@nycu.edu.tw hlhsiao.cs13@nycu.edu.tw
+Bo-KaiRuan Meng-FenChiang Chien-AnChen
+NationalYangMingChiaoTung NationalYangMingChiaoTung E.SUNBank
+University University Taipei,Taiwan
+Hsinchu,Taiwan Hsinchu,Taiwan lukechen-15953@esunbank.com
+bkruan.ee11@nycu.edu.tw meng.chiang@nycu.edu.tw
+Yi-RenYeh Hong-HanShuai
+NationalKaohsiungNormal NationalYangMingChiaoTung
+University University
+Kaohsiung,Taiwan Hsinchu,Taiwan
+yryeh@nknu.edu.tw hhshuai@nycu.edu.tw
+Abstract CCSConcepts
+Graph-basedRetrieval-AugmentedGeneration(RAG)typicallyop- •Informationsystems→Retrievalmodelsandranking;Lan-
+eratesonbinaryKnowledgeGraphs(KGs).However,decomposing guagemodels;Questionanswering.
+complexfactsintobinarytriplesoftenleadstosemanticfragmenta-
+tionandlongerreasoningpaths,increasingtheriskofretrievaldrift Keywords
+andcomputationaloverhead.Incontrast,𝑛-aryhypergraphspre- Hypergraph-basedRetrieval-AugmentedGeneration,N-aryRela-
+servehigh-orderrelationalintegrity,enablingshallowerandmore tionalKnowledgeGraphs,Multi-hopQuestionAnswering,Memory-
+semanticallycohesiveinference.Toexploitthistopology,wepro- GuidedAdaptiveRetrieval
+poseHyperRAG,aframeworktailoredfor𝑛-aryhypergraphsfea-
+turingtwocomplementaryretrievalparadigms:(i)HyperRetriever ACMReferenceFormat:
+Wen-ShengLien,Yu-KaiChan,Hao-LungHsiao,Bo-KaiRuan,Meng-Fen
+learnsstructural-semanticreasoningover𝑛-aryfactstoconstruct
+Chiang,Chien-AnChen,Yi-RenYeh,andHong-HanShuai.2026.Hyper-
+query-conditioned relational chains. It enables accurate factual
+RAG:ReasoningN-aryFactsoverHypergraphsforRetrievalAugmented
+tracking,adaptivehigh-ordertraversal,andinterpretablemulti-hop
+Generation.InProceedingsoftheACMWebConference2026(WWW’26),
+reasoningundercontextconstraints.(ii)HyperMemoryleverages
+April13–17,2026,Dubai,UnitedArabEmirates.ACM,NewYork,NY,USA,
+theLLM’sparametricmemorytoguidebeamsearch,dynamically 12pages.https://doi.org/10.1145/3774904.3792710
+scoring𝑛-aryfactsandentitiesforquery-awarepathexpansion.
+ExtensiveevaluationsonWikiTopics(11closed-domaindatasets)
+1 Introduction
+and three open-domain QA benchmarks (HotpotQA, MuSiQue,
+Retrieval-AugmentedGeneration(RAG)hasestablisheditselfasa
+and2WikiMultiHopQA)validateHyperRAG’seffectiveness.Hy-
+criticalmechanismforaugmentingLargeLanguageModels(LLMs)
+perRetrieverachievesthehighestansweraccuracyoverall,with
+withnon-parametricexternalknowledgeduringinference[12,17,
+average gains of 2.95% in MRR and 1.23% in Hits@10 over the
+19,20].Bydynamicallyretrievingverifiableinformationfromex-
+strongestbaseline.QualitativeanalysisfurthershowsthatHyper-
+ternalcorporawithouttheneedforextensivefine-tuning,RAG
+Retrieverbridgesreasoninggapsthroughadaptiveandinterpretable
+effectivelymitigatesintrinsicLLMlimitationssuchashallucina-
+𝑛-arychainconstruction,benefitingbothopenandclosed-domain
+tionsandtemporalobsolescence.Thisparadigmhasprovenpar-
+QA.Ourcodesarepubliclyavailableathttps://github.com/Vincent-
+ticularlytransformativeforknowledge-intensivetasks,including
+Lien/HyperRAG.git.
+open-domainquestionanswering(QA),factverification,andcom-
+plexinformationextraction,drivingsignificantinnovationacross
+bothacademiaandindustry.
+CurrentRAGmethodologiesbroadlyfallintothreecategories:
+ThisworkislicensedunderaCreativeCommonsAttribution4.0InternationalLicense. document-based,graph-based,andhybridapproaches.Document-
+WWW’26,Dubai,UnitedArabEmirates. basedmethodsutilizedensevectorretrievaltomatchquerieswith
+©2026Copyrightheldbytheowner/author(s). textualsegments,offeringscalabilitybutoftenfailingtocapture
+ACMISBN979-8-4007-2307-0/2026/04
+https://doi.org/10.1145/3774904.3792710 complexstructuraldependencies[5,6].Conversely,graph-based
+6202
+beF
+61
+]LC.sc[
+1v07441.2062:viXra
+--- Page 1 ---
+WWW’26,April13–17,2026,Dubai,UnitedArabEmirates. Wen-ShengLienetal.
+ofhigher-orderrelationalchains,effectivelymitigatingSemantic
+Question: What other shows or movies were directed by directors
+Fragmentationandreducingthereasoningstepsrequiredtocapture
+who also directed shows that Bruce Seth Green directed?
+complexdependencies.
+(a) Knowledge Graph Motivatedbytheseinsights,weintroduceHyperRAG,aninno-
+Binary relation
+Relational chain Film Director Film vativeretrieval-augmentedgenerationframeworkdesignedexplic-
+Entity Sam Dickie itlyforreasoningover𝑛-aryhypergraphs.HyperRAGintegrates
+TV 101
+Weisman Roberts twonoveladaptiveretrievalvariants:(i)HyperRetriever,whichuses
+Bruce amultilayerperceptron(MLP)tofusestructuralandsemanticem-
+Seth Green Sam TV 101 beddings,constructingquery-conditionedrelationalchainsthat
+Unchained Pillsbury
+enableaccurateandinterpretableevidenceaggregationwithincon-
+Heart
+Eric Born
+textandtokenconstraints;and(ii)HyperMemory,whichleverages
+Laneuville Into Exile theparametricmemoryofanLLMtoguidebeamsearch,dynam-
+icallyscoring𝑛-aryfactsandentitiesforquery-adaptivepathex-
+N-ary relation pansion.Bycombininghigher-orderreasoningwithshalloweryet
+(b) Hypergraph
+Relational chain moreexpressivechainsthatlocatekeyevidencewithoutmulti-hop
+Hyperedge
+Entity English Sam Eric traversal.Replacementofthe𝑛-arystructurewithabinaryreduces
+Pillsbury Laneuville theaverageMRRfrom36.45%to34.15%andtheaverageHits@10
+Bruce
+from40.59%to36.82%(Table3),indicatinggainsinresponsequality.
+Seth Green TV 101
+Bruce Seth Green, Sam Ourkeycontributionsaresummarizedasfollows.
+Weisman, Sam Pillsbury, and
+Eric Laneuville directs TV 101 in Sam
+California English in California. Weisman • WeproposeHyperRAG,apioneeringframeworkthatshiftsthe
+graph-RAGparadigmfrombinarytriplesto𝑛-aryhypergraphs,
+tacklingtheissuesofsemanticfragmentationandpathexplosion.
+Figure1:StructuralComparisonof(a)KnowledgeGraphs
+• WeintroduceHyperRetriever,atrainableMLP-basedretrieval
+and (b) Hypergraphs. For a given question𝑞, (a) requires
+modulethatfusesstructuralandsemanticsignalstoextractpre-
+3-hopreasoningoverbinaryfacts,while(b)enablessingle-
+cise,interpretableevidencechainswithlowlatency.
+hopinferenceviaan𝑛-aryrelationalfact,yieldingamore
+• WedevelopHyperMemory,asynergisticretrievalapproachthat
+compactandexpressivemulti-entityrepresentation.
+utilizes LLM parametric knowledge to guide symbolic beam
+searchoverhypergraphsforcomplexqueryadaptivereasoning.
+methodsleverageKnowledgeGraphs(KGs)toexplicitlymodelre- • Extensive evaluation across closed-domain and open-domain
+benchmarksdemonstratesthatHyperRAGconsistentlyoutper-
+lationships,enablingmulti-hopreasoningoverstructureddata[15,
+forms strong baselines, offering a superior trade-off between
+31]. Hybrid approaches attempt to bridge these paradigms, bal-
+retrievalaccuracy,reasoninginterpretability,andsystemlatency.
+ancingcomprehensivenesswithefficiency.However,despitethe
+reasoningpotentialofgraph-basedmethods,theprevailingreliance
+onbinaryKGspresentsfundamentaltopologicallimitations. 2 Preliminaries
+Traditionalgraph-basedRAGmethodspredominantlyrelyonbi-
+2.1 Background
+naryknowledgegraphs,whichsufferfromnotablelimitationswhen
+appliedtoclosed-domainquestion-answeringscenarios.Specifi- Definition 2.1 (𝑛-ary Relational Knowledge Graph). An𝑛-ary
+cally,binaryKGapproachesencountertwofundamentalstructural relationalknowledgegraph,orhypergraph,representsrelational
+limitations.First,SemanticFragmentationarisesbecausebinary facts involving two or more entities and one or more relations.
+relationslimittheexpressivenessrequiredtocapturecomplexmulti- Formally,followingthedefinitionin[43],ahypergraphisdefined
+entityinteractions,forcingthedecompositionofholisticfactsinto asG=(E,R,F),whereEdenotesthesetofentities,Rdenotesthe
+disjointtriplesthatfailtorepresentintricatesemanticnuances. setofrelations,andF thesetof𝑛-aryrelationalfacts(hyperedges).
+Second,thisfragmentationleadstoPathExplosion,wherecon- Each𝑛-aryfact𝑓𝑛 ∈F,whichconsistsoftwoormoreentities,is
+ventionalapproachesincursignificantcomputationalcostsdueto representedas:𝑓𝑛 ={𝑒 𝑖}𝑛
+𝑖=1
+,where{𝑒 𝑖}𝑛
+𝑖=1
+⊆Eisasetof𝑛entities
+theneedfordeeptraversalsoverthevastbinaryrelationspaceto with𝑛≥2.
+reconnectthesefacts,enablingerrorpropagationandundermin-
+ingreal-worldpracticality[18,37].Toaddresstheselimitations, Unlikebinaryknowledgegraphs,𝑛-aryrepresentationinher-
+recentworkadvocateshypergraphsforstructuredretrievalinRAG. entlycaptureshigher-orderrelationaldependenciesamongmulti-
+Hypergraphsnativelyencodehigher-order(𝑛-ary)relationsthat pleentities.𝑛-aryrelationscannotbefaithfullydecomposedinto
+bindmultipleentitiesandroles,providingarichersemanticsub- combinationsofbinaryrelationswithoutlosingstructuralintegrity
+stratethanbinarygraphs[26].AsillustratedinFigure1,thePath orintroducingambiguityinsemanticinterpretation[1,9,35].We
+Explosionissueisevidentwhenansweringaquestiongroundedon formalizefaithfulreductionandshowthatanystraightforwardbi-
+thetopicentity“BruceSethGreen,”whichrequiresa3-hopbinary naryschemeviolatesatleastoneof:(i)recoverabilityoftheoriginal
+traversalonastandardKG.Incontrast,thisreducestoasingle tuples,(ii)rolepreservation,or(iii)multiplicityofco-participations.
+hopthroughan𝑛-aryrelationinahypergraph,yieldingamore PleaserefertoAppendixAformoredetailsontherecoveryability
+compactrepresentation.Hypergraphsenablethedirectmodeling ofrole-preservinghypergraphreduction,roles,andmultiplicity.
+--- Page 2 ---
+HyperRAG:ReasoningN-aryFactsoverHypergraphsforRetrievalAugmentedGeneration WWW’26,April13–17,2026,Dubai,UnitedArabEmirates.
+2.2 ProblemFormulation
+Problem(Hypergraph-basedRAG). Givenaquestion𝑞,ahyper-
+graphGrepresenting𝑛-aryrelationalstructures,andacollection
+ofsourcedocumentsD,thegoalofhypergraph-basedretrieval-
+augmentedgeneration(RAG)istogeneratefaithfulandcontextu- HyperRetriever HyperMemory
+allygroundedanswers𝑎byleveragingsalientmulti-hoprelational
+chainsfromGandextractingrelevanttextualevidencefromD. Frontier Entities Frontier Entities
+Complexity:Native𝑛-aryHypergraphRetrieval. Let𝑁 𝑒=|E|,
+𝑁 𝑓=|F|,and𝑛¯betheaveragearity.Aquerybinds𝑘 role-typed Subgraph LLM
+arguments,𝑞={(𝑟
+𝑖
+:𝑎 𝑖)}𝑘
+𝑖=1
+,andasksfortheremaining𝑛−𝑘roles.
+Wemaintainsortedpostinglistsoverroleincidences, P(𝑟:𝑎) = MLP Memory-Guided
+{𝑓 ∈ F : (𝑟:𝑎) ∈ 𝑓},withlength𝑑(𝑟:𝑎).Toanswer𝑞,the𝑛-ary Beam Retriever
+basedretrieverintersectsthe𝑘postinglistsbyhyperedgeIDsand
+readsthemissingrolesfromeachsurvivinghyperedge.Let𝑛★be
+the(max/avg)arityamongmatches.Therunningtimeisgivenby:
+𝑘
+(cid:16)∑︁ (cid:17) Entities Entities
+𝑇 HYP(𝑞)=O 𝑑(𝑟 𝑖 :𝑎 𝑖) + out , (1)
+𝑖=1 Hyperedges Hyperedges
+whereoutisthenumberofmatchingfacts.Intypicalschemas,the Chunks Chunks
+relationarityisoftenboundedbyasmallconstant(e.g.,triadic,
+Context Context
+𝑛≤3).Asaresult,foreachmatchtheretrievertouchesexactly
+onehyperedgerecordtomaterializetheunboundroles,yielding
+per-outputoverheadO(1).
+Budget-aware Contextualized Generator
+Complexity:StandardBinaryKGRetrieval. Supposeeach𝑛-
+aryfact𝑓 isreifiedasaneventnode𝑒 with𝑛role-typedbinary
+𝑓
+edges(e.g.,role𝑗(𝑒
+𝑓
+,𝑎 𝑗)).Foreachbinding (𝑟
+𝑖
+:𝑎 𝑖),usethelistof
+eventIDsposted Pevent(𝑟 𝑖 :𝑎 𝑖) andintersectthe𝑘 liststoobtain
+candidateeventstomirrorthehypergraphintersection.Foreach
+surviving𝑒
+𝑓
+,followitsremaining(𝑛−𝑘)role-edgestomaterialize
+unboundarguments.Let𝑑 event(𝑟:𝑎) = |Pevent(𝑟:𝑎)| andlet𝑛★be
+the(max/avg)arityovermatches.Therunningtimeisgivenby:
+𝑘
+𝑇 BIN(𝑞)=O
+(cid:16)∑︁
+𝑑 event(𝑟 𝑖 :𝑎 𝑖) + out·(𝑛★−𝑘)
+(cid:17)
+. (2)
+𝑖=1
+Underaschema-boundedarity,theper-resultoverheadisupto𝑛¯
+rolelookupstomaterializetheremainingarguments.Incontrast,
+thehypergraphreturnsthemfromasinglerecord.
+ComplexityGap. Inanativehypergraph,allargumentsofan𝑛-
+aryfactco-resideinasinglehyperedgerecord,thusmaterializinga
+hit,isoneread,i.e.,O(1)perresultunderboundedarity.Incontrast,
+inanevent-reifiedbinaryKG,thefactissplitacross𝑛role-typed
+edges,reachableonlyviatheintermediateeventnode𝑒 .Asaresult,
+𝑓
+materializingrequiresupto(𝑛−𝑘)pointerchases,yieldingout·𝑛¯
+term,andusuallyincursextraindirections/cachemisses.
+3 Methodology
+WeproposeHyperRAG,anovelframeworkthatenhancesanswer
+fidelitybyintegratingreasoningovercondensed𝑛-aryrelational
+factswithtextualevidence.AsdepictedinFigure2,HyperRAG
+featurestworetrievalparadigms:(i)HyperRetriever,whichper-
+formsadaptivestructural-semantictraversaltobuildinterpretable,
+query-conditionedrelationalchains;(ii)HyperMemory,whichuti-
+lizestheparametricknowledgeoftheLLMtoguidesymbolicbeam
+search.Bothvariantsgroundthegenerationprocessinhypergraph
+structures,ensuringfaithfulandaccuratemulti-hopreasoning.
+hcraeS
+detpadA
+Hypergraph Documents
+Subgraph
+Relational Relational
+Chains Chains
+Beam
+Search
+What other shows or movies were directed by di-
+rectors who also directed shows that Bruce Seth
+Green directed?
+Question
+Bruce Seth
+Green
+Generator
+Answer: TV 101 LLM
+Figure2:TheoverallframeworkofHyperRAG.
+3.1 HyperRetriever:RelationalChainsLearning
+Themotivationbehindlearningtoextractfine-grained𝑛-aryre-
+lationalchainsoverhypergraphstructuresstemsfromtwokey
+challenges:(i)thewell-documentedtendencyofLLMstohalluci-
+natefactualcontentand(ii)thevastcombinatorialsearchspace
+ofhypergraphsunderlimitedtokenandcontextbudgets[25].To
+mitigatethesechallenges,weintroducealightweightyetexpres-
+siveretrieverthatintegratesstructuralandsemanticcuestorank
+salient𝑛-aryfactsalignedwithqueryintent.
+3.1.1 TopicEntityExtraction. Thepurposeofobtainingthetopic
+entityistogroundthequerysemanticsontohypergraphsG.For-
+mally,givenaquery𝑞,werequestanLLMwithprompt𝑝 to topic
+identifyasetoftopicentitiesthatappearin𝑞inanLLMasfollows:
+E𝑞 = LLM(cid:0)𝑝 topic ,𝑞(cid:1),
+whereE𝑞 denotesthesetofextractedentitiesinthequery𝑞.
+3.1.2 HyperedgeRetrievalandTripleFormation. Foreachextracted
+topicentity𝑒 𝑠 ∈ E𝑞 ,weretrieveitsincidenthyperedgesfromF,
+formallydefinedasfollows:
+F𝑒𝑠 ={𝑓𝑛 ∈F :𝑒 𝑠 ∈ 𝑓𝑛}.
+Eachhyperedge𝑓𝑛 ∈F𝑒𝑠 definesan𝑛-aryrelationoverasubsetof
+𝑛entities.Toenablepairwisereasoning,wederiveasetofpseudo-
+binary triples by enumerating ordered entity pairs within each
+hyperedgeforquery𝑞asfollows:
+T𝑞 ={(𝑒 ℎ ,𝑓𝑛,𝑒 𝑡) | 𝑓𝑛 ∈F𝑒𝑠 , 𝑒 ℎ ∈ 𝑓𝑛,𝑒 𝑡 ∈ 𝑓𝑛}, (3)
+--- Page 3 ---
+WWW’26,April13–17,2026,Dubai,UnitedArabEmirates. Wen-ShengLienetal.
+whereeachpseudo-binarytriple(𝑒
+ℎ
+,𝑓𝑛,𝑒 𝑡)consistsofaheadentity, where𝜑denotesanembeddingmodelthatmapsthetextualcontent
+theoriginatinghyperedge,andatailentity. ofthequery(𝑞),headentity(𝑒 ),hyperedge(𝑓𝑛),andtailentity
+ℎ
+(𝑒 ), into vector representations, forming the candidate pseudo-
+3
+im
+.1
+i
+.3
+tyb
+S
+e
+t
+t
+r
+w
+uc
+e
+t
+e
+u
+n
+ra
+e
+l
+n
+P
+t
+r
+it
+o
+i
+x
+e
+i
+s
+m
+in
+ity
+th
+E
+e
+nc
+h
+o
+y
+d
+p
+in
+er
+g
+g
+.
+r
+T
+a
+o
+ph
+ca
+,
+p
+w
+t
+e
+ur
+a
+e
+d
+t
+a
+h
+p
+e
+t
+s
+t
+t
+h
+r
+e
+uc
+d
+t
+i
+u
+r
+r
+e
+a
+c
+l
+ti
+p
+o
+r
+n
+o
+a
+x
+l
+- bi 𝑡 narytriple(𝑒
+ℎ
+,𝑓𝑛,𝑒 𝑡).Theclassifieroutputsaplausibilityscore
+distanceencoding(DDE)mechanismfromSubGraphRAG[21],ex-
+𝑓 𝜃(x) ∈ [0,1],trainedusingbinarycross-entropyasfollows:
+t e e a n c d h in c g an it di f d ro a m te b tr in ip a l r e y ( r 𝑒 e ℎ l , a 𝑓 ti 𝑛 o , n 𝑒 𝑡 s ) to ∈ 𝑛 T - 𝑞 a , r w y e hy c p o e m re p d u g t e e s i . t F s o d r i m re a c l t l i y o , n fo a r l L=− 𝑁 1 ∑︁ 𝑁 (cid:104) 𝑦 𝑖 log(cid:0)𝑓 𝜃(x𝑖)(cid:1) + (1−𝑦 𝑖) log(cid:0)1−𝑓 𝜃(x𝑖)(cid:1) (cid:105) . (10)
+encodinginthefollowingsteps: 𝑖=1
+• One-HotInitialization:Foreachentity(𝑒 ℎ ,𝑓𝑛,𝑒 𝑡),weinitialize 3.1.5 AdaptiveSearch. Atinferencetime,weinitiatetheretrieval
+processwithinitialtriplesoftopicentitiesandcomputetheirplau-
+aone-hotindicatorfortheheadentity:
+𝑠 𝑒 (0) = (cid:26) 1 0 , , i o f th ∃ e ( r 𝑒 w ℎ , i 𝑓 se 𝑛 . ,𝑒 𝑡) ∈T𝑞 suchthat𝑒 =𝑒 ℎ , (4) s p a i s l b a f i u l r i s o t i y n bi t s l i i e c t o r y r e t e h n s r t e i u t s s i h e in o s g l i d n t 𝜏 h t e h ar e t e r n a r e e in t x a e t i d n h e M o d p , L . a P T n , h d 𝑓 i 𝜃 s t ( h x e e x ) ir . p T a ta n r i i s l p i e o l n e n s t – it e fi i x e l s c te e a r e r i d e n i g u n s g c e y d a -
+• Bi-directionalFeaturePropagation:Foreachlayer𝑙 =0,...,𝐿, clecontinuesuntilnonewtriplessatisfythethreshold.However,
+wepropagatefeaturesoverthesetofderivedtriplesT𝑞 .Forward usingafixedthreshold𝜏 canbeproblematic:itmaybetoostrict
+propagationsimulateshowtheheadentity𝑒 reachesouttothe insparsehypergraphs,limitingretrieval,ortoolenientindense
+ℎ
+tailentity𝑒 asfollows: hypergraphs,leadingtoanoverloadofirrelevanttriples.Tomit-
+𝑡
+igatethis,weimplementanadaptivethresholdingstrategy.We
+𝑠 𝑒 (𝑙+1) = |{𝑒′ | (𝑒′, 1 ·,𝑒) ∈T𝑞}|
+(𝑒′,
+∑︁
+·,𝑒)∈T𝑞
+𝑠 𝑒 (𝑙 ′ ). (5) i
+r
+n
+e
+i
+d
+t
+u
+ia
+c
+l
+t
+i
+i
+z
+o
+e
+n
+w
+s,
+i
+a
+th
+nd
+𝜏 0
+d
+=
+efi
+0
+n
+.
+e
+5,
+𝑀
+all
+=
+ow
+50
+a
+a
+m
+s
+a
+t
+x
+h
+i
+e
+m
+m
+u
+i
+m
+nim
+of
+u
+𝑁
+m
+ma
+a
+x
+cc
+=
+ep
+5
+ta
+th
+bl
+r
+e
+es
+n
+h
+u
+o
+m
+ld
+-
+berofhyperedgesperhop.Athop𝑖,weretrievethesetoftriples,
+Incontrast,backwardpropagationupdatesheadencodingsbased
+ontail-to-headinfluence: T𝑞,≥𝜏𝑗 ={(𝑒 ℎ ,h,𝑒 𝑡) | 𝑓 𝜃(𝑥)≥𝜏 𝑗}underthecurrentthreshold𝜏 𝑗 .If
+𝑠 𝑒 (𝑟,𝑙+1) = |{𝑒′ | (𝑒,·, 1 𝑒′) ∈T𝑞}| ∑︁ 𝑠 𝑒 (𝑟 ′ ,𝑙). (6)
+|T𝑞,≥𝜏𝑗 | <𝑀,we
+𝜏 𝑗
+i
++
+te
+1
+r
+=
+at
+𝜏
+iv
+𝑗
+e
+−
+ly
+𝑐,
+redu
+𝑗
+c
+=
+e
+0
+th
+,.
+e
+.
+t
+.
+h
+,
+r
+𝑁
+e
+m
+sh
+ax
+ol
+−
+d
+1
+a
+,
+sfollows:
+(11)
+(𝑒,·,𝑒′)∈T𝑞
+where𝑐 = 0.1 is the decay factor. This process continues until
+• Bi-directionalEncoding:After𝐿roundsofpropagation,we
+concatenatetheforwardandbackwardencodingstoobtainthe
+||T𝑞,≥𝜏𝑗 ||≥𝑀orthereductionlimitisreached.Tofurtheradaptto
+structuralvariationsinthehypergraph,weincorporateadensity-
+finalvectorforeachentity𝑒asfollows:
+awarethresholdingpolicy.Giventhedensityofthehypergraph
+𝑠 𝑒 =[𝑠 𝑒 (0)∥𝑠 𝑒 (1)∥ ··· ∥𝑠 𝑒 (𝐿)∥𝑠 𝑒 (𝑟,1)∥ ··· ∥𝑠 𝑒 (𝑟,𝐿)], (7) Δ(G) and the predefined lower and upper bounds Δ lo and Δ up ,
+weclassifythehypergraphandadjust𝜏 accordinglytobalance
+where∥denotesvectorconcatenation.Notethatthebackward 0
+coverageandprecisionasfollows:
+propagationstartsfrom𝑙 =1,as𝑙 =0issharedinbothdirections.
+• T
+it
+r
+s
+i
+s
+p
+t
+l
+r
+e
+uc
+E
+t
+n
+u
+c
+ra
+o
+l
+d
+p
+in
+ro
+g
+x
+:
+i
+F
+m
+o
+i
+r
+ty
+ea
+e
+c
+n
+h
+c
+c
+o
+a
+d
+n
+in
+di
+g
+da
+a
+t
+s
+e
+f
+t
+o
+r
+l
+i
+l
+p
+o
+l
+w
+e
+s
+(
+:
+𝑒 ℎ ,𝑓𝑛,𝑒 𝑡),wedefine
+M G =
+ M
+M
+l
+m
+ow
+id
+,
+, Δ
+Δ
+l
+(
+o
+G
+<
+)≤
+Δ(
+Δ
+G
+lo
+)
+,
+≤Δ up , (12)
+𝛿(𝑒 ℎ ,𝑓𝑛,𝑒 𝑡)= (cid:2)𝑠 𝑒ℎ ∥𝑠 𝑒𝑡 (cid:3), (8)   Mhigh , Δ(G) >Δ up
+Afterconvergenceorexhaustionofthresholdreductionattempts,
+whichispassedtoalightweightparametricneuralfunctionto
+theretrievalstrategyisadjustedbasedontheassignedgraphdensity
+c
+g
+o
+iv
+m
+e
+p
+n
+u
+q
+t
+u
+e
+e
+th
+ry
+ep
+𝑞
+l
+.
+ausibilityscoreforeachcandidatetriple(𝑒 ℎ ,𝑓𝑛,𝑒 𝑡) category.Forlow-densitygraphs(Mlow ),theretrieverselectsfrom
+previouslydiscardedtriplesthosethatsatisfythefinalplausibility
+3.1.4 ContrastivePlausibilityScoring. Toreducethesearchspacein threshold.Formediumandhigh-densitygraphs(Mmid andMhigh ),
+thehypergraphstructure,weaddressthechallengethatsimilarity- thestrategyadditionallyexpandsfromthetailentitiesofthese
+basedretrievaloftenintroducesnoisyorirrelevanttriples.Tomiti- newly accepted triples to increase the depth of reasoning. This
+gatethis,wetrainalightweightMLPclassifier𝑓 toestimatethe density-awareadjustmentpreventsover-retrievalinsparsegraphs
+𝜃
+plausibilityofeachtriplecandidateandpruneuninformativeones. whileenablingmoreprofoundandbroaderexplorationindense
+Tothisend,thetrainingsetispreparedwithpositiveandnega- graphs.Tofurthercontrolexpansioninhigh-densitysettings,where
+tivesamples.Let𝑃∗denotetheshortestpathoftriplesconnecting thenumberofcandidatehyperedgesmaybecomeexcessive,we
+𝑞
+the topic entity to a correct answer in the hypergraph G. The impose an upper bound on the number of retrieved triples per
+positivesamplesT+ athop𝑖 consistoftriplesin𝑃∗,denotedas hop.Thisconstrainteffectivelylimitsentityexpansion,accelerates
+𝑖 𝑞
+T 𝑖 + = {(𝑒 ℎ,𝑖 ,𝑓 𝑖 𝑛,𝑒 𝑡,𝑖)}. Negative samples𝑇 𝑖 − consist of all other retrieval,andreducestheinclusionoflow-utilityinformation.
+triplesincidenttotheheadentity𝑒 athop𝑖thatarenotin𝑃∗.At
+𝑖 𝑞 3.1.6 Budget-awareContextualizedGenerator. Aftercompletion
+eachexplorationstep,onlypositivetriplesareexpandedateach
+oftheretrievalprocess,weorganizetheselectedelementsintoa
+hop,whilenegativeonesareexcluded.Eachtriple (𝑒 ℎ ,𝑓𝑛,𝑒 𝑡) is structuredinputforthegenerator.Followingthecontextlayout
+encodedinafeaturevectorbyconcatenatingitscontextualand
+protocolofHyperGraphRAG[25],weinclude(i)entitiesandtheir
+structuralencodings:
+associateddescriptions,(ii)hyperedgesalongwiththeirparticipat-
+x= (cid:2)𝜑(𝑞) ∥𝜑(𝑒 ℎ) ∥𝜑(𝑓𝑛) ∥𝜑(𝑒 𝑡) ∥𝛿(𝑒 ℎ ,𝑓𝑛,𝑒 𝑡) (cid:3), (9) ingentities,and(iii)supportingsourcetextchunkslinkedtoeach
+--- Page 4 ---
+HyperRAG:ReasoningN-aryFactsoverHypergraphsforRetrievalAugmentedGeneration WWW’26,April13–17,2026,Dubai,UnitedArabEmirates.
+entityorhyperedge.Duetoinputlengthconstraints,weprioritize 3.2.2 ContextualizedGenerator. Theentitiesandhyperedgesre-
+componentsbasedontheirutility.Asshownintheablationstudy trievedareorganizedinafixedformatcontext,asdefinedinEq.(13).
+ofHyperGraphRAG,𝑛-aryrelationalfacts(i.e.,hyperedges)con- ThiscontextualizedevidenceContext,combinedwiththeoriginal
+tributethemosttoreasoningperformance,followedbyentities query𝑞,isthenpassedtotheLLMtogeneratethefinalAnswer.
+andthensourcetext.Wethereforeallocatethetokenbudgetac-
+cordingly:50%forhyperedges,30%forentities,and20%forsource 4 Experiments
+chunks.Tofurthermaximizeinformativeness,weorderhyperedges WequantitativelyevaluatetheeffectivenessandefficiencyofHyper-
+andentitiesaccordingtotheirplausibilityscores𝑓 𝜃(·),withgraph RetrieveragainstRAGbaselinesbothin-domainandcross-domain
+connectivityasasecondarycriterion.Theselectedcomponents settings.Ablationstudieshighlightthebenefitsofadaptiveexpan-
+arethensequentiallyfilledintheorder:hyperedges,entities,and sionand𝑛-aryrelationalchainlearning,complementedbyqual-
+sourcechunks.Componentsarefilledinpriorityorderandany itativeanalyzesthatillustratetheprecisionandefficiencyofthe
+unusedbudgetispassedtothenextcategory.Thecontextualized adaptiveretrievalprocess.
+evidenceresulting context,togetherwiththeoriginalquery𝑞,is
+thenpassedtotheLLMtogeneratethefinalanswerAnsweras: 4.1 ExperimentalSetup
+Answer := LLM(Context,𝑞). (13) 4.1.1 Datasets. Weconductexperimentsunderbothopen-domain
+andclosed-domainmulti-hopquestionanswering(QA)settings.
+For in-domain evaluation, we use three widely adopted bench-
+3.2 HyperMemory:RelationalChainExtraction
+mark datasets: HotpotQA [42], MuSiQue [38], and 2WikiMulti-
+Toimproveinterpretabilityandcontextawarenessinpathretrieval, HopQA[16].Toevaluatecross-domaingeneralization,weadopt
+weavoidnaivetop-𝑘heuristicswithLLM-guidedscoringthatlever- theWikiTopics-CLQAdataset[11],whichtestszero-shotinduc-
+agesthemodel’sparametricmemorytoassessthesalienceofhyper- tivereasoningoverunseenentitiesandrelationsatinferencetime.
+edgesandentities.Thisenablesretrievaltobeguidedbycontextual ComprehensivedatasetstatisticsaresummarizedinAppendixB.2.
+priorsandqueryintent,facilitatingmoretargetedandmeaningful
+relationalexploration. 4.1.2 EvaluationMetrics. Weemployfourstandardmetricstoas-
+sess performance, aligning with established protocols for each
+3.2.1 Memory-GuidedBeamRetriever. Specifically,wedesignbeam benchmarktype.Foropen-domainQAdatasets,wheretheobjective
+searchwithwidth𝑤 =3anddepth𝑑 =3,where𝑤 denotesthe ispreciseanswergeneration,wereportExactMatch(EM)andF1
+numberofpathsrankedinthetoporderretainedateachiteration, scores.ForWikiTopics-CLQA,whichinvolvesrankingcorrectenti-
+and𝑑specifiesthemaximumnumberofexpansionsteps.Following tiesfromacandidatelist,weutilizeMeanReciprocalRank(MRR)
+theprocessoftheLearnableRelationalChainRetriever,webeginby andHits@ktoevaluateretrievalfidelity.Allmetricsarereportedas
+identifyingthesetoftopicentitiesE𝑞 fromtheinputquery𝑞using percentages(%),withhighervaluesindicatingbetterperformance.
+anLLM-basedentityextractor.Foreachtopicentity𝑒 𝑠 ∈ E𝑞 ,we 4.1.3 Baselines. Toevaluatetheeffectivenessofourapproach,we
+retrieveitsincidenthyperedgesetF𝑒𝑠 .Eachhyperedge𝑓𝑛 ∈F𝑒𝑠 is
+compareHyperRAGwithRAGbaselineswithvaryingretrieval
+scoredforrelevancetoboth𝑒 and𝑞usingaprompt𝑝 :
+𝑠 edge granularities,enablingasystematicanalysisofhowevidencestruc-
+S F (𝑓𝑛 |𝑒 𝑠 ,𝑞)∼LLM(𝑝 edge ,𝑒 𝑠 ,𝑓𝑛,𝑞). (14) t o u p r e e n a - ff a e n c d ts c r lo et s r e i d e - v d a o l m eff a e in ct s iv e e tt n in es g s s. a S n p d e a c n ifi sw ca e l r ly g , e w n e er i a n t c i l o u n de in :R b A ot P h -
+Weretainthetop-𝑤 hyperedges,denoted𝐻+,basedonthescore TOR[33],whichretrievestree-structurednodes;HippoRAG[14],
+𝑒𝑠
+S (·).Next,foreach𝑓𝑛 ∈ F+,weidentifyunvisitedtailentities whichretrievesfree-textchunks;ToG[37],whichretrievesrela-
+F 𝑒𝑠
+𝑒 andscoretheirrelevanceusingasecondprompt𝑝 : tional subgraphs; and HyperGraphRAG [25], which retrieves a
+𝑡 entity
+heterogeneousmixtureofentities,relations,andtextualspans.
+S E (𝑒 𝑡 | 𝑓𝑛,𝑞) ∼ LLM(𝑝 entity , 𝑓𝑛, 𝑒 𝑡 , 𝑞). (15) 4.1.4 ImplementationDetails. Allbaselinesandourproposedmeth-
+Next,eachresultingcandidatetriple(𝑒
+𝑠
+,𝑓𝑛,𝑒 𝑡)receivesaweighted odsutilizegpt-4o-miniasthecoremodelforbothgraphconstruc-
+compositescoreasfollows: tionandquestionanswering.ForHyperRetriever,weadditionally
+employthepretrainedtextencodergte-large-en-v1.5topro-
+S(𝑒 𝑠 ,𝑓𝑛,𝑒 𝑡)=S F (𝑓𝑛 |𝑒 𝑠 ,𝑞) · S E (𝑒 𝑡 | 𝑓𝑛,𝑞). (16) ducedenseembeddingsforentities,relations,andqueries.With
+434Mparameters,thisGTE-familymodelachievesstrongperfor-
+Fromthecurrentsetofcandidatetriples,weretainthetop-𝑤based
+manceonEnglishretrievalbenchmarks,suchasMTEB,andof-
+onthefinaltriplescorerS(·).Thetailentitiesoftheseselectedpaths
+fersanefficientbalancebetweeninferencespeedandembedding
+definethenextexpansionfrontier.Ateachdepth𝑖,weevaluate
+quality,makingitwell-suitedforsemanticsubgraphretrieval.All
+whethertheaccumulatedevidencesufficestoanswerthequery.All
+experimentswereimplementedinPython3.11.13withCUDA12.8
+retrievedtriplesareassembledintoacontextualizedcomponent𝐶 ,
+𝑖 andconductedonasingleNVIDIARTX3090(24GB).PeakGPU
+whichispassedtotheLLMforanevidencesufficiencycheck:
+memoryusageremainedwithin24GBduetodynamicallocation.
+LLM(𝑝 ctx ,𝐶 𝑖 ,𝑞) −→ {yes,no},Reason. (17) 4.2 Open-domainAnsweringPerformance
+Iftheresultisyes,terminatethesearchandproceedtogeneration. 4.2.1 Setup. ForHyperRetriever,alightweightMLP𝑓 𝜃 scoresthe
+Otherwise,if𝑖 <𝑑,thesearchcontinuesuntilthenextiteration. plausibilityofcandidatehyperedges,enablingaggressivepruning
+
+[Output limited to first 5 pages.]

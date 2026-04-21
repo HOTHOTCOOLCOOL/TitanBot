@@ -322,6 +322,8 @@ class AgentLoop:
 
         # Task Tracker - 任务状态追踪 (用于 /tasks 命令)
         self.task_tracker = TaskTracker(workspace)
+        from nanobot.agent.task_tracker import set_active_tracker
+        set_active_tracker(self.task_tracker)
 
         # Knowledge Workflow - 知识库工作流引擎
         self.knowledge_workflow = KnowledgeWorkflow(
@@ -519,6 +521,8 @@ class AgentLoop:
             else:
                 logger.warning(f"Phase 37: Invalid post-mortem JSON: {text[:100]}")
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Phase 37: Post-mortem extraction failed: {e}")
 
         # Developer-only: dump raw trace for offline debugging
@@ -532,6 +536,8 @@ class AgentLoop:
                 final_content=last_error,
             )
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.debug(f"Phase 37: Debug trace dump failed (non-critical): {e}")
 
 
@@ -543,7 +549,7 @@ class AgentLoop:
         injection_used: int = 0,
         target_model_override: str | None = None,
         tool_registry_override: ToolRegistry | None = None,
-    ) -> tuple[str | None, list[str], list[dict]]:
+    ) -> tuple[str | None, list[str], list[dict], str | None]:
         """
         Run the agent iteration loop.
 
@@ -584,6 +590,7 @@ class AgentLoop:
         _action_log: list[dict] = []
         # Phase 33: Track injection budget consumed by enrich_context (passed from caller)
         _loop_injection_used = injection_used
+        _milestone_summary = None
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -665,6 +672,8 @@ class AgentLoop:
                         _clean, _milestone_summary = extract_mem_content(_resp_content)
                         response.content = _clean
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     logger.debug(f"IFCC extraction failed: {e}")
 
             if response.has_tool_calls:
@@ -905,10 +914,29 @@ class AgentLoop:
                         messages, tool_call.id, tool_call.name, normalized_res
                     )
 
+                # 🟢 Schema Strict Validation Fix
+                # OpenAI's API schema STRICTLY FORBIDS ANY messages between consecutive tool results
+                # associated with the same assistant block. If `add_tool_result` appended
+                # a multimodal user message (e.g. screenshot), it might get interleaved.
+                # We must sink all non-tool messages that appear AFTER the latest `assistant`
+                # to the absolute end of the messages list to guarantee tool contiguity.
+                _last_asst_idx = -1
+                for _idx in range(len(messages) - 1, -1, -1):
+                    if messages[_idx].get("role") == "assistant" and messages[_idx].get("tool_calls"):
+                        _last_asst_idx = _idx
+                        break
+                if _last_asst_idx != -1:
+                    _tail = messages[_last_asst_idx + 1:]
+                    _tool_msgs = [m for m in _tail if m.get("role") == "tool"]
+                    _other_msgs = [m for m in _tail if m.get("role") != "tool"]
+                    messages = messages[:_last_asst_idx + 1] + _tool_msgs + _other_msgs
+
                 # Phase 32 L3: Anti-pattern audit (fire-and-forget, log-only)
                 try:
                     verification.audit_antipatterns(tool_calls_with_args)
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     logger.debug(f"L3 anti-pattern audit error (non-critical): {e}")
                 
                 # Track message() calls and guard against floods
@@ -1051,9 +1079,11 @@ class AgentLoop:
                 archive = TraceArchive(self.workspace)
                 archive.dump_tool_calls(tid, tool_calls_with_args, _action_log)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.debug(f"Failed to dump tool calls for {tid}: {e}")
 
-        return final_content, tools_used, tool_calls_with_args
+        return final_content, tools_used, tool_calls_with_args, _milestone_summary
 
     # ── Phase 41: Middleware-based agent loop helpers ──────────────
 
@@ -1217,6 +1247,8 @@ class AgentLoop:
                         _clean, _milestone_summary = extract_mem_content(_resp_content)
                         response.content = _clean
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     logger.debug(f"IFCC extraction failed: {e}")
 
             # 2. Non-tool response: wait-phrase / fake-completion detection
@@ -1329,6 +1361,8 @@ class AgentLoop:
                 action_hist = ctx.action_log if 'ctx' in locals() else []
                 archive.dump_tool_calls(tid, tool_calls_with_args, action_hist)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.debug(f"Failed to dump tool calls for {tid} in v2 loop: {e}")
 
         final_milestone = _milestone_summary
@@ -1417,6 +1451,8 @@ class AgentLoop:
             try:
                 await tool.setup()
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Failed to setup tool {tool.name}: {e}", exc_info=True)
         
         # Phase 40B-1: Recover stale checkpoints from previous crash
@@ -1442,6 +1478,8 @@ class AgentLoop:
                             if response:
                                 await self.bus.publish_outbound(response)
                     except Exception as e:
+                        if isinstance(e, asyncio.CancelledError):
+                            raise
                         logger.error(f"Error processing message: {e}", exc_info=True)
                         metrics.increment("message_error_count")
                         await self.bus.publish_outbound(OutboundMessage(
@@ -1457,6 +1495,8 @@ class AgentLoop:
                 try:
                     await tool.teardown()
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     logger.error(f"Failed to teardown tool {tool.name}: {e}", exc_info=True)
             await self.close_mcp()
     
@@ -1562,6 +1602,8 @@ class AgentLoop:
                                         channel=t_chan, chat_id=t_chat, content=msg,
                                     ))
                                 except Exception as e:
+                                    if isinstance(e, asyncio.CancelledError):
+                                        raise
                                     logger.error(f"Phase 40B: Path 1 bus routing failed for {target}: {e}")
 
                         # Path 2: Direct WebSocket push (bypasses bus routing entirely)
@@ -1570,6 +1612,8 @@ class AgentLoop:
                             await broadcast_ws_message("log", {"sender": "system", "message": msg})
                             await broadcast_ws_message("notification", {"message": msg})
                         except Exception as e:
+                            if isinstance(e, asyncio.CancelledError):
+                                raise
                             logger.error(f"Phase 40B: Path 2 direct WS push failed: {e}")
 
                 # Fire and forget the delayed broadcast task so we don't block agent startup
@@ -1582,6 +1626,8 @@ class AgentLoop:
                 _bg_task.add_done_callback(self._bg_tasks.discard)
 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Phase 40B: Checkpoint recovery scan failed: {e}")
     
     async def _process_message(
@@ -1749,6 +1795,8 @@ class AgentLoop:
                 if match is None and task_key:
                     match = await kw.query_expansion_fallback(task_key)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Knowledge workflow error (non-fatal): {e}")
                 metrics.increment("knowledge_fallback_count")
 
@@ -1910,6 +1958,8 @@ class AgentLoop:
                     history = session.get_history(max_messages=10)
                     search_query, query_anchors = await self.context.vector_memory.rewrite_query_with_anchors(request_text, history)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.debug(f"Query rewriting skipped: {e}")
         else:
             logger.info("Chitchat intent detected, skipping query rewrite and overriding target model.")
@@ -1927,7 +1977,9 @@ class AgentLoop:
                     k = None
                     try:
                         r = self.context.vector_memory.search(search_query, top_k=3)
-                    except Exception:
+                    except Exception as _e:
+                        if isinstance(_e, asyncio.CancelledError):
+                            raise
                         pass
                     try:
                         if kg_instance:
@@ -1938,13 +1990,17 @@ class AgentLoop:
                                     prefetch_rag=r,
                                     anchors=query_anchors
                                 )
-                    except Exception:
+                    except Exception as _e:
+                        if isinstance(_e, asyncio.CancelledError):
+                            raise
                         pass
                     return r, k
                     
                 loop = asyncio.get_running_loop()
                 pre_fetched_rag, pre_fetched_kg = await loop.run_in_executor(None, _sync_fetch_both)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.debug(f"Async pre-fetch skipped: {e}")
         else:
             pre_fetched_rag = []
@@ -2025,7 +2081,7 @@ class AgentLoop:
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info(f"Response to {msg.channel}:{msg.sender_id}: {preview}")
 
-        session.add_message("user", request_text)
+        session.add_message("user", request_text, media=msg.media if getattr(msg, 'media', None) else None)
         session.add_message(
             "assistant", final_content,
             tools_used=tools_used if tools_used else None,
@@ -2113,6 +2169,8 @@ class AgentLoop:
                 if audio_path:
                     media_attachments.append(str(audio_path))
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Failed to generate TTS: {e}")
 
         outbound_content = final_content

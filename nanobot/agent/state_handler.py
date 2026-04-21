@@ -160,6 +160,8 @@ class StateHandler:
                         content=i18n_msg("skill_upgrade_confirmed"),
                     )
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Skill upgrade failed: {e}")
                 return OutboundMessage(
                     channel=msg.channel, chat_id=msg.chat_id,
@@ -228,6 +230,8 @@ class StateHandler:
                     content=f"⚙️ 正在执行 `{tool_name}`，可能需要较长时间，请耐心稍候..."
                 ))
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.warning(f"Failed to publish execution feedback: {e}")
                 
             # Phase 40B-1: Write checkpoint WAL before tool execution (HITL branch)
@@ -246,6 +250,8 @@ class StateHandler:
                 if _ckpt_path:
                     self.agent.sessions.clear_checkpoint(_ckpt_path)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 result_str = f"Error executing tool: {e}"
                 if _ckpt_path:
                     self.agent.sessions.clear_checkpoint(_ckpt_path)
@@ -260,6 +266,8 @@ class StateHandler:
                     session.messages.pop(i)
                     break
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.warning(f"Session {session.key}: Failed to cleanup UI message, ignoring: {e}")
 
         # Reconstruct the missing assistant message before the tool message to satisfy strict API schema
@@ -283,16 +291,15 @@ class StateHandler:
                 break
         if approved:
             resume_msg = (
-                f"[System: The user has approved the High-Risk tool execution.]\n"
-                f"The tool has been executed. Check the tool result above and continue executing the original task:\n"
-                f"{original_request[:500]}"
+                f"[System message: The action for '{tool_name}' was completed successfully. "
+                f"Please review the returned result in the history and continue the conversation normally.]"
             )
         else:
             resume_msg = (
-                f"[System: HITL confirmation completed. Tool '{tool_name}' was REJECTED/INTERRUPTED by the user.]\n"
+                f"Validation / Information: {user_input}\n"
+                f"The user has declined the tool execution for '{tool_name}' and provided additional input.\n"
                 f"Original user request: {original_request[:500]}\n"
-                f"User input during interruption: {user_input}\n"
-                f"DO NOT retry the exact same or similar tool call. Please address the user's interruption input if it contains a new task or clarification."
+                f"Please address the user's input safely and proceed."
             )
         initial_messages = self.agent.context.build_messages(
             history=history,
@@ -301,7 +308,7 @@ class StateHandler:
             chat_id=msg.chat_id
         )
         
-        final_content, tools_used, tc_args = await self.agent._run_agent_loop(
+        final_content, tools_used, tc_args, _ = await self.agent._run_agent_loop(
             initial_messages, channel=msg.channel, chat_id=msg.chat_id
         )
         
@@ -345,14 +352,27 @@ class StateHandler:
             channel=origin_channel,
             chat_id=origin_chat_id,
         )
-        final_content, _, _ = await self.agent._run_agent_loop(
+        final_content, _, _, _ = await self.agent._run_agent_loop(
             initial_messages, channel=origin_channel, chat_id=origin_chat_id
         )
 
         if final_content is None:
             final_content = "Background task completed."
         
-        session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
+        # Phase 62: Use virtual tool roundtrip instead of 'user' role for system events
+        import uuid
+        call_id = f"call_{uuid.uuid4().hex[:10]}"
+        session.add_message(
+            role="assistant",
+            content=None,
+            tool_calls=[{"id": call_id, "type": "function", "function": {"name": "system_event_listener", "arguments": "{}"}}]
+        )
+        session.add_message(
+            role="tool", 
+            content=f"[System Notice from {msg.sender_id}] {msg.content}", 
+            tool_call_id=call_id, 
+            name="system_event_listener"
+        )
         session.add_message("assistant", final_content)
         self.agent.sessions.save(session)
         

@@ -32,5 +32,7 @@ class EdgeTTSProvider:
             logger.info(f"Synthesized TTS to {file_path}")
             return file_path
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Edge TTS error: {e}")
             return None

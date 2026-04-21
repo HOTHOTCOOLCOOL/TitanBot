@@ -1,3 +1,4 @@
+import asyncio
 """
 Bridge abstractions for managing isolated Worker nodes (coroutine or subprocess).
 """
@@ -79,6 +80,8 @@ class BaseWorkerBridge(ABC):
                 if resp.content:
                     final_result = "[Refined Result]\n" + resp.content.strip()
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.warning(f"Coordinator: Result refinement failed: {e}")
 
         announce_content = f"""[Worker '{label}' {status_text}]

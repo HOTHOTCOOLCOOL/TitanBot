@@ -1,10 +1,10 @@
+from __future__ import annotations
 """Shared image download helper for channel implementations.
 
 Provides a common utility to save received image data to the local media directory,
 avoiding duplication across Telegram, Discord, Feishu, etc.
 """
 
-from __future__ import annotations
 
 from pathlib import Path
 from loguru import logger

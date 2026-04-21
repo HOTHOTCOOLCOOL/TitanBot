@@ -140,6 +140,8 @@ Respond with ONLY valid JSON, no markdown fences."""
                             combined = combined.split("\n", 1)[1]
                     session_snapshot["evicted_context"] = combined
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     logger.warning(f"Failed to update evicted context: {e}")
 
             if update := result.get("memory_update"):
@@ -192,6 +194,8 @@ Respond with ONLY valid JSON, no markdown fences."""
                     _safe_create_task(distiller.distill_preferences(), name="distill_preferences")
                     
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Memory consolidation failed: {e}")
 
     async def deep_consolidate(self) -> None:
@@ -274,8 +278,12 @@ Return ONLY a valid JSON object with a single key "memory_update" containing the
 
                         _safe_create_task(_kg_extract_and_summarize(), name="kg_extraction")
                     except Exception as e:
+                        if isinstance(e, asyncio.CancelledError):
+                            raise
                         logger.error(f"Failed to start Knowledge Graph extraction: {e}")
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Deep memory consolidation failed: {e}")
 
     async def save_session_summary(self, session: Session) -> None:
@@ -316,4 +324,6 @@ Return ONLY a valid JSON object with a single key "memory_update" containing the
                     metadata={"date": today_str},
                 )
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Session summary save failed: {e}")

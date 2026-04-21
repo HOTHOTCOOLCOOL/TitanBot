@@ -1,0 +1,5 @@
+{
+  "keywords": ["excel", "com", "actuator", "pivot", "chart"],
+  "rule": "当操作 Excel COM 时，必须优先使用内置的 `excel_actuator` (在 rpa_executor 中) 而不是编写原生 win32com 脚本。如果在后台发生 COM 卡死，不要尝试重试，立刻退出并汇报 Deadlock。",
+  "lesson_ref": "lesson-12-windows-orphan.md"
+}

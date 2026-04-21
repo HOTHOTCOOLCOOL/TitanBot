@@ -1,0 +1,84 @@
+﻿Reading PDF: C:\Users\davidliu\Downloads\2602.19127v1.pdf
+Total Pages: 34
+
+--- Page 0 ---
+AgenticRAGTracer: A Hop-Aware Benchmark for Diagnosing Multi-Step
+Retrieval Reasoning in Agentic RAG
+QijieYou1*,WenkaiYu2*,WentaoZhang2,3,4
+1UniversityofScienceandTechnologyBeijing
+2PekingUniversity
+3ZhongguancunAcademy
+4BeijingKeyLaboratoryofDataIntelligenceandSecurity(PekingUniversity)
+u202342615@xs.ustb.edu.cn,{ywk,wentao.zhang}@pku.edu.cn
+Abstract 1 Introduction
+Withtherapidevolutionoftheagenticparadigm,
+With the rapid advancement of agent-based
+Large Language Models (LLMs) have expanded
+methodsinrecentyears,AgenticRAGhasun-
+doubtedlybecomeanimportantresearchdirec- beyondsimpletextgenerationtomastercomplex
+tion. Multi-hopreasoning,whichrequiresmod- workflowsandbroadtoolusage. Amongtheseca-
+elstoengageindeliberatethinkingandmulti- pabilities,Retrieval-AugmentedGeneration(RAG)
+stepinteraction,servesasacriticaltestbedfor
+ispivotal,enablingLLMstoaccessinformationbe-
+assessing such capabilities. However, exist-
+yondtheirparametricmemory,therebyenhancing
+ing benchmarks typically provide only final
+generalizationandmitigatinghallucinations. Con-
+questions and answers, while lacking the in-
+sequently, advancing the capabilities of Agentic termediatehop-levelquestionsthatgradually
+connect atomic questions to the final multi- RAGùsystems that autonomously plan, retrieve,
+hopquery. Thislimitationpreventsresearchers andreasonùhasbecomeacentralresearchfocus.
+from analyzing at which step an agent fails Compared to single-hop queries (e.g.,
+and restricts more fine-grained evaluation of
+NQ (Kwiatkowski et al., 2019), TriviaQA (Joshi
+model capabilities. Moreover, most current
+et al., 2017)), multi-hop questions serve as a
+benchmarksaremanuallyconstructed,which
+rigoroustestbedforAgenticRAGbydemanding
+is both time-consuming and labor-intensive,
+iterative reasoning and multi-document retrieval.
+whilealsolimitingscalabilityandgeneraliza-
+tion. Toaddressthesechallenges,weintroduce However, current evaluations predominantly rely
+AgenticRAGTracer , the first Agentic RAG onbenchmarksdesignedfortraditionalRAG,such
+benchmark that is primarily constructed au- as HotpotQA (Yang et al., 2018), 2WikiMulti-
+tomaticallybylargelanguagemodelsandde-
+hopQA (Ho et al., 2020), and MuSiQue (Trivedi
+signedtosupportstep-by-stepvalidation. Our
+et al., 2022). These datasets generally provide
+benchmarkspansmultipledomains, contains
+onlyfinalQApairswithshortsupportingpassages,
+1,305 data points, and has no overlap with
+assumingaretrieve-then-readparadigmwhereall
+existing mainstream benchmarks. Extensive
+experiments demonstrate that even the best content is processed at once. For Agentic RAG,
+largelanguagemodelsperformpoorlyonour which inherently relies on dynamic, multi-step
+dataset. For instance, GPT-5 attains merely interactions, evaluating performance solely on
+22.6%EMaccuracyonthehardestportionof the final outcome fails to capture the intricate
+ourdataset. Hop-awarediagnosisrevealsthat
+decision-making process. Through a rigorous
+failures are primarily driven by distorted rea-
+analysisofexistingbenchmarks(seeAppendixB),
+soningchainsùeithercollapsingprematurely
+we identify four critical limitations that hinder
+or wandering into over-extension. This high-
+the effective diagnosis of Agentic RAG systems:
+lightsacriticalinabilitytoallocatestepsconsis-
+tentwiththetaskÆslogicalstructure,providing Authenticity of Multi-hop Reasoning. The
+adiagnosticdimensionmissingintraditional complexity labels in existing datasets are often
+evaluations. Webelieveourworkwillfacilitate inflated. We find that questions labeled as
+research in Agentic RAG and inspire further
+multi-hopcanfrequentlybeanswereddirectlyby
+meaningfulprogressinthisarea. Ourcodeand
+the modelÆs internal knowledge or require fewer
+data are available at https://github.com/
+reasoningstepsthanclaimed. Thismisalignment
+YqjMartin/AgenticRAGTracer.
+compromisesthevalidityofreasoningevaluations.
+*Equalcontribution. FaithfulnesstoRAGSettings. Whilethelogical
+6202
+beF
+22
+]LC.sc[
+1v72191.2062:viXra
+--- Page 1 ---
+Failed to read PDF: 'charmap' codec can't encode character '\u2460' in position 685: character maps to <undefined>

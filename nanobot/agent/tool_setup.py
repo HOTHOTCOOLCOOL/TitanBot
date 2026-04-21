@@ -1,3 +1,4 @@
+import asyncio
 """Tool setup module for agent loop."""
 
 __all__ = ["setup_all_tools"]
@@ -160,6 +161,8 @@ async def _reload_dynamic_tools(agent: "AgentLoop") -> None:
                     await tool.teardown()
                     logger.info(f"Plugin teardown completed: '{name}'")
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     logger.warning(f"Plugin teardown failed for '{name}': {e}")
         unload_plugins(agent.tools, agent._dynamic_tool_names)
         agent._dynamic_tool_names.clear()
@@ -193,6 +196,8 @@ async def _reload_dynamic_tools(agent: "AgentLoop") -> None:
             await tool.setup()
             logger.info(f"Plugin setup completed: '{tool.name}'")
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.warning(f"Plugin setup failed for '{tool.name}': {e}")
     
     if agent._dynamic_tool_names:

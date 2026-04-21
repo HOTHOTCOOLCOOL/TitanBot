@@ -1,3 +1,5 @@
+from __future__ import annotations
+import asyncio
 """Vision-Language Feedback Loop for self-correcting RPA.
 
 After an RPA action, captures a new screenshot and asks the VLM to compare
@@ -7,7 +9,6 @@ returns a structured correction hint so the agent can retry.
 Phase 21E Feature Enhancement.
 """
 
-from __future__ import annotations
 
 import json
 import time
@@ -135,6 +136,8 @@ class VLMFeedbackLoop:
             return self._parse_response(response.content or "")
 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.warning(f"VLM verification call failed: {e}")
             # On VLM error, assume success to avoid blocking the workflow
             return VerificationResult(

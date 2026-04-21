@@ -1,3 +1,4 @@
+import asyncio
 """
 Attachment analyzer tool for nanobot.
 
@@ -201,6 +202,8 @@ Supports: PDF, Excel (.xls, .xlsx), Word (.doc, .docx), Text (.txt)"""
             else:
                 return f"Unknown action: {action}"
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Attachment analyzer error: {e}")
             return f"Error: {str(e)}"
     
@@ -254,6 +257,8 @@ Supported: {ext in ['.pdf', '.xls', '.xlsx', '.doc', '.docx', '.txt', '.csv']}""
             else:
                 return f"Unsupported file format: {ext}"
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Error parsing {file_path}: {e}")
             return f"Error parsing file: {str(e)}"
     
@@ -282,6 +287,8 @@ Supported: {ext in ['.pdf', '.xls', '.xlsx', '.doc', '.docx', '.txt', '.csv']}""
             
             return f"=== Text ===\n\n{text}"
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error reading text file: {str(e)}"
     
     async def _parse_csv(self, file_path: str, max_length: int) -> str:

@@ -1,3 +1,4 @@
+import asyncio
 """Voice transcription providers."""
 
 import os
@@ -71,6 +72,8 @@ class GroqTranscriptionProvider(BaseTranscriptionProvider):
                     return data.get("text", "")
                     
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Groq transcription error: {e}")
             return ""
 
@@ -117,6 +120,8 @@ class OpenAITranscriptionProvider(BaseTranscriptionProvider):
                     return data.get("text", "")
                     
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"OpenAI transcription error: {e}")
             return ""
 

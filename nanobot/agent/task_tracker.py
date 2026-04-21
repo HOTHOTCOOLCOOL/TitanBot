@@ -11,6 +11,16 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+_active_tracker: "TaskTracker | None" = None
+
+def get_active_tracker() -> "TaskTracker | None":
+    """获取全局共享的任务追踪器实例"""
+    return _active_tracker
+
+def set_active_tracker(tracker: "TaskTracker") -> None:
+    """设置全局共享的任务追踪器实例"""
+    global _active_tracker
+    _active_tracker = tracker
 
 class TaskStatus(Enum):
     """任务状态枚举"""

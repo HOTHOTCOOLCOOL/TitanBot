@@ -3,6 +3,7 @@
 import time
 import platform
 import ctypes
+import asyncio
 from typing import Any, Dict
 
 try:
@@ -43,6 +44,45 @@ class RPAExecutorTool(Tool):
     @property
     def static_tags(self) -> CapabilityTag:
         return CapabilityTag.MUTATIVE
+
+    def evaluate_dynamic_tags(self, args: dict[str, Any]) -> CapabilityTag:
+        """ADR-61: 修饰键嗅探策略 (Modifier Sniffing).
+
+        对 RPA 操作按语义意图分级：
+        - SENSITIVE：涉及系统级修饰键 (win/command/fn) 或高权限组合 (alt+f4),
+          以及超长 type 输入（>800字，防止代码注入变体）。
+          此类操作会路由到 HITLMiddleware 进行人工审批。
+        - NONE：其余日常点击、普通键盘输入，叠加 static_tags=MUTATIVE 后放行。
+
+        刻意不使用热键枚举黑名单（ADR-61 Criticism 3）：
+        黑名单维护成本高、存在别名绕过和组合爆炸问题。
+        修饰键嗅探从语义层面捕获高危意图，更具鲁棒性。
+        """
+        if not isinstance(args, dict):
+            return CapabilityTag.NONE
+
+        action = args.get("action", "")
+
+        # hotkey / press：嗅探系统级危险修饰键
+        if action in ("hotkey", "press"):
+            keys = args.get("keys", [])
+            if isinstance(keys, list):
+                keys_lower = [str(k).lower() for k in keys]
+                # 系统级修饰键（Windows Win 键、macOS Command/Fn 键）
+                # 任何携带这些修饰键的组合都应由人类确认
+                if any(k in keys_lower for k in ("win", "command", "cmd", "fn")):
+                    return CapabilityTag.SENSITIVE
+                # Alt+F4：关闭窗口，在自动化中可能意外关闭关键应用
+                if "alt" in keys_lower and "f4" in keys_lower:
+                    return CapabilityTag.SENSITIVE
+
+        # type：超长文本输入——防止通过分段输入规避其他检测的代码注入变体
+        if action == "type":
+            text = str(args.get("text", ""))
+            if len(text) > 800:
+                return CapabilityTag.SENSITIVE
+
+        return CapabilityTag.NONE
 
     description = (
         "Perform physical mouse and keyboard actions on the computer. "
@@ -148,7 +188,7 @@ class RPAExecutorTool(Tool):
             from nanobot.agent.vision.vlm_feedback import VLMFeedbackLoop
             return VLMFeedbackLoop(provider=provider, vlm_model=vlm_model), fb_cfg
         except Exception as e:
-            print(f"[RPA] VLM feedback init failed: {e}")
+            logger.info(f"[RPA] VLM feedback init failed: {e}")
             return None, None
 
     def _load_anchors(self):
@@ -164,7 +204,7 @@ class RPAExecutorTool(Tool):
                 mapping = json.load(f)
             return mapping, anchors_json_path
         except Exception as e:
-            print(f"[RPA Debug] ERROR reading anchors JSON: {e}")
+            logger.info(f"[RPA Debug] ERROR reading anchors JSON: {e}")
             return None, anchors_json_path
 
     def _load_monitor_context(self) -> dict | None:
@@ -278,6 +318,8 @@ class RPAExecutorTool(Tool):
                     "请检查系统配置，确保整个测试阶段浏览器以 visible/有头模式启动。"
                 )
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             pass
 
         # Resolve verify flag from string if needed
@@ -294,8 +336,8 @@ class RPAExecutorTool(Tool):
                 # Resolve ui_name to coordinates (highest priority — fast text matching)
                 if ui_name and mapping:
                     ui_name_clean = str(ui_name).strip('"\'')
-                    print(f"[RPA Debug] Searching for UI element by name: '{ui_name_clean}'")
-                    print(f"[RPA Debug] Loaded {len(mapping)} anchors from JSON.")
+                    logger.info(f"[RPA Debug] Searching for UI element by name: '{ui_name_clean}'")
+                    logger.info(f"[RPA Debug] Loaded {len(mapping)} anchors from JSON.")
                     
                     found_idx, found_el = self._find_by_name(mapping, ui_name_clean)
                     if found_idx and found_el:
@@ -305,7 +347,7 @@ class RPAExecutorTool(Tool):
                         el_type = found_el.get('type', '?')
                         el_source = found_el.get('source', 'uia')
                         source_label = 'via OCR' if el_source == 'ocr' else 'via UIAutomation'
-                        print(f"[RPA Debug] Found Match! Name '{ui_name_clean}' -> Index {found_idx}, "
+                        logger.debug(f"[RPA Debug] Found Match! Name '{ui_name_clean}' -> Index {found_idx}, "
                               f"Name: '{el_name}', Type: '{el_type}', Source: {source_label}. "
                               f"Target Coordinates: ({x}, {y})")
                         result_prefix = f"[UI Name Match: '{el_name}' (index {found_idx}, {source_label})] "
@@ -314,7 +356,7 @@ class RPAExecutorTool(Tool):
                         available = [f"  {idx}: '{el.get('name', '')}' ({el.get('type', '')})" 
                                      for idx, el in list(mapping.items())[:30] if el.get('name')]
                         available_str = "\n".join(available)
-                        print(f"[RPA Debug] No match found for name '{ui_name_clean}'.")
+                        logger.info(f"[RPA Debug] No match found for name '{ui_name_clean}'.")
                         return (f"Error: No UI element found matching name '{ui_name_clean}'. "
                                 f"Available elements (first 30):\n{available_str}")
                 
@@ -325,22 +367,22 @@ class RPAExecutorTool(Tool):
                 # Resolve ui_index to coordinates (fallback)
                 elif ui_index:
                     if not mapping:
-                        print(f"[RPA Debug] ERROR: anchors.json file does not exist.")
+                        logger.info(f"[RPA Debug] ERROR: anchors.json file does not exist.")
                         return "Error: No recent anchors found. Did you run screen_capture with annotate_ui=True?"
                     
                     ui_index = str(ui_index).strip('"\'')
-                    print(f"[RPA Debug] Attempting to click UI Anchor Index: {ui_index}")
-                    print(f"[RPA Debug] Loaded {len(mapping)} anchors from JSON.")
+                    logger.info(f"[RPA Debug] Attempting to click UI Anchor Index: {ui_index}")
+                    logger.info(f"[RPA Debug] Loaded {len(mapping)} anchors from JSON.")
                     
                     if str(ui_index) in mapping:
                         center = mapping[str(ui_index)]["center"]
                         x, y = int(center[0]), int(center[1])
                         el_name = mapping[str(ui_index)]['name']
                         el_type = mapping[str(ui_index)]['type']
-                        print(f"[RPA Debug] Found Match! Index {ui_index} -> Name: '{el_name}', Type: '{el_type}'. Target Coordinates: ({x}, {y})")
+                        logger.info(f"[RPA Debug] Found Match! Index {ui_index} -> Name: '{el_name}', Type: '{el_type}'. Target Coordinates: ({x}, {y})")
                         result_prefix = f"[UI Anchor {ui_index}: {el_name}] "
                     else:
-                        print(f"[RPA Debug] ERROR: Index {ui_index} NOT FOUND in anchors.json.")
+                        logger.info(f"[RPA Debug] ERROR: Index {ui_index} NOT FOUND in anchors.json.")
                         return f"Error: UI index {ui_index} not found in recent anchors."
                 
                 # Allow raw x,y if provided directly (VLM visual grounding fallback if OCR missed it)
@@ -353,28 +395,28 @@ class RPAExecutorTool(Tool):
                         oy = int(ctx.get("offset_y", 0))
                         x = int((raw_x / scale_ratio) + ox)
                         y = int((raw_y / scale_ratio) + oy)
-                        print(f"[RPA Debug] Transformed VLM coordinates ({raw_x}, {raw_y}) -> Physical ({x}, {y}) [scale={scale_ratio:.2f}, offset=({ox},{oy})]")
+                        logger.info(f"[RPA Debug] Transformed VLM coordinates ({raw_x}, {raw_y}) -> Physical ({x}, {y}) [scale={scale_ratio:.2f}, offset=({ox},{oy})]")
                         result_prefix = f"[Coordinate Match: VLM({raw_x}, {raw_y}) -> Physical({x}, {y})] "
                     else:
-                        print(f"[RPA Debug] Using raw coordinates: ({x}, {y}).")
+                        logger.info(f"[RPA Debug] Using raw coordinates: ({x}, {y}).")
                         result_prefix = f"[Coordinate Match: ({x}, {y})] "
                 
                 if x is None or y is None:
-                    print(f"[RPA Debug] ERROR: Target coordinates are missing (action: {action}).")
+                    logger.info(f"[RPA Debug] ERROR: Target coordinates are missing (action: {action}).")
                     return (f"Error: Action '{action}' requires ui_name, ui_index, or (x, y) coordinates. "
                             f"Recommended: use ui_name with the element's label text.")
                 
                 # Multi-monitor boundary check
                 bounds_warning = self._check_bounds(x, y)
                 if bounds_warning:
-                    print(f"[RPA Debug] {bounds_warning}")
+                    logger.info(f"[RPA Debug] {bounds_warning}")
                     result_prefix = f"{bounds_warning}\n{result_prefix}" if result_prefix else f"{bounds_warning}\n"
                 
-                print(f"[RPA Debug] Executing mouse movement to ({x}, {y}) over 0.5s smoothly...")
+                logger.info(f"[RPA Debug] Executing mouse movement to ({x}, {y}) over 0.5s smoothly...")
                 # Move to location smoothly (0.5 seconds)
                 pyautogui.moveTo(x, y, duration=0.5)
                 
-                print(f"[RPA Debug] Performing mouse action: '{action}' at ({x}, {y})...")
+                logger.info(f"[RPA Debug] Performing mouse action: '{action}' at ({x}, {y})...")
                 if action == "click":
                     pyautogui.click()
                 elif action == "double_click":
@@ -436,6 +478,8 @@ class RPAExecutorTool(Tool):
         except pyautogui.FailSafeException:
             return "Error: PyAutoGUI FailSafe triggered (mouse moved to corner). Action aborted for safety."
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error executing RPA action '{action}': {str(e)}"
 
     async def _run_vlm_verification(
@@ -482,6 +526,8 @@ class RPAExecutorTool(Tool):
                     expected_outcome=expected_outcome,
                 )
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 return action_result + f"\n⚠️ VLM verification error: {e}"
 
             if vr.success:
@@ -492,9 +538,9 @@ class RPAExecutorTool(Tool):
 
             # Verification failed
             correction = vr.suggested_correction or "no suggestion"
-            print(
+            logger.info(
                 f"[RPA] VLM verification failed (attempt {attempt}/{max_retries}): "
-                f"{vr.explanation} | suggestion: {correction}"
+                f"Reason: {vr.failure_reason} | Suggestion: {correction}"
             )
 
             if attempt >= max_retries:

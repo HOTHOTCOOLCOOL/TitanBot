@@ -1,6 +1,6 @@
+from __future__ import annotations
 """Mochat pure helper functions — extracted from mochat.py for maintainability."""
 
-from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field

@@ -78,6 +78,8 @@ class NanobotDingTalkHandler(CallbackHandler):
             return AckMessage.STATUS_OK, "OK"
 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Error processing DingTalk message: {e}")
             # Return OK to avoid retry loop from DingTalk server
             return AckMessage.STATUS_OK, "Error"
@@ -142,12 +144,16 @@ class DingTalkChannel(BaseChannel):
                 try:
                     await self._client.start()
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     logger.warning(f"DingTalk stream error: {e}")
                 if self._running:
                     logger.info("Reconnecting DingTalk stream in 5 seconds...")
                     await asyncio.sleep(5)
 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.exception(f"Failed to start DingTalk channel: {e}")
 
     async def stop(self) -> None:
@@ -186,6 +192,8 @@ class DingTalkChannel(BaseChannel):
             self._token_expiry = time.time() + int(res_data.get("expireIn", 7200)) - 60
             return self._access_token
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Failed to get DingTalk access token: {e}")
             return None
 
@@ -222,6 +230,8 @@ class DingTalkChannel(BaseChannel):
             else:
                 logger.debug(f"DingTalk message sent to {msg.chat_id}")
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Error sending DingTalk message: {e}")
 
     async def _on_message(self, content: str, sender_id: str, sender_name: str) -> None:
@@ -242,4 +252,6 @@ class DingTalkChannel(BaseChannel):
                 },
             )
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Error publishing DingTalk message: {e}")

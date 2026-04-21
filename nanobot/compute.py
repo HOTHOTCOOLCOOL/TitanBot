@@ -7,8 +7,10 @@ event loop to prevent blocking the heartbeat and message processing.
 
 import asyncio
 import concurrent.futures
+from typing import Any, Callable
+
 from loguru import logger
-from typing import Callable, Any
+
 
 class ComputeBroker:
     """Singleton broker for CPU-heavy tasks."""
@@ -43,14 +45,16 @@ class ComputeBroker:
             # Fallback: run synchronously if pool was shut down (graceful degradation)
             logger.warning(f"ComputeBroker executor is shut down, running {func.__name__} synchronously")
             return func(*args)
-            
+
         loop = asyncio.get_running_loop()
-        
+
         # loguru logger is picklable, but passing logger objects is risky.
         # We keep the function signatures clean (primitives in, primitives out).
         try:
             return await loop.run_in_executor(self._executor, func, *args)
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Error in ComputeBroker task {func.__name__}: {e}")
             raise
 

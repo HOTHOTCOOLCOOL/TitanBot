@@ -1,3 +1,4 @@
+import asyncio
 """Personalization subsystem: Memory Distiller."""
 
 import json
@@ -86,4 +87,6 @@ Respond with ONLY valid JSON, no markdown fences."""
             logger.info("Memory Distiller: Successfully updated preferences.json (L1 Memory).")
             
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Memory Distiller failed: {e}")

@@ -14,15 +14,15 @@ import secrets
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from loguru import logger
 
-from nanobot.config.loader import load_config
+from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.bus.events import OutboundMessage, InboundMessage
+from nanobot.config.loader import load_config
 
 try:
     from nanobot.utils.metrics import get_metrics
@@ -70,6 +70,7 @@ def init_dashboard(bus: MessageBus, workspace: Path, token: str = ""):
 # ====================================================================
 import time
 
+
 class RateLimiter:
     """Token bucket rate limiter for the dashboard API."""
     def __init__(self, capacity: int = 100, refill_rate: float = 10.0):
@@ -83,13 +84,13 @@ class RateLimiter:
         async with self._lock:
             now = time.time()
             elapsed = now - self.last_refill
-            
+
             # Refill tokens
             new_tokens = int(elapsed * self.refill_rate)
             if new_tokens > 0:
                 self.tokens = min(self.capacity, self.tokens + new_tokens)
                 self.last_refill = now
-                
+
             if self.tokens >= tokens:
                 self.tokens -= tokens
                 return True
@@ -192,11 +193,15 @@ async def websocket_endpoint(websocket: WebSocket):
                             content=msg_text
                         )
                         await _bus.publish_inbound(inbound)
-                except Exception:
+                except Exception as _e:
+                    if isinstance(_e, asyncio.CancelledError):
+                        raise
                     pass
     except WebSocketDisconnect:
         _active_websockets.discard(websocket)
-    except Exception:
+    except Exception as _e:
+        if isinstance(_e, asyncio.CancelledError):
+            raise
         # F1/Phase 25: catch unexpected errors (e.g. ConnectionClosedError)
         # to prevent stale entries in _active_websockets
         _active_websockets.discard(websocket)
@@ -205,12 +210,14 @@ async def broadcast_ws_message(msg_type: str, data: Any):
     """Broadcast an event to all connected dashboard websockets."""
     if not _active_websockets:
         return
-        
+
     payload = json.dumps({"type": msg_type, "data": data}, ensure_ascii=False)
     for ws in _active_websockets.copy():  # Phase 18A: iterate over copy for safety
         try:
             await ws.send_text(payload)
-        except Exception:
+        except Exception as _e:
+            if isinstance(_e, asyncio.CancelledError):
+                raise
             # R9: remove dead websocket on failure
             _active_websockets.discard(ws)
 
@@ -253,16 +260,18 @@ def _deep_merge(original: dict, updates: dict) -> dict:
 async def get_dashboard_config():
     """Phase 48: Read raw config with sensitive fields masked + optimistic lock hash."""
     from nanobot.config.loader import get_config_path
-    
+
     path = get_config_path()
     if not path.exists():
         return {"config": {}, "version_hash": ""}
-        
+
     try:
         raw_json = json.loads(path.read_text(encoding="utf-8"))
         mtime = str(path.stat().st_mtime)
         return {"config": _mask_sensitive_fields(raw_json), "version_hash": mtime}
     except Exception as e:
+        if isinstance(e, asyncio.CancelledError):
+            raise
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/config", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
@@ -270,19 +279,19 @@ async def update_dashboard_config(request: Request):
     """Phase 48: Safe update config with optimistic lock and deep merge."""
     from nanobot.config.loader import get_config_path, save_config_with_backup
     from nanobot.config.schema import Config
-    
+
     body = await request.body()
     if len(body) > 1_048_576:
         raise HTTPException(status_code=413, detail="Payload too large (max 1MB)")
-        
+
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON format")
-        
+
     updates = data.get("config", {})
     client_version_hash = data.get("version_hash", "")
-    
+
     path = get_config_path()
     if path.exists():
         current_mtime = str(path.stat().st_mtime)
@@ -290,31 +299,35 @@ async def update_dashboard_config(request: Request):
             raise HTTPException(status_code=409, detail="Config modified on disk. Please refresh.")
         try:
             original = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as _e:
+            if isinstance(_e, asyncio.CancelledError):
+                raise
             original = {}
     else:
         original = {}
-        
+
     merged_data = _deep_merge(original, updates)
-    
+
     try:
         # Validate merged config through Pydantic pipeline
         validated_config = Config.model_validate(merged_data)
         save_config_with_backup(validated_config, path, exclude_unset=True)
         return {"success": True}
     except Exception as e:
+        if isinstance(e, asyncio.CancelledError):
+            raise
         raise HTTPException(status_code=422, detail=str(e))
 
 @app.get("/api/capabilities", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
 async def get_capabilities():
     """Phase 48: Provide CapabilityTags for the Sandbox Config Editor UI."""
     from nanobot.agent.capability import CapabilityTag
-    
+
     items = []
     for tag in CapabilityTag:
         if tag == CapabilityTag.NONE or tag.name == "IS_HIGH_RISK":
             continue
-            
+
         risk = "low"
         if tag in (CapabilityTag.SHELL_EXECUTION, CapabilityTag.CODE_EVALUATION):
             risk = "medium"
@@ -342,7 +355,7 @@ async def get_capabilities():
             title, desc = "Destructive Operation", "Allow data deletion or formatting operations. (Extremely dangerous)"
         elif tag == CapabilityTag.UNTRUSTED_EXTERNAL:
             title, desc = "Untrusted External", "Tool originates from unverified third parties (e.g., external MCP servers)"
-            
+
         items.append({
             "name": tag.name,
             "title": title,
@@ -350,7 +363,7 @@ async def get_capabilities():
             "value": tag.value,
             "risk": risk
         })
-        
+
     return {"capabilities": items}
 
 
@@ -368,7 +381,7 @@ async def get_memory():
     """Read MEMORY.md."""
     if not _workspace:
         return {"content": "Workspace not configured."}
-    
+
     mem_file = _workspace / "memory" / "MEMORY.md"
     content = mem_file.read_text(encoding="utf-8") if mem_file.exists() else ""
     return {"content": content}
@@ -400,12 +413,14 @@ async def get_tasks():
     """Read tasks.json."""
     if not _workspace:
         return {"tasks": {}}
-        
+
     tasks_file = _workspace / "memory" / "tasks.json"
     if tasks_file.exists():
         try:
             return {"tasks": json.loads(tasks_file.read_text(encoding="utf-8"))}
-        except Exception:
+        except Exception as _e:
+            if isinstance(_e, asyncio.CancelledError):
+                raise
             pass
     return {"tasks": {}}
 
@@ -436,12 +451,14 @@ async def get_preferences():
     """Read preferences.json."""
     if not _workspace:
         return {"preferences": {}}
-        
+
     prefs_file = _workspace / "memory" / "preferences.json"
     if prefs_file.exists():
         try:
             return {"preferences": json.loads(prefs_file.read_text(encoding="utf-8"))}
-        except Exception:
+        except Exception as _e:
+            if isinstance(_e, asyncio.CancelledError):
+                raise
             pass
     return {"preferences": {}}
 
@@ -466,7 +483,9 @@ async def get_reflections():
             data = json.loads(reflections_file.read_text(encoding="utf-8"))
             items = data.get("reflections", [])
             return {"reflections": items, "count": len(items)}
-        except Exception:
+        except Exception as _e:
+            if isinstance(_e, asyncio.CancelledError):
+                raise
             pass
     return {"reflections": [], "count": 0}
 
@@ -482,7 +501,9 @@ async def get_knowledge_graph():
             data = json.loads(graph_file.read_text(encoding="utf-8"))
             items = data.get("triples", [])
             return {"triples": items, "count": len(items)}
-        except Exception:
+        except Exception as _e:
+            if isinstance(_e, asyncio.CancelledError):
+                raise
             pass
     return {"triples": [], "count": 0}
 
@@ -498,7 +519,9 @@ async def get_knowledge_base():
             data = json.loads(tasks_file.read_text(encoding="utf-8"))
             entries = data.get("tasks", []) if isinstance(data, dict) else data if isinstance(data, list) else []
             return {"entries": entries, "count": len(entries)}
-        except Exception:
+        except Exception as _e:
+            if isinstance(_e, asyncio.CancelledError):
+                raise
             pass
     return {"entries": [], "count": 0}
 
@@ -510,8 +533,52 @@ async def get_background_tasks():
         from nanobot.utils.task_manager import BackgroundTaskManager
         mgr = BackgroundTaskManager.get()
         return {"tasks": mgr.list_tasks(), "summary": mgr.summary()}
-    except Exception:
+    except Exception as _e:
+        if isinstance(_e, asyncio.CancelledError):
+            raise
         return {"tasks": [], "summary": {}}
+
+@app.get("/api/wiki/status", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
+async def get_wiki_status():
+    """Get Knowledge Graph Wiki export status (Phase 50)."""
+    if not _workspace:
+        return {"status": "Workspace not configured", "last_sync": None}
+
+    from nanobot.agent.wiki_syncer import WikiSyncer
+    syncer = WikiSyncer(_workspace)
+    if not syncer.wiki_dir.exists():
+        return {"status": "Never Synced", "last_sync": None}
+
+    try:
+        from datetime import datetime
+        mtime = syncer.wiki_dir.stat().st_mtime
+        dt = datetime.fromtimestamp(mtime).isoformat()
+        return {"status": "Synced", "last_sync": dt}
+    except Exception as e:
+        if isinstance(e, asyncio.CancelledError):
+            raise
+        return {"status": "Error", "last_sync": None, "error": str(e)}
+
+@app.post("/api/wiki/sync", dependencies=[Depends(verify_token), Depends(check_rate_limit)])
+async def trigger_wiki_sync():
+    """Trigger an immediate Knowledge Graph Wiki export (Phase 50)."""
+    if not _workspace:
+        return {"success": False, "error": "Workspace not configured"}
+
+    try:
+        from nanobot.agent.wiki_syncer import WikiSyncer
+        syncer = WikiSyncer(_workspace)
+        e, t, d = syncer.sync(force=True)
+        return {
+            "success": True,
+            "entities_updated": e,
+            "triples_connected": t,
+            "directives_exported": d
+        }
+    except Exception as e:
+        if isinstance(e, asyncio.CancelledError):
+            raise
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ====================================================================
@@ -561,7 +628,9 @@ async def _broadcast_stream_event(event) -> None:
     for ws in _stream_websockets.copy():
         try:
             await ws.send_text(payload)
-        except Exception:
+        except Exception as _e:
+            if isinstance(_e, asyncio.CancelledError):
+                raise
             _stream_websockets.discard(ws)
 
 
@@ -595,7 +664,9 @@ async def _broadcast_domain_event(event) -> None:
     for ws in _active_websockets.copy():
         try:
             await ws.send_text(payload)
-        except Exception:
+        except Exception as _e:
+            if isinstance(_e, asyncio.CancelledError):
+                raise
             # R15: remove dead websocket on failure
             if ws in _active_websockets:
                 _active_websockets.remove(ws)

@@ -186,6 +186,8 @@ Note: Requires Outlook application to be running on Windows."""
             else:
                 return f"Unknown action: {action}"
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Outlook tool error: {e}")
             return f"Error: {str(e)}"
     
@@ -432,17 +434,23 @@ Note: Requires Outlook application to be running on Windows."""
                             break
                             
                     except Exception as e:
+                        if isinstance(e, asyncio.CancelledError):
+                            raise
                         logger.debug(f"Error processing email {i}: {e}")
                         continue
                     finally:
                         if item:
                             try:
                                 del item
-                            except Exception:
+                            except Exception as _e:
+                                if isinstance(_e, asyncio.CancelledError):
+                                    raise
                                 pass
                 
                 return results, folder_name
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Error in find sync thread: {e}")
                 return [], folder_name
             finally:
@@ -523,6 +531,8 @@ Preview: {preview}...""")
                     attachment = item.Attachments[outlook_index]  # 0-based!
                     filename = attachment.FileName
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     return f"Error: Could not access attachment: {e}"
                 
                 save_path = os.path.join(save_directory, filename)
@@ -540,6 +550,8 @@ Preview: {preview}...""")
                 
                 return f"Attachment saved to: {save_path}\nFilename: {filename}\nSize: {os.path.getsize(save_path)} bytes"
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 return f"Error connecting to Outlook or obtaining attachment: {e}"
             finally:
                 if outlook:
@@ -609,12 +621,16 @@ Preview: {preview}...""")
                         attachment.SaveAsFile(save_path)
                         saved_files.append(f"{filename} -> {save_path}")
                     except Exception as e:
+                        if isinstance(e, asyncio.CancelledError):
+                            raise
                         errors.append(f"{att_info['filename']}: {e}")
                     finally:
                         if attachment:
                             try:
                                 del attachment
-                            except Exception:
+                            except Exception as _e:
+                                if isinstance(_e, asyncio.CancelledError):
+                                    raise
                                 pass
                 
                 del item
@@ -630,6 +646,8 @@ Preview: {preview}...""")
                 
                 return "\n".join(output)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 return f"Error executing all attachments task: {e}"
             finally:
                 if outlook:
@@ -671,6 +689,8 @@ Preview: {preview}...""")
                 try:
                     recip.PropertyAccessor.SetProperty(PR_SMTP_ADDRESS, clean_recipient)
                 except Exception as pa_err:
+                    if isinstance(pa_err, asyncio.CancelledError):
+                        raise
                     logger.debug(f"PropertyAccessor.SetProperty failed (non-fatal): {pa_err}")
                 
                 # ResolveAll is more reliable than individual Resolve
@@ -691,11 +711,15 @@ Preview: {preview}...""")
                     logger.info(f"Outlook: email sent successfully to {clean_recipient}")
                     return f"Email sent successfully to {clean_recipient}"
                 except Exception as send_err:
+                    if isinstance(send_err, asyncio.CancelledError):
+                        raise
                     logger.warning(f"Outlook Send() failed with PropertyAccessor approach: {send_err}")
                     # Fallback: create a fresh mail item using mail.To directly
                     try:
                         del mail
-                    except Exception:
+                    except Exception as _e:
+                        if isinstance(_e, asyncio.CancelledError):
+                            raise
                         pass
                     
                     logger.info("Attempting fallback: mail.To direct assignment")
@@ -712,6 +736,8 @@ Preview: {preview}...""")
                     return f"Email sent successfully to {clean_recipient} (via fallback)"
 
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Outlook send_email failed: {e}")
                 return f"Error: Failed to send email to {clean_recipient}: {e}"
             finally:
@@ -721,7 +747,9 @@ Preview: {preview}...""")
                     del namespace
                 try:
                     pythoncom.CoUninitialize()
-                except Exception:
+                except Exception as _e:
+                    if isinstance(_e, asyncio.CancelledError):
+                        raise
                     pass
         
         res = await asyncio.to_thread(_sync_send_email)
@@ -739,7 +767,9 @@ Preview: {preview}...""")
                     try:
                         for subfolder in folder.Folders:
                             result.extend(get_all_folders(subfolder, f"{prefix}{folder.Name}/"))
-                    except Exception:
+                    except Exception as _e:
+                        if isinstance(_e, asyncio.CancelledError):
+                            raise
                         pass
                     return result
                 
@@ -752,6 +782,8 @@ Preview: {preview}...""")
                 
                 return "\n".join(output)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 return f"Error listing folders: {e}"
             finally:
                 if outlook:
@@ -810,6 +842,8 @@ Received: {received}
 {body}"""
                 return output
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Error reading email: {e}")
                 return f"Error reading email: {str(e)}"
             finally:

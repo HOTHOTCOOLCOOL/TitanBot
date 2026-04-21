@@ -422,6 +422,27 @@ class CronService:
                 logger.info(f"Cron: job '{job.name}' completed successfully")
             
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
+                
+            # Phase 62: Graceful pause on Azure Content Filter (no retry)
+            try:
+                from nanobot.utils.exceptions import AzureContentFilterException
+                if isinstance(e, AzureContentFilterException):
+                    job.state.last_status = "error_fatal"
+                    job.state.last_error = f"Azure Content Filter Blocked: {str(e)[:200]}"
+                    job.enabled = False
+                    job.state.next_run_at_ms = None
+                    logger.error(f"Cron: job '{job.name}' reached fatal error state (Content Filter)")
+                    await self._notify_failure(job.name, f"FATAL ERROR (Azure Content Filter): {str(e)[:200]}")
+                    
+                    job.state.last_run_at_ms = start_ms
+                    job.updated_at_ms = _now_ms()
+                    self._save_store()
+                    return
+            except ImportError:
+                pass
+                
             job.state.last_status = "error"
             job.state.last_error = str(e)
             await self._notify_failure(job.name, str(e))
@@ -443,6 +464,8 @@ class CronService:
         try:
             await self.notification_callback(job_name, error_msg)
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.debug(f"Cron notification callback error: {e}")
 
     # ========== Public API ==========

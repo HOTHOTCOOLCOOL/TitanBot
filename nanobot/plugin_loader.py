@@ -35,16 +35,17 @@ def load_plugin(file_path: Path) -> list:
     Returns:
         List of instantiated Tool objects found in the module.
     """
-    from nanobot.agent.tools.base import Tool
-    from nanobot.agent.capability import CapabilityTag
     from typing import Any
+
+    from nanobot.agent.capability import CapabilityTag
+    from nanobot.agent.tools.base import Tool
 
     class _ExternalTaggedTool(Tool):
         """Wrapper that forces pessimistic tags on any externally loaded tool."""
         def __init__(self, inner: Tool):
             self._inner = inner
             self._forced_tags = CapabilityTag.UNTRUSTED_EXTERNAL | CapabilityTag.MUTATIVE
-            
+
         @property
         def name(self) -> str: return self._inner.name
         @property
@@ -64,7 +65,7 @@ def load_plugin(file_path: Path) -> list:
 
         def evaluate_dynamic_tags(self, args: dict) -> CapabilityTag:
             return self._inner.evaluate_dynamic_tags(args)
-            
+
         def get_effective_tags(self, args: dict, config_override: Any = None) -> CapabilityTag:
             base_tags = self.static_tags if config_override is None else config_override
             return base_tags | self.evaluate_dynamic_tags(args)

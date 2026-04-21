@@ -1,3 +1,4 @@
+import asyncio
 """Image generation providers (DALL-E, Seedance)."""
 
 import os
@@ -55,6 +56,8 @@ class OpenAIImageProvider(BaseImageGenProvider):
                         return await download_image(image_url, client)
                 return None
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"DALL-E generation failed: {e}")
             return None
 
@@ -93,6 +96,8 @@ class VolcengineImageProvider(BaseImageGenProvider):
                         return await download_image(image_url, client)
                 return None
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Volcengine generation failed: {e}")
             return None
 
@@ -109,6 +114,8 @@ async def download_image(url: str, client: httpx.AsyncClient) -> "Path | None":
         file_path.write_bytes(img_resp.content)
         return file_path
     except Exception as e:
+        if isinstance(e, asyncio.CancelledError):
+            raise
         logger.error(f"Failed to download generated image: {e}")
         return None
 

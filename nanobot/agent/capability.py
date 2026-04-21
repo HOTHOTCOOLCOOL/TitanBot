@@ -16,14 +16,26 @@ class CapabilityTag(Flag):
     
     # 风险维度
     MUTATIVE           = auto()  # 产生可持久化的状态变更副作用
-    DESTRUCTIVE        = auto()  # 高破坏性操作（删除、格式化）
+    SENSITIVE          = auto()  # 高危但可经人类审批放行的操作（→ HITL 软拦截路径）
+                                 # 例如：RPA 系统级热键、config 注入的邮件审批场景
+                                 # 由 evaluate_dynamic_tags() 动态评定，或由 capability_overrides 注入
+    DESTRUCTIVE        = auto()  # 毁灭性操作，永不批准（→ L1 R-DESTRUCTIVE-GUARD 硬阻断）
+                                 # 例如：rm -rf、python -c 代码注入、fork bomb
     UNTRUSTED_EXTERNAL = auto()  # 未经审计的外部插件或 MCP 工具
     
     # 组合快捷方式（HITL & L1 判断基准）
-    # NOTE: SHELL_EXECUTION 本身不是高危判定——exec 执行 `dir` 等查询指令是合法的。
-    # 高危判定由 ExecTool.evaluate_dynamic_tags() 在运行时检测高危命令模式后
-    # 动态追加 DESTRUCTIVE 实现，而非在静态标签层一刀切。
-    IS_HIGH_RISK = DESTRUCTIVE | UNTRUSTED_EXTERNAL
+    # ┌─────────────────────────────────────────────────────────────────────┐
+    # │ 三档分类语义 (ADR-61):                                              │
+    # │  PERMIT   → 直接执行（无任何标签触发，或仅 MUTATIVE / DATA_WRITE）  │
+    # │  HITL     → 软拦截：HITLMiddleware 暂停并等待人工 Approve/Reject    │
+    # │             触发条件: effective_tags & IS_HIGH_RISK                 │
+    # │  L1 HARD  → 硬阻断：R-DESTRUCTIVE-GUARD 直接返回错误，永不执行     │
+    # │             触发条件: effective_tags & DESTRUCTIVE                  │
+    # │                                                                     │
+    # │ DESTRUCTIVE 纳入 IS_HIGH_RISK 的理由：当 L1 因 registry=None 等    │
+    # │ 边缘原因失效时，HITL 作为第二道防线来兜底捕获 DESTRUCTIVE 操作。   │
+    # └─────────────────────────────────────────────────────────────────────┘
+    IS_HIGH_RISK = SENSITIVE | DESTRUCTIVE | UNTRUSTED_EXTERNAL
 
 
 @dataclass

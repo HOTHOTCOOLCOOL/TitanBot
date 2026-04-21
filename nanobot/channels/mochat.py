@@ -1,6 +1,6 @@
+from __future__ import annotations
 """Mochat channel implementation using Socket.IO with HTTP polling fallback."""
 
-from __future__ import annotations
 
 import asyncio
 import json
@@ -131,7 +131,9 @@ class MochatChannel(BaseChannel):
         if self._socket:
             try:
                 await self._socket.disconnect()
-            except Exception:
+            except Exception as _e:
+                if isinstance(_e, asyncio.CancelledError):
+                    raise
                 pass
             self._socket = None
 
@@ -172,6 +174,8 @@ class MochatChannel(BaseChannel):
                 await self._api_send("/api/claw/sessions/send", "sessionId", target.id,
                                      content, msg.reply_to)
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Failed to send Mochat message: {e}")
 
     # ---- config / init helpers ---------------------------------------------
@@ -257,10 +261,14 @@ class MochatChannel(BaseChannel):
             )
             return True
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Failed to connect Mochat websocket: {e}")
             try:
                 await client.disconnect()
-            except Exception:
+            except Exception as _e:
+                if isinstance(_e, asyncio.CancelledError):
+                    raise
                 pass
             self._socket = None
             return False
@@ -326,6 +334,8 @@ class MochatChannel(BaseChannel):
         try:
             raw = await self._socket.call(event_name, payload, timeout=10)
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return {"result": False, "message": str(e)}
         return raw if isinstance(raw, dict) else {"result": True, "data": raw}
 
@@ -338,6 +348,8 @@ class MochatChannel(BaseChannel):
             try:
                 await self._refresh_targets(subscribe_new=self._ws_ready)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.warning(f"Mochat refresh failed: {e}")
             if self._fallback_mode:
                 await self._ensure_fallback_workers()
@@ -352,6 +364,8 @@ class MochatChannel(BaseChannel):
         try:
             response = await self._post_json("/api/claw/sessions/list", {})
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.warning(f"Mochat listSessions failed: {e}")
             return
 
@@ -386,6 +400,8 @@ class MochatChannel(BaseChannel):
         try:
             response = await self._post_json("/api/claw/groups/get", {})
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.warning(f"Mochat getWorkspaceGroup failed: {e}")
             return
 
@@ -448,6 +464,8 @@ class MochatChannel(BaseChannel):
             except asyncio.CancelledError:
                 break
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.warning(f"Mochat watch fallback error ({session_id}): {e}")
                 await asyncio.sleep(max(0.1, self.config.retry_delay_ms / 1000.0))
 
@@ -475,6 +493,8 @@ class MochatChannel(BaseChannel):
             except asyncio.CancelledError:
                 break
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.warning(f"Mochat panel polling error ({panel_id}): {e}")
             await asyncio.sleep(sleep_s)
 
@@ -686,6 +706,8 @@ class MochatChannel(BaseChannel):
         try:
             data = json.loads(self._cursor_path.read_text("utf-8"))
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.warning(f"Failed to read Mochat cursor file: {e}")
             return
         cursors = data.get("cursors") if isinstance(data, dict) else None
@@ -702,6 +724,8 @@ class MochatChannel(BaseChannel):
                 "cursors": self._session_cursor,
             }, ensure_ascii=False, indent=2) + "\n", "utf-8")
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.warning(f"Failed to save Mochat cursor file: {e}")
 
     # ---- HTTP helpers ------------------------------------------------------
@@ -717,7 +741,9 @@ class MochatChannel(BaseChannel):
             raise RuntimeError(f"Mochat HTTP {response.status_code}: {response.text[:200]}")
         try:
             parsed = response.json()
-        except Exception:
+        except Exception as _e:
+            if isinstance(_e, asyncio.CancelledError):
+                raise
             parsed = response.text
         if isinstance(parsed, dict) and isinstance(parsed.get("code"), int):
             if parsed["code"] != 200:

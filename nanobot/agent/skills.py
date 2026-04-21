@@ -1,3 +1,4 @@
+import asyncio
 """Skills loader for agent capabilities."""
 
 import importlib.util
@@ -17,6 +18,14 @@ from typing import Any
 from loguru import logger
 
 from nanobot.utils.helpers import safe_replace
+from nanobot.utils.exceptions import ToolValidationFailure, SkillLoadError
+from nanobot.config.loader import get_config
+
+
+# Transitioned from Denylist to Allowlist to definitively close all standard library pivot vulnerabilities.
+_VALIDATOR_ALLOWED_IMPORTS = {
+    "json", "math", "datetime", "itertools", "hashlib", "time"
+}
 
 
 @dataclass
@@ -625,15 +634,150 @@ class SkillsLoader:
         
         return hooks
 
+    def _load_validator(self, skill_dir: Path, skill_name: str):
+        """
+        Load validator.py via importlib after AST safety scan.
+        Returns the module, or None if validator.py doesn't exist.
+        Raises SkillLoadError if AST scan fails.
+        """
+        validator_path = skill_dir / "validator.py"
+        if not validator_path.exists():
+            return None
+
+        source = validator_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        class ValidatorSecurityVisitor(ast.NodeVisitor):
+            def __init__(self):
+                self.violation = None
+
+            def visit_Import(self, node):
+                for alias in node.names:
+                    root = alias.name.split(".")[0]
+                    if root not in _VALIDATOR_ALLOWED_IMPORTS:
+                        self.violation = f"forbidden import (not in allowlist): '{root}'"
+                        return
+                self.generic_visit(node)
+
+            def visit_ImportFrom(self, node):
+                if getattr(node, "level", 0) > 0:
+                    self.violation = "forbidden relative import"
+                    return
+                if node.module:
+                    root = node.module.split(".")[0]
+                    if root not in _VALIDATOR_ALLOWED_IMPORTS:
+                        self.violation = f"forbidden import (not in allowlist): '{root}'"
+                        return
+                self.generic_visit(node)
+
+            def visit_Call(self, node):
+                if isinstance(node.func, ast.Name):
+                    if node.func.id in ("eval", "exec", "getattr", "__import__", "globals", "locals", "open", "vars", "dir", "setattr", "delattr", "compile", "type"):
+                        self.violation = f"forbidden call '{node.func.id}'"
+                        return
+                if isinstance(node.func, ast.Attribute) and node.func.attr == "import_module":
+                    self.violation = "forbidden call 'import_module'"
+                    return
+                self.generic_visit(node)
+
+            def visit_Attribute(self, node):
+                # Completely seal internal reflection by blocking ANY attribute starting with _ (both private and dunder)
+                if (node.attr.startswith("_") and node.attr not in ("__init__", "__name__")) or \
+                   node.attr in ("tb_frame", "f_globals", "f_builtins", "f_locals", "cr_frame", "gi_frame", "f_code", "cell_contents") or \
+                   node.attr in ("os", "sys", "subprocess", "builtins", "importlib", "traceback", "inspect", "system", "eval", "exec", "popen", "run", "format", "format_map", "enum", "bltns"):
+                    self.violation = f"forbidden attribute getattr '{node.attr}'"
+                    return
+                self.generic_visit(node)
+
+            def visit_Name(self, node):
+                # Categorically block any internal naming conventions (module globals like __spec__, __loader__, __builtins__ and private vars)
+                if node.id.startswith("_") or node.id in ("eval", "exec", "getattr", "globals", "locals", "open", "vars", "dir", "setattr", "delattr", "compile", "type", "breakpoint", "help", "input", "license", "credits", "copyright", "quit", "exit"):
+                    self.violation = f"forbidden usage of '{node.id}'"
+                    return
+                self.generic_visit(node)
+
+        visitor = ValidatorSecurityVisitor()
+        visitor.visit(tree)
+        if visitor.violation:
+            raise SkillLoadError(f"[{skill_name}] validator.py blocked: {visitor.violation}")
+
+        spec = importlib.util.spec_from_file_location(
+            f"nanobot.skill_validators.{skill_name}", validator_path
+        )
+        mod = importlib.util.module_from_spec(spec)
+        mod.ToolValidationFailure = ToolValidationFailure  # Inject exception class to avoid explicit import needed
+        spec.loader.exec_module(mod)
+        return mod
+
+    async def _run_validator(
+        self,
+        validator_mod,
+        action: str,
+        context: dict,
+        skill_name: str,
+        timeout_ms: int = 200,
+    ) -> None:
+        """
+        Execute validator.validate() with a deep-copied context (zero side effects).
+        - Raises ToolValidationFailure on rejection.
+        - Raises ToolValidationFailure on timeout.
+        - On validator crash: logs warning, allows through (fail-open).
+        """
+        import copy
+        import concurrent.futures
+
+        ctx_copy = copy.deepcopy(context)
+        loop = asyncio.get_running_loop()
+
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            await asyncio.wait_for(
+                loop.run_in_executor(ex, validator_mod.validate, action, ctx_copy),
+                timeout=timeout_ms / 1000.0
+            )
+        except ToolValidationFailure:
+            raise
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            raise ToolValidationFailure(
+                f"validator timed out after {timeout_ms}ms", skill_name
+            )
+        except TimeoutError:
+            raise ToolValidationFailure(
+                f"validator timed out after {timeout_ms}ms", skill_name
+            )
+        except Exception as e:
+            logger.warning(f"[{skill_name}] validator.py crashed: {e!r} — skipping safely")
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
+
     async def run_pre_hooks(
         self, skill_name: str, context: dict[str, Any]
     ) -> HookResult:
         """
-        Run all pre-execute hooks for a skill (SK5).
+        Run all pre-execute hooks for a skill (SK5), including Phase 56 Pre-flight verification.
         
         Returns HookResult. If any hook sets proceed=False, execution
         should be blocked with the provided message.
+        Raises ToolValidationFailure on validator rejection.
         """
+        # Phase 56 Pre-flight validation
+        validator_cfg = getattr(get_config().agents, "validator", None)
+        if validator_cfg and validator_cfg.enabled:
+            skill_dir = self._get_skill_dir(skill_name)
+            if skill_dir:
+                validator_mod = self._load_validator(skill_dir, skill_name)
+                if validator_mod is not None:
+                    action = context.get("action", "execute")
+                    await self._run_validator(
+                        validator_mod,
+                        action=action,
+                        context=context,
+                        skill_name=skill_name,
+                        timeout_ms=validator_cfg.timeout_ms
+                    )
+
         hooks = self.get_skill_hooks(skill_name)
         for hook_name in hooks.get("pre_execute", []):
             try:
@@ -643,6 +787,8 @@ class SkillsLoader:
                 if result and not result.proceed:
                     return result
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.warning(
                     f"Pre-hook '{hook_name}' for skill '{skill_name}' failed: {e}"
                 )
@@ -666,6 +812,8 @@ class SkillsLoader:
                     skill_name, hook_name, "post_execute", context, result
                 )
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.warning(
                     f"Post-hook '{hook_name}' for skill '{skill_name}' failed: {e}"
                 )
@@ -817,6 +965,8 @@ class SkillsLoader:
                 )
             
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.warning(
                 f"hooks.py execution failed for skill '{skill_name}' "
                 f"(phase={phase}): {e}"

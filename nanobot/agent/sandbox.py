@@ -58,6 +58,8 @@ class ShellSandbox:
                 await process.wait()  # Ensure child process is reaped (BUG-3)
                 return -1, "", f"Error: Command timed out after {timeout} seconds"
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return -1, "", f"Subprocess creation failed: {e}"
 
 
@@ -148,4 +150,6 @@ class PythonSandbox:
             return True, "", None
             
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return False, f"Failed to run Python sandbox: {e}", None

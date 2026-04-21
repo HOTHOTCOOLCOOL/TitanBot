@@ -1,3 +1,4 @@
+import asyncio
 """Save experience tool for storing tactical hints to the Experience Bank."""
 
 from typing import Any
@@ -71,4 +72,6 @@ class SaveExperienceTool(Tool):
             self._knowledge_store.add_experience(context_trigger=trigger, tactical_prompt=prompt)
             return f"Successfully saved tactical experience for trigger: '{trigger}'"
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error saving experience: {e}"

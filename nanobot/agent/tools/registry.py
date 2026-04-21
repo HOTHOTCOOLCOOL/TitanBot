@@ -75,6 +75,8 @@ class ToolRegistry:
                 result = result[:self.MAX_TOOL_OUTPUT] + "\n\n[OUTPUT TRUNCATED — original length: {:,} chars]".format(len(result))
             return result
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error executing {name}: {str(e)}"
     
     @property

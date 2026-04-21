@@ -1,3 +1,4 @@
+import asyncio
 """Tool for generating images (DALL-E, Seedance)."""
 
 from typing import Any, Callable, Awaitable
@@ -99,4 +100,6 @@ class DrawImageTool(Tool):
             # If no callback (e.g. testing), just return the path
             return f"Image generated successfully at {image_path}. Please use the 'message' tool to send this image path to the user."
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error communicating with image provider: {e}"

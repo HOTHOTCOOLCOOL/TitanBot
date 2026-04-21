@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import asyncio
 """Vector Store for Long-Term Memory (RAG).
 
 Provides semantic search over historical memory using ChromaDB + sentence-transformers.
@@ -13,8 +16,6 @@ Design:
 - Automatic collection migration when embedding dimension changes
 - All public methods are fault-tolerant (return empty on error, never raise)
 """
-
-from __future__ import annotations
 
 import hashlib
 import re
@@ -632,6 +633,8 @@ Return ONLY the supplementary search query string, or nothing."""
                 initial_results.sort(key=lambda x: x["score"], reverse=True)
                 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Knowledge Completion evaluation failed: {e}")
 
         return initial_results[:top_k * 2]
@@ -732,6 +735,8 @@ JSON Output:"""
                 
             return query, []
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"VectorMemory query rewriting failed (non-fatal): {e}")
             return query, []
 

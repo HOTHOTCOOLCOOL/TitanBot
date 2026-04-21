@@ -234,6 +234,28 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         # System prompt
         system_prompt = self.build_system_prompt(skill_names, evicted_context=evicted_context)
         
+        # Inject Task Tracker Status
+        try:
+            from nanobot.agent.task_tracker import get_active_tracker
+            tracker = get_active_tracker()
+            if tracker:
+                task = tracker.get_active_task()
+                if task:
+                    steps = task.steps[-3:] if task.steps else []
+                    status_text = f"\n\n## 📋 Active Task Tracker (ID: {task.task_id[:8]})\n"
+                    status_text += f"**Goal**: {task.user_request[:100]}\n"
+                    for s in steps:
+                        icon = "✅" if s.status == "completed" else "🔄" if s.status == "in_progress" else "❌" if s.status == "failed" else "⏳"
+                        status_text += f"- {icon} {s.name}\n"
+                    
+                    status_text = status_text[:400]
+                    # ADR-59: Strict budget enforcement
+                    if len(system_prompt) + len(status_text) <= context_limit:
+                        system_prompt += status_text
+        except Exception as e:
+            from loguru import logger
+            logger.debug(f"TaskTracker injection skipped: {e}")
+        
         # Inject VectorMemory RAG context
         try:
             rag_results = pre_fetched_rag
@@ -280,6 +302,13 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
         messages.append({"role": "system", "content": system_prompt})
 
+        # Reconstruct multimodal history blocks before trimming
+        for h_msg in history:
+            if "media" in h_msg and h_msg["media"]:
+                if isinstance(h_msg.get("content"), str):
+                    h_msg["content"] = self._build_user_content(h_msg["content"], h_msg["media"])
+                h_msg.pop("media", None)
+
         # Trim history so total context stays within budget
         trimmed_history = self._trim_history(
             history, system_prompt, current_message, context_limit
@@ -292,7 +321,38 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         user_content = self._build_user_content(current_message, media)
         messages.append({"role": "user", "content": user_content})
 
-        return messages
+        # 🟢 Schema Consistency Sanitizer (Schema Strict Fix)
+        # Persistent storage (especially HITL async approvals) might inject orphaned `role: tool` messages
+        # without the accompanying `assistant[tool_calls]` message. Azure OpenAI strictly forbids this.
+        # We rewrite any orphaned `role: tool` messages into `role: user` observations to preserve context
+        # without triggering 502 Bad Requests.
+        sanitized = []
+        for i, msg in enumerate(messages):
+            if msg.get("role") == "tool":
+                valid = False
+                for j in range(i - 1, -1, -1):
+                    prev = messages[j]
+                    if prev.get("role") == "assistant":
+                        if prev.get("tool_calls"):
+                            for tc in prev["tool_calls"]:
+                                if isinstance(tc, dict) and tc.get("id") == msg.get("tool_call_id"):
+                                    valid = True
+                                    break
+                        break
+                    elif prev.get("role") != "tool":
+                        break
+                
+                if not valid:
+                    name = msg.get("name", "unknown_tool")
+                    content = msg.get("content", "")
+                    sanitized.append({
+                        "role": "user",
+                        "content": f"[System Observation: The previously requested tool '{name}' executed with result:]\n{content}"
+                    })
+                    continue
+            sanitized.append(msg)
+
+        return sanitized
 
     # ── Context window management ──────────────────────────────────────
 
@@ -306,7 +366,16 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
                 total += len(content)
             elif isinstance(content, list):
                 for block in content:
-                    total += len(str(block.get("text", "")))
+                    if isinstance(block, dict) and block.get("type") == "image_url":
+                        try:
+                            # Use token-equivalent char length for images (e.g. ~4000 chars) instead of raw base64 string
+                            val = block.get("image_url", {})
+                            if isinstance(val, dict):
+                                total += 4000
+                        except Exception:
+                            total += 1000
+                    else:
+                        total += len(str(block.get("text", "")))
         return total
 
     def _trim_history(
@@ -335,6 +404,22 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         eviction_idx = 0
         while len(trimmed) - eviction_idx > min_keep and self._estimate_chars(trimmed) > target:
             msg_to_evict = trimmed[eviction_idx]
+
+            # --- Phase 57: Visual Silent Downgrade ---
+            has_image = False
+            if isinstance(msg_to_evict.get("content"), list):
+                new_content = []
+                for block in msg_to_evict["content"]:
+                    if isinstance(block, dict) and block.get("type") == "image_url":
+                        has_image = True
+                        new_content.append({"type": "text", "text": "[图片内容已在相关对话中被分析并压缩]"})
+                    else:
+                        new_content.append(block)
+                if has_image:
+                    trimmed[eviction_idx]["content"] = new_content
+                    # Re-evaluate budget immediately because stripping base64 saves massive characters
+                    continue
+
             if msg_to_evict.get("milestone_summary") and not msg_to_evict.get("is_skeleton"):
                 # Downgrade message to its milestone skeleton
                 trimmed[eviction_idx] = {
@@ -517,8 +602,11 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
                             from loguru import logger
                             logger.error(f"Failed to persist visual memory: {e}")
             # ------------------------------------------
+            # ADR-62 Schema Null Compliance: If tool_calls are present, content MUST be null
+            if tool_calls:
+                msg["content"] = None
         else:
-            msg["content"] = ""
+            msg["content"] = None if tool_calls else ""
 
         if tool_calls:
             msg["tool_calls"] = tool_calls

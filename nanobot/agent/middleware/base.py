@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Phase 41: Core types — TurnContext, TurnAction, AgentMiddleware.
 
 TurnContext is the controlled single-turn context that flows through the
@@ -7,7 +8,6 @@ to prevent ad-hoc mutation bugs (Opus critique F1).
 AgentMiddleware is the two-phase base class.  Both hooks are optional no-ops.
 """
 
-from __future__ import annotations
 
 from enum import Enum
 from typing import Any, TYPE_CHECKING

@@ -1,0 +1,30 @@
+# ADR-60: LiteLLM Proxy 模型配置文件
+# 对应 docker-compose.yml 中的 litellm_config.yaml
+
+model_list:
+  # 标准模型（所有用户可用）
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: azure/gpt-4o-mini
+      api_base: os.environ/AZURE_API_BASE
+      api_key: os.environ/AZURE_API_KEY
+      api_version: os.environ/AZURE_API_VERSION
+
+  # 高级模型（仅 VIP Team 授权用户可用；由 Team 权限控制，非此文件控制）
+  - model_name: gpt-4o
+    litellm_params:
+      model: azure/gpt-4o
+      api_base: os.environ/AZURE_API_BASE
+      api_key: os.environ/AZURE_API_KEY
+      api_version: os.environ/AZURE_API_VERSION
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_model_in_db: true
+
+litellm_settings:
+  request_timeout: 120          # 大文件/长上下文请求需要更长超时
+  drop_params: true             # 忽略上游不支持的额外参数，避免 422 报错
+  # ⚠️ success_callback / failure_callback 故意留空
+  # 内网环境无外部 SaaS (Langfuse/DataDog) 可连；写了但未部署会导致每次请求超时报错

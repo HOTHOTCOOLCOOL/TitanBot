@@ -173,6 +173,8 @@ class ExecTool(Tool):
             return result
             
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error executing command: {str(e)}"
 
     def _guard_command(self, command: str, cwd: str) -> str | None:

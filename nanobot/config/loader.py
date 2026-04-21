@@ -58,8 +58,8 @@ def load_config(config_path: Path | None = None) -> Config:
                 data = json.load(f)
             data = _migrate_config(data)
         except (json.JSONDecodeError, ValueError) as e:
-            print(f"Warning: Failed to load config from {path}: {e}")
-            print("Using default configuration.")
+            logger.info(f"Warning: Failed to load config from {path}: {e}")
+            logger.info("Using default configuration.")
 
     return Config(**data)
 

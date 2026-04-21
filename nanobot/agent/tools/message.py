@@ -1,3 +1,4 @@
+import asyncio
 """Message tool for sending messages to users."""
 
 from typing import Any, Callable, Awaitable
@@ -97,4 +98,6 @@ class MessageTool(Tool):
             media_info = f" with {len(media)} attachments" if media else ""
             return f"Message sent to {channel}:{chat_id}{media_info}"
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error sending message: {str(e)}"

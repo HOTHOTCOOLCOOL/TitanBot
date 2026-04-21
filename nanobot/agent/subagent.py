@@ -139,7 +139,7 @@ class SubagentManager(BaseWorkerBridge):
                 raise RuntimeError("SubagentManager missing agent_loop_ref. Cannot run subagent.")
 
             # Delegate completely to the middleware-protected agent loop
-            final_content, _, _ = await self.agent_loop_ref._run_agent_loop(
+            final_content, _, _, _ = await self.agent_loop_ref._run_agent_loop(
                 initial_messages,
                 channel="system",
                 chat_id=f"worker:{task_id}",
@@ -153,6 +153,8 @@ class SubagentManager(BaseWorkerBridge):
             await self._announce_result(task_id, label, task, final_content, origin, "ok")
             
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             error_msg = f"Error: {str(e)}"
             logger.error(f"Subagent [{task_id}] failed: {e}")
             await self._announce_result(task_id, label, task, error_msg, origin, "error")

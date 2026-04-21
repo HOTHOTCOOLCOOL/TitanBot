@@ -365,6 +365,15 @@
 
         <!-- Knowledge Tab -->
         <div id="tab-knowledge" class="tab-content">
+            <!-- Phase 50 KG Wiki Sync Panel -->
+            <div class="stat-card" style="margin-bottom: 20px; border-color: var(--accent-color);">
+                <div class="label" style="margin-bottom: 10px;">Knowledge Graph Wiki Export (Phase 50)</div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button class="btn" style="padding: 6px 12px; font-size: 0.8rem;" onclick="syncWiki()">Sync to Markdown</button>
+                    <span id="wiki-sync-status" style="font-size: 0.85rem; color: #94a3b8;">Status: Checking...</span>
+                </div>
+            </div>
+
             <div class="editor-container">
                 <span class="editor-label">tasks.json (Raw Internal Representation)</span>
                 <textarea id="knowledge-editor" style="font-family: 'Fira Code', monospace;"></textarea>
@@ -598,6 +607,35 @@
             const res = await fetch('/api/tasks', {headers: authHeaders()});
             const data = await res.json();
             document.getElementById('knowledge-editor').value = JSON.stringify(data.tasks, null, 2);
+            
+            // Also fetch wiki status
+            try {
+                const wRes = await fetch('/api/wiki/status', {headers: authHeaders()});
+                const wData = await wRes.json();
+                document.getElementById('wiki-sync-status').textContent = `Status: ${wData.status}` + (wData.last_sync ? ` (Last: ${new Date(wData.last_sync).toLocaleString()})` : '');
+            } catch(e) {
+                document.getElementById('wiki-sync-status').textContent = 'Status: Error';
+            }
+        }
+
+        async function syncWiki() {
+            document.getElementById('wiki-sync-status').textContent = 'Status: Syncing...';
+            try {
+                const res = await fetch('/api/wiki/sync', {
+                    method: 'POST',
+                    headers: authHeaders()
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast(`✅ Wiki synced! (${data.entities_updated} entities)`);
+                } else {
+                    showToast('❌ Wiki sync failed: ' + data.error);
+                }
+                fetchKnowledge(); // refresh status
+            } catch(e) {
+                showToast('❌ Error calling sync api!');
+                document.getElementById('wiki-sync-status').textContent = 'Status: Error';
+            }
         }
 
         async function saveKnowledge() {

@@ -1,56 +1,51 @@
 # Progress Report
- 
- - [x] Phase 44: Cron重试引擎加固与SSRS幻觉防线测试验证通过。
- - [x] Phase 45: 动态沙箱能力标签系统构建完成；(45A) 基础设施、(45B) L1高危Shell拦截规则落地并验证通过。
- - [x] Phase 45C: ExecutionPolicy and Coordinator security injection completed and verified against architectural pitfalls.
- - [x] Phase 44 & Phase 45 全量回归测试与操作演练全部通过 (60/60 test cases passed, bug-hitl & buw bugs fixed).
- - [x] Phase 38: Manager-SubAgent 架构全量人工测试用例验收通过。
- - [x] Phase 46: Fallback-Driven Query Expansion & Offline Experience Consolidator 架构级交叉验证完毕，修复 API 签名与 UI 展示遗漏。
- 
- ## 📅 Next Steps / Backlog (后续计划)
- 
- - [x] **Phase 38A: Manager Base Abstraction (技术债偿还)**
-   - 统一 `SubagentManager` 与 `CoordinatorManager` 的底层接口，提取可配置特权的 `WorkerToolset`，强化 `/task` RPC 协议以支持异构模型配置与 Trace 上下文链路。
- - [x] **Phase 38B: Manager-SubAgent Orchestration (多模型协作)**
-   - 将现有 Worker 架构升维为支持结果精炼、能力安全继承的 SubAgent 并发编排模式，利用主从多级 LLM 彻底解决复杂任务的上下文膨胀。
- - [ ] **Phase 36: Worker Security v2 (Docker seccomp)** *(P3)*
-   - (原 OS Sandbox) 仅在未来 Linux 生产环境部署时，补充基于 Docker seccomp 的轻量级防护。目前 Windows 开发环境无限期搁置。
- - [x] **Phase 37: Execution Trace Archive**
-   - 已拆解并在此前阶段通过 L3 Experience Bank 提炼与独立 Trace Archive 落盘完结，彻底放弃引入 SQLite。
- - [x] **Phase 46A: Fallback-Driven Query Expansion (KG 末端语义扩展)** *(P0)*
-   - `match_knowledge()` 三层全 Miss 后触发 LLM 推断隐式概念词，静默二次 `hybrid_retrieve()`，3s timeout 熔断保护，主路径 P50 零影响。
- - [x] **Phase 46B: Offline Experience Consolidator (离线经验整编器)** *(P1, ~2天)*
- - [x] **Phase 47: 论文分析架构决策与演进评级 (Paper Analysis & Architecture Audit)** *(P1)*
-   - 完成了《SkillClaw》《BubbleRAG》等前沿 Agent 论文分析，并落地为 ADR-47 及后续的 46A/46B。
- - [x] **Phase 48: Dashboard 配置编辑器 (Config Editor UI)** *(P1)* 
-   - 实现了基于乐观锁和脱敏合并机制的双模式配置编辑器，解决权限配置的不透明性。
- - [x] **Phase 49: In-Flight Context Condensation (IFCC)** *(P1, ~1.5天)*
-    - 来源: MemPO (arXiv 2603.00680v3)，借鉴 `<mem>` 标签信号，纯工程实现无需 RL 训练。
-    - 核心: 模型步骤完成后输出 `<mem>结论</mem>`，写入 Message.milestone_summary；_trim_history() 截断时将有 Milestone 的消息降级为骨架而非丢弃，防止"遗忘循环"。
-    - 安全: 解析器严格 role-gate，仅处理 role='assistant' 输出，阻断 Prompt Injection。
-    - 详见 `docs/adr/ADR-49-ifcc-context-condensation.md`
-    - **状态**: 核心功能与全部 3 项（提取过滤、极值截断、防注入）Manual Tests 验证均已通过，交付闭环。
- - [ ] **Phase 50: Knowledge Graph Wiki Export (KG-Wiki)** *(P2, ~4天)*
-   - 来源: Karpathy LLM Wiki (2026)，借鉴 Wiki 可见性理念，不照搬其"Markdown 作为后端核心"设计。
-   - 核心: `wiki_syncer.py` 旁路观测模式 — 基于 `graph.json.updated_at` 时间戳对比，纯代码将 L7 KG 实体投影为 Obsidian 兼容 Markdown Vault（YAML Frontmatter 解决 Alias 映射，`sanitize_title` 防 Windows 非法字符）。
-   - 触发: CLI (`nanobot wiki sync`)、Dashboard Sync 按钮、Cron 旁路任务 — 三者均不经 AgentLoop，零 LLM 调用，零主路径影响。
-   - 开关: `config.features.wiki_export = false`（默认关闭，显式 opt-in）。
-   - 详见 `docs/adr/ADR-50-kg-wiki-export.md`
-  - [x] **Phase 51: K-V 解耦索引 (M-RAG Pattern)** *(P0, ~2.5天)*
-    - 来源: M-RAG (arXiv 2603.26667v1)，借鉴"检索键与注入值解耦"的工程模式，非追求 Benchmark 分数。
-    - 核心: `marker_extractor.py` 将文档提炼为 MetaMarker(key, value)；Dense 向量匹配 key（短句意图），BM25 索引 value（完整上下文），命中后注入 value 给 LLM。
-    - 安全: Lazy Opt-in 旁路（--deep 参数或 Cron 空闲），sha256(content + prompt_version) Hash 缓存，覆盖率 < 0.95 自动退化 Chunking，主路径 P50 零影响。
-    - 开关: `config.features.marker_indexing = false`（默认关闭）。
-    - 详见 `docs/adr/ADR-51-52-mv-rag-group-aware-retrieval.md`
-  - [x] **Phase 52: Group-Aware 并发推理 (GroupRAG Pattern)** *(P1, ~3天)*
-    - 来源: GroupRAG (arXiv 2603.26807v1)，借鉴"分散→收敛 (Convergent Reasoning Net)"拓扑，应用于 Phase 38B SubagentManager。
-    - 核心: `complexity_detector.py` 纯确定性触发（满足 Token>500 / 实体>8 / /parallel 指令 / 结构化关键词 任意 2 条，零 LLM 调用），N 个 SubAgent 并行局部推理，余弦距离冲突检测（阈值 0.3），冲突时 HITL 上报而非 LLM 自行裁决。
-    - 安全: 零 RL/微调依赖，RestrictedWorkerToolset(scope="readonly_search") 约束边界，人类对矛盾结论的裁决主权不可旁路。
-    - 开关: `config.features.parallel_reasoning = false`（默认关闭）。
-    - 详见 `docs/adr/ADR-51-52-mv-rag-group-aware-retrieval.md`
-   - [x] **Phase 53: Excel OLAP 周报自动化 (ExcelActuatorTool)** *(P0, ~1天)*
-     - 背景: IT 封禁 Azure 直连权限，每周一 Gross Sales 报告只能通过 Excel GUI 刷新获取。
-     - 核心: ExcelActuatorTool — 原生 Python Tool（非 ExecTool subprocess，绕过 L1 .py 黑名单），syncio.to_thread 隔离 COM 阻塞，内嵌 pywinauto Watchdog 线程毫秒级点击 OAuth 弹窗（0 LLM Token），wb.SaveAs(workspace/tmp/) 规避 OneDrive StorageSync 锁。
-     - Harness: 经历 5 阶辩证，Opus 暴露了 COM Modal Dialog 死锁、L1 拦截、OneDrive 竞争锁 3 个致命缺陷，Gemini Pro 全盘重构为单工具内聚模型。
-     - 目标文件: EURO DATA CUBE CONNECTION Sales & FF.xlsm | Sheet: Occupancy Details | Cron: 每周一 08:00 CST。
-     - 详见 docs/adr/ADR-53-excel-actuator-rpa.md
+
+## ✅ Completed / Recently Delivered Phases
+
+- [x] **Phase 37-38**: Manager-SubAgent Orchestration & Execution Trace Archive completed.
+- [x] **Phase 44-45**: Cron/SSRS reliability and Dynamic Sandbox capabilities (L1 shell, ExecutionPolicy) shipped and verified.
+- [x] **Phase 46**: Fallback-Driven Query Expansion & Offline Experience Consolidator delivered.
+- [x] **Phase 47**: Paper Analysis & Architecture Audit (ADR-47) finished.
+- [x] **Phase 48**: Dashboard Config Editor (masking sensitive keys) shipped.
+- [x] **Phase 49**: In-Flight Context Condensation (IFCC) shipped (ADR-49).
+- [x] **Phase 50**: Knowledge Graph Wiki Export (KG-Wiki) shipped (ADR-50).
+- [x] **Phase 51-52**: K-V Decoupled Indexing (M-RAG) & Group-Aware Parallel Reasoning (GroupRAG) shipped (ADR-51-52).
+- [x] **Phase 53**: Excel OLAP Automation using ExcelActuatorTool shipped (ADR-53).
+- [x] **Phase 54**: BFF Proxy Gateway (Securing API Keys) shipped (ADR-54).
+- [x] **Phase 55**: Architecture Maintenance (技术债还款) shipped (ADR-55).
+- [x] **Phase 57**: Context Intelligence Upgrade (Waterfall Budget, Visual Silent Downgrade) shipped and verified (ADR-57).
+- [x] **Phase 58**: Documentation Architecture Refactoring (Docs-as-Context) shipped (ADR-58).
+- [x] **Phase 61**: Command Control Tiering - Isolated HITL vs Destructive (ADR-61) shipped and verified.
+- [x] **Phase 62 & 59**: Azure OpenAI Migration Security Hardening & Antigravity Planning Gate integrated.
+  - ✅ Schema 全链路 Null 合规: 追踪 `add_message()` 到 `build_messages()`，保证带 tool_calls 时 content 强制为 null
+  - ✅ Worker/Cron 防御降级: 增设 `AzureContentFilterException` 在 400 content_filter 报错时执行优雅解绑（Graceful Pause），不无限重试
+  - ✅ 严格身份边界（伪装消融）: 删除旧版利用 user role 发送 `[System:...]` 的注入模型，改用虚拟助手与虚拟 Tool Call 安全回传系统事件。软化强硬 HITL 提示文本
+  - ✅ Antigravity - Planning Gate V1: 实装 `write_artifact` 强制实施计划写板与 HITL 审查；实装 `update_task_progress` 进度透明化；实装 TaskTracker 最末 3 步状态直注 System Prompt
+  - ✅ Antigravity - 防御规则池: 实装 `KI Rules` 战术规则短阵，实现匹配关键字时的微小上下文注入；新增测试断言保证单规则不越界 500 字符
+  - ✅ 双轨制日志边界确立：Host Agent 体系强制 loguru，Tool Payload IPC stdout 豁免并 Ruff 保护
+  - ✅ 全域 print() 审计清零：`rpa_executor.py` (15处), `screen_capture.py` (3处), `channels/weixin.py`, `config/loader.py`
+  - ✅ Async CancelledError 守卫：`browser_use_worker.py`, `rpa_executor.py` async 路径加固
+  - ✅ 统一异常类库：新建 `nanobot/utils/exceptions.py` (`NanobotError` / `ProviderExecutionError` / `ToolExecutionError` / `SessionPersistenceError`)
+  - ✅ ExcelActuator COM 精准防御：`self._last_excel_pid` + `win32process.GetWindowThreadProcessId` + 精准 `taskkill /PID`
+  - ✅ Ruff 自动修复：1624 个 import/whitespace 问题消除；per-file-ignores 保护 IPC 脚本
+  - ✅ ARCHITECTURE.md 经验法则 #23 & #24 沉淀
+- [x] **Phase 63**: `execute_phase` 工作流回归测试强化 (ADR-63) 完成。经 Harness 5 阶辩证，废弃 LLM 幻觉映射，引入绿色基线铁律 + Zone A/B/C 架构划区 + pytest(L1)/Codex(L2) 双层串联门控。`execute_phase.md` 精准更新，ARCHITECTURE.md 追加经验法则 #25。
+- [x] **Phase 56**: Pre-flight Skill Verifier (PSV) (ADR-56) 极值打磨后交付。经过严酷的 20 轮“同进程安全限制”攻防战，放弃粗筛黑名单，确立“零能力”执行环境：极限收缩 Allowlist（7 个纯数据包）、封锁全体魔术方法与单下划线私有桥、切断内置动态反射与 format_map 解析后门，实现同进程环境下的 AST 安全隔离闭环。
+
+## 📅 Next Steps / Backlog (后续计划)
+
+
+- [ ] **Phase 60: Enterprise Gateway LiteLLM Migration** *(P1, ADR 已定稿，待进入编码实施阶段)*
+  - 来源: Phase 54 BFF 自研网关运营反思 + Harness 5-阶辩证工作流 (ADR-60 定稿)
+  - 核心决策 (经 Harness 5阶辩证审查敲定):
+    - **迁移零停机**：`/key/generate` 强制透传旧 Token 字符串，200 人客户端无感知，`config.json` 零修改
+    - **基础设施即代码**：`bff/docker-compose.yml` 三容器栈（LiteLLM + Postgres `15-alpine` + `pg-backup` sidecar）
+    - **版本钉死**：`litellm:v1.40.23` 精确钉死，禁用 `latest`，防止 schema 破坏性升级
+    - **每日自动备份**：`db-backup` sidecar 无人工干预，保留 7 天，数据安全兜底
+    - **幂等迁移脚本**：`bff/scripts/import_users_to_litellm.py` 先查重再创建，容错记 `failed_users.txt`
+    - **决策放弃项**：预算硬上限 Budget Cap（无需求）、阈值预警邮件（超过内网范围）、Nginx 反代（破坏极简原则）、动态模型列表（客户端"越权报错"体验可接受）
+  - 详见 `docs/adr/ADR-60-enterprise-gateway-litellm-migration.md`
+  - **状态**: ADR 已定稿，基础设施文件已生成，待进入 Docker 部署验收阶段
+
+
+

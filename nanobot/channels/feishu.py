@@ -158,6 +158,8 @@ class FeishuChannel(BaseChannel):
                 try:
                     self._ws_client.start()
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     logger.warning(f"Feishu WebSocket error: {e}")
                 if self._running:
                     import time; time.sleep(5)
@@ -179,6 +181,8 @@ class FeishuChannel(BaseChannel):
             try:
                 self._ws_client.stop()
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.warning(f"Error stopping WebSocket client: {e}")
         logger.info("Feishu bot stopped")
     
@@ -392,6 +396,8 @@ class FeishuChannel(BaseChannel):
                 logger.debug(f"Feishu message sent to {msg.chat_id}")
                 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Error sending Feishu message: {e}")
     
     def _on_message_sync(self, data: "P2ImMessageReceiveV1") -> None:
@@ -509,6 +515,8 @@ class FeishuChannel(BaseChannel):
             )
             
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Error processing Feishu message: {e}")
 
     def _download_image_sync(self, message_id: str, image_key: str) -> "Path | None":

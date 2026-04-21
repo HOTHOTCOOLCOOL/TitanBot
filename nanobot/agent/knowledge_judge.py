@@ -1,3 +1,4 @@
+import asyncio
 """Knowledge Judge & Persistence for Knowledge Workflow.
 
 Handles LLM-based knowledge quality evaluation (ADD/MERGE/DISCARD),
@@ -81,6 +82,8 @@ Return your evaluation EXACTLY as a JSON object, with no markdown formatting aro
         parsed = json.loads(content)
         return {**default_result, **parsed}
     except Exception as e:
+        if isinstance(e, asyncio.CancelledError):
+            raise
         logger.warning(f"Knowledge Judge failed, using defaults: {e}")
         metrics.increment("knowledge_judge_fallback_count")
         return default_result
@@ -188,6 +191,8 @@ async def save_to_knowledge(
         logger.info(f"knowledge_judge: saved new knowledge for key='{key}'")
         return True
     except Exception as e:
+        if isinstance(e, asyncio.CancelledError):
+            raise
         logger.error(f"knowledge_judge: save failed: {e}")
         metrics.increment("knowledge_save_error_count")
         return False
@@ -276,6 +281,8 @@ async def adapt_knowledge(
                 f"alternative tools unless a step fails.\n\n{adapted}"
             )
     except Exception as e:
+        if isinstance(e, asyncio.CancelledError):
+            raise
         logger.warning(f"knowledge_judge: adaptation failed: {e}")
 
     return format_few_shot_prompt(match)

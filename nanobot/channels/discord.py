@@ -51,6 +51,8 @@ class DiscordChannel(BaseChannel):
             except asyncio.CancelledError:
                 break
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.warning(f"Discord gateway error: {e}")
                 if self._running:
                     logger.info("Reconnecting to Discord gateway in 5 seconds...")
@@ -100,6 +102,8 @@ class DiscordChannel(BaseChannel):
                     response.raise_for_status()
                     return
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     if attempt == 2:
                         logger.error(f"Error sending Discord message: {e}")
                     else:
@@ -175,6 +179,8 @@ class DiscordChannel(BaseChannel):
                 try:
                     await self._ws.send(json.dumps(payload))
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     logger.warning(f"Discord heartbeat failed: {e}")
                     break
                 await asyncio.sleep(interval_s)
@@ -219,6 +225,8 @@ class DiscordChannel(BaseChannel):
                 media_paths.append(str(file_path))
                 content_parts.append(f"[attachment: {file_path}]")
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.warning(f"Failed to download Discord attachment: {e}")
                 content_parts.append(f"[attachment: {filename} - download failed]")
 
@@ -248,7 +256,9 @@ class DiscordChannel(BaseChannel):
             while self._running:
                 try:
                     await self._http.post(url, headers=headers)
-                except Exception:
+                except Exception as _e:
+                    if isinstance(_e, asyncio.CancelledError):
+                        raise
                     pass
                 await asyncio.sleep(8)
 

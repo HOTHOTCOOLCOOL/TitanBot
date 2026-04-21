@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Phase 41 (P41-3): CircuitBreakerMiddleware — failure detection & loop termination.
 
 Handles three types of loop detection:
@@ -8,7 +9,6 @@ Handles three types of loop detection:
 Also fires Phase 37 post-mortem extraction on any detected loop/breaker event.
 """
 
-from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING

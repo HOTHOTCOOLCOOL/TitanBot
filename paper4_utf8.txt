@@ -1,0 +1,5 @@
+﻿Reading PDF: C:\Users\davidliu\Downloads\2602.14470v1.pdf
+Total Pages: 12
+
+--- Page 0 ---
+Failed to read PDF: 'charmap' codec can't encode character '\u2192' in position 884: character maps to <undefined>

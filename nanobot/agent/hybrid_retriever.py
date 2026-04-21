@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Hybrid Retriever — Dense + BM25 scoring engine.
 
 Shared by match_knowledge() and match_experience() in KnowledgeWorkflow to
@@ -6,7 +7,6 @@ takes a query, a list of candidate items, and optional vector memory, then
 returns the best match above a configurable threshold.
 """
 
-from __future__ import annotations
 
 __all__ = ["hybrid_retrieve"]
 

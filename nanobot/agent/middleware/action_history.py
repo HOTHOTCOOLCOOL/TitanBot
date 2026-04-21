@@ -1,10 +1,10 @@
+from __future__ import annotations
 """Phase 41: ActionHistoryMiddleware — browser/RPA action tracking (Phase 33).
 
 Pre:  Injects compact action history into system prompt for browser/RPA tasks.
 Post: Records tool outcomes into the cross-turn action log.
 """
 
-from __future__ import annotations
 
 from nanobot.agent.middleware.base import AgentMiddleware, TurnContext
 from nanobot.agent.loop import (

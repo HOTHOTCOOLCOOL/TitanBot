@@ -113,6 +113,16 @@ target-version = "py311"
 select = ["E", "F", "I", "N", "W"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# Tool Payload 体系：stdout = IPC 契约，print() 神圣不可侵犯，T201 永久豁免
+"nanobot/agent/sandbox_worker.py" = ["T201"]
+# SSRS Skill fetch_report.py 被 ExecTool 以 subprocess 调用，stdout = IPC 数据契约
+"nanobot/skills/ssrs-report/fetch_report.py" = ["T201", "I001", "E402"]
+# Skill 脚本通用：允许条件 import 顺序 + print IPC
+"nanobot/scripts/*.py" = ["I001", "T201", "E402"]
+# CLI __main__ 入口：print() 是 TTY 用户交互输出，不是日志
+"nanobot/onboard.py" = ["T201"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

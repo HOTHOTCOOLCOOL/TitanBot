@@ -1,0 +1,58 @@
+version: "3.9"
+
+# ADR-60: LiteLLM Enterprise Gateway Stack
+# 启动命令: docker-compose up -d
+# 首次启动前: mkdir -p backups pg_data && chmod 777 backups
+
+services:
+  litellm-db:
+    image: postgres:15-alpine   # 版本钉死，禁止改为 latest
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ./pg_data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db-backup:
+    image: prodrigestivill/postgres-backup-local:14
+    environment:
+      POSTGRES_HOST: litellm-db
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: "7"
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      litellm-db:
+        condition: service_healthy
+    restart: always
+
+  litellm-proxy:
+    image: ghcr.io/berriai/litellm:v1.40.23   # 版本钉死，禁止改为 latest
+    ports:
+      - "8099:4000"   # 客户端访问 :8099 → 内部 :4000，保持客户端零变更
+    environment:
+      DATABASE_URL: postgresql://litellm:${DB_PASSWORD}@litellm-db:5432/litellm
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      AZURE_API_KEY: ${BFF_AZURE_API_KEY}
+      AZURE_API_BASE: ${BFF_AZURE_API_BASE}
+      AZURE_API_VERSION: ${BFF_AZURE_API_VERSION}
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "4"]
+    depends_on:
+      litellm-db:
+        condition: service_healthy
+    restart: always
+
+# 注意: pg_data 使用 bind mount（./pg_data）而非 named volume，
+# 便于宿主机直接访问数据目录，降低误操作 docker volume prune 的数据丢失风险

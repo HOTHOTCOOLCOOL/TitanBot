@@ -1,0 +1,58 @@
+﻿Reading PDF: C:\Users\davidliu\Downloads\2602.12735v1.pdf
+Total Pages: 32
+
+--- Page 0 ---
+TechnicalReport TongyiDeepResearch
+VimRAG: Navigating Massive Visual Context in
+Retrieval-Augmented Generation via Multimodal Memory Graph
+QiuchenWang,ShihangWang,YuZeng,QiangZhang,FanruiZhang,ZhuoningGuo,
+BosiZhang,WenxuanHuang,LinChen,ZehuiChen,PengjunXie,RuixueDingå
+TongyiLab,AlibabaGroup
+Abstract
+Effectivelyretrieving,reasoning,andunderstandingmultimodalinformationremains
+acriticalchallengeforagenticsystems. TraditionalRetrieval-augmentedGeneration
+(RAG) methods rely on linear interaction histories, which struggle to handle long-
+context tasks, especially those involving information-sparse yet token-heavy visual
+data in iterative reasoning scenarios. To bridge this gap, we introduce VimRAG, a
+frameworktailoredformultimodalRetrieval-augmentedReasoningacrosstext,images,
+and videos. Inspired by our systematic study, we model the reasoning process as a
+dynamicdirectedacyclicgraphthatstructurestheagentstatesandretrievedmultimodal
+evidence. Buildinguponthisstructuredmemory, weintroduceaGraph-Modulated
+VisualMemoryEncodingmechanism,withwhichthesignificanceofmemorynodes
+isevaluatedviatheirtopologicalposition,allowingthemodeltodynamicallyallocate
+high-resolutiontokenstopivotalevidencewhilecompressingordiscardingtrivialclues.
+Toimplementthisparadigm,weproposeaGraph-GuidedPolicyOptimizationstrategy.
+Thisstrategydisentanglesstep-wisevalidityfromtrajectory-levelrewardsbypruning
+memorynodesassociatedwithredundantactions,therebyfacilitatingfine-grainedcredit
+assignment. ExtensiveexperimentsdemonstratethatVimRAGconsistentlyachieves
+state-of-the-art performance on diverse multimodal RAG benchmarks. The code is
+availableathttps://github.com/Alibaba-NLP/VRAG.
+1 Introduction
+RecentadvancesinMultimodalLargeLanguageModelsBaietal.(2025);Teametal.(2025);Singh
+etal.(2025);Teametal.(2023)havefundamentallyexpandedthecapabilitiesofmultimodalagentic
+Retrieval-augmentedGeneration(RAG)Choetal.(2024);Arslanetal.(2024);Wangetal.(2025a);Yu
+etal.(2024).WiththehelpofsearchenginespoweredbyunifiedembeddingmodelsGuoetal.(2025);
+Lietal.(2026);Mengetal.(2025);Sunetal.(2025b);Faysseetal.(2024),agentspoweredbyMLLMs
+canretrieveandreasonoverlarge-scalecorporathatcontaininterleavedtextandimages.Suetal.
+(2025);Wangetal.(2025b);Yuetal.(2025b);Jeongetal.(2025);Yeoetal.(2025);Gengetal.(2025).
+However, incontrasttotext, visualdataistoken-heavyandoftenperformssemanticallysparse
+relativetoaspecificqueryMaetal.(2024);Tanakaetal.(2023);Wangetal.(2025c). Asmemory
+and context management strategies have been recognized as effective approaches to optimize
+long-contexttasksZhouetal.(2025);Yuetal.(2025a);Wuetal.(2025);Xuetal.(2025);Chhikara
+etal.(2025);Chenetal.(2024a);Yeetal.(2025),transferringthisparadigmtoefficientlymanage
+massivevisualcontextswithoutlosingcrucialinformationisapromisingdirection.
+Inspiredbytheseadvances,weintroduceVimRAG,anovelframeworkspecificallydesignedfor
+iterativeretrieval-augmentedreasoningviaamultimodalagenticmemoryparadigm. Ourapproach
+ismotivatedbythreecriticalobservationsregardingthechallengesofadaptingcontextmanagement
+andmemory-basedmethodstomultimodalsettings: (i)Misalignmentbetweenactionhistoryand
+contextprior. ThereisafundamentalmismatchbetweentheagentÆsactualexecutionhistoryandthe
+reshapedpromptpresentedtothemodel. Thisstructuralblindnessmaskscrucialstateparameters;
+specificallyinRAGtasks,itleadstorepetitivequeriesanduselessinteractionswithsearchengines.
+1
+6202
+beF
+31
+]VC.sc[
+1v53721.2062:viXra
+--- Page 1 ---
+Failed to read PDF: 'charmap' codec can't encode character '\u2208' in position 609: character maps to <undefined>

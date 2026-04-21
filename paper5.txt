@@ -1,0 +1,374 @@
+Reading PDF: C:\Users\davidliu\Downloads\2602.05665v1.pdf
+Total Pages: 29
+
+--- Page 0 ---
+1
+Graph-based Agent Memory:
+Taxonomy, Techniques, and Applications
+Chang Yang†, Chuang Zhou†, Yilin Xiao†, Su Dong, Luyao Zhuang, Yujing Zhang, Zhu Wang
+Zijin Hong, Zheng Yuan, Zhishang Xiang, Shengyuan Chen‡, Huachi Zhou‡, Qinggang Zhang‡
+Ninghao Liu, Jinsong Su, Xinrun Wang, Yi Chang, Xiao Huang
+Abstract—Memory emerges as the core module in the Large mathematical reasoning [2] to multi-agent tasks [3] and open-
+Language Model (LLM)-based agents for long-horizon complex world exploration [4]. The inherent language understanding,
+tasks(e.g.,multi-turndialogue,gameplaying,scientificdiscovery),
+generation, and inference capabilities of LLMs enable LLM-
+where memory can enable knowledge accumulation, iterative
+basedagentstoautonomouslyperceiveenvironmentsandmake
+reasoning and self-evolution. Among diverse paradigms, graph
+stands out as a powerful structure for agent memory due to the decisions, which reduces manual intervention and reshapes the
+intrinsic capabilities to model relational dependencies, organize paradigm of intelligent systems [5].
+hierarchical information, and support efficient retrieval. This Despite notable advancements, LLM-based agents are still
+surveypresentsacomprehensivereviewofagentmemoryfromthe
+constrainedbytheintrinsiclimitationsofLLMs.(i)Knowledge
+graph-basedperspective.First,weintroduceataxonomyofagent
+cutoff: LLMs are trained on static datasets with fixed time
+memory, including short-term vs. long-term memory, knowledge
+vs. experience memory, non-structural vs. structural memory, boundaries, resulting in knowledge cutoff issues that prevent
+with an implementation view of graph-based memory. Second, them from incorporating real-time information (e.g., current
+according to the life cycle of agent memory, we systematically financial data) or domain-specific knowledge beyond their pre-
+analyzethekeytechniquesingraph-basedagentmemory,covering
+training corpora. This limitation undermines their ability to
+memory extraction for transforming the data into the contents,
+adapt to dynamic environments and open-ended scenarios. (ii)
+storage for organizing the data efficiently, retrieval for retrieving
+the relevant contents from memory to support reasoning, and Toolincompetence:Althoughtooluserepresentsacorecapabil-
+evolution for updating the contents in the memory. Third, we ity of LLM-based agents [6], [7], existing LLMs demonstrate
+summarize the open-sourced libraries and benchmarks that limited capacity for efficiently learning and applying novel
+support the development and evaluation of self-evolving agent
+tools,whichsubstantiallyconstrainstheagentperformance.(iii)
+memory. We also explore diverse application scenarios. Finally,
+Performance saturation: LLM-based agents exhibit persistent
+weidentifycriticalchallengesandfutureresearchdirections.This
+surveyaimstoofferactionableinsightstoadvancethedevelopment failures in iterative, long-horizon tasks due to their inability
+of more efficient and reliable graph-based agent memory systems. to accumulate task-specific insights and leverage historical
+All the related resources, including research papers, open- experiences for refining decision strategies across extended
+source data, and projects, are collected for the community in
+interactions. Consequently, agents may repeatedly commit
+https://github.com/DEEP-PolyU/Awesome-GraphMemory.
+similar errors without demonstrating learning behavior to
+Index Terms—Agent, Multi-Agent System, Agent Memory, correct the errors for successful task completion.
+Knowledge Graph, Self-Evolving, Graph-based Memory
+To address these challenges, memory [8] has emerged as
+a critical component for advancing LLM agents towards four
+I. INTRODUCTION key objectives: i) Personalization and Specification. [9]:
+The past few years witnessed the rapid development of Memory enables agents to capture user preferences, interaction
+Large Language Model (LLM)-based agents, which have histories,andtask-specificcontextsfortailoredresponses,such
+demonstrated remarkable success in complex, long-horizon as remembering workflow habits in software engineering or
+tasksacrossdiversedomains,fromsoftwareengineering[1]and communication styles in conversational scenarios. Memory
+bridges general knowledge with specific context, storing both
+†Equalcontribution. universal facts and particular histories to ground responses in
+‡Corresponding authors: Qinggang Zhang, Huachi Zhou, Shengyuan personalized, context-aware information [10]. ii) Long-term
+Chen.
+Reasoning beyond Context Window. While LLMs operate
+ChangYang,ChuangZhou,YilinXiao,SuDong,LuyaoZhuang,Yujing
+Zhang,ZhuWang,ZijinHong,ZhengYuan,ShengyuanChen,HuachiZhou, withinfinitecontextwindowswithstaticparametricknowledge,
+QinggangZhang,NinghaoLiu,andXiaoHuangarewiththeTheHongKong memory systems provide unbounded external storage that
+PolytechnicUniversity,HongKongSAR,China(e-mail:{chang.yang,chuang-
+enables continuous learning and adaptation. Memory allows
+qqzj.zhou, yilin.xiao, su.dong, luyao.zhuang, yu-jing.zhang, juliazhu.wang,
+zijin.hong,yzheng.yuan,huachi.zhou}@connect.polyu.hk,{sheng-yuan.chen, agents to retain information across extended temporal horizons,
+qinggang.zhang,ninghao-prof.liu,xiao.huang}@polyu.edu.hk). accumulate post-deployment experiences including successes
+Jinsong Su and Zhishang Xiang are with the School of Informa-
+andfailures,anddynamicallyrefinestrategieswithoutmodelre-
+tion, Xiamen University, China (e-mail: xiangzhishang@stu.xmu.edu.cn,
+jssu@xmu.edu.cn). training.iii)Self-improving[11]:Byaccumulatingexperiential
+XinrunWangiswiththeSchoolofComputingandInformationSystems, knowledge, reasoning patterns, and feedback, agent memory
+SingaporeManagementUniversity,Singapore(e-mail:xrwang@smu.edu.sg).
+supportsiterativeenhancementofadaptabilityandperformance,
+YiChangiswiththeSchoolofArtificialIntelligence,JilinUniversity,
+Changchun,China(e-mail:yichang@jlu.edu.cn). thus enabling the self-improving of LLM-based Agents on
+6202
+beF
+5
+]IA.sc[
+1v56650.2062:viXra
+--- Page 1 ---
+2
+Fig. 1: A diagram illustrating the workflow of an AI agent system, and the detailed implementations of the memory system.
+the tasks without parameter updating. iv) Hallucination implementationviewofgraph-basedmemory(SectionIII).
+mitigation [12]: Grounding outputs in structured, verifiable • We systematically analyze the critical memory manage-
+memory content reduces reliance on potentially unreliable menttechniques,coveringmemoryextraction(SectionIV),
+parametricknowledge.Inessence,memorytransformsstateless memory storage (Section V), memory retrieval (Sec-
+reactive models into stateful adaptive entities capable of rela- tion VI) and memory evolution (Section VII).
+tionship building, trajectory-based learning, and increasingly • We summarize open-sourced libraries and benchmarks
+sophisticated personalized behavior. (SectionVIII)thatsupportthedevelopmentandevaluation
+Traditional implementations of agent memory primar- of self-evolving graph-based agent memory across diverse
+ily adopt linear, unstructured, or simple key-value storage application scenarios (Section IX).
+paradigms, such as fixed-length token sequences, vector • We identify critical challenges and outline future research
+databases, and log-based buffers [13], [14]. While these directions to advance efficient and reliable graph-based
+frameworks enable basic information storage and retrieval, agent memory systems (Section X).
+agent memory demands more complex functionalities, such as This survey aims to provide a holistic overview of graph-
+relationalmodeling,hierarchicalorganization,andcausaldepen- based agent memory, offering valuable insights for researchers
+dencies. Graph-based agent memory [15], [16] has emerged as to advance memory design and enabling practitioners to select
+thefrontierfor2025–2026research,transitioningfromapassive appropriate structures and techniques for specific applications.
+‘log’ of facts to a structured topological model of experience
+that preserves how information is connected over time. Unlike
+II. PRELIMINARIES
+traditionallinearorunstructuredmemory,graph-basedmemory
+Definition II.1 (AI Agents). An AI agent is an LLM-based
+can naturally encode relational dependencies between memory
+system formed by four core modules:
+elementsduetoitsintrinsicabilitytomodelentityrelationships,
+capture hierarchical semantics, and support flexible traversal • Perception Module: sensing the environment and convert-
+and reasoning. Even plain memory can be regarded as a ing external observations into internal representations.
+degenerate graph with trivial relationships, positioning graph- • Reasoning Module: decomposing complex tasks, reason-
+based agent memory as a general and flexible framework ing about dependencies, interacting with memory, and
+for agent memory design. Recently, there has been a surge formulating execution strategies.
+of research into graph-based memory architectures for LLM • Memory System: comprising short-term memory for im-
+agents, including knowledge graphs (KG), temporal graphs, mediate reasoning and long-term memory for experience
+hypergraphs, hierarchical trees/graphs and hybrid graphs [17], retention to support the reasoning.
+[18], which demonstrated the efficacy across diverse scenarios, • Action Module: executing actions in the environments.
+such as hierarchical task planning, multi-session conversational The objective of the AI agent is to maximize the desired
+understanding, and neuro-symbolic reasoning. evaluationmetrics,e.g.,accuracies,successrates,andrewards.
+Therefore, we present a comprehensive survey that con-
+In this section, we present the preliminaries of AI agents.
+solidates the state-of-the-art in graph-based agent memory,
+An AI agent is an LLM-based system to autonomously
+categorizestheircoretechniques,synthesizestheirapplications,
+complete complex tasks by leveraging the LLM’s capabilities
+and identifies open challenges. Our contributions are fourfold:
+for reasoning, memorizing and decision making. The formal
+• Weproposeataxonomyofagentmemory,includingshort- definition is presented in Definition II.1. A typical execution
+term vs. long-term memory, knowledge vs. experience paradigm of AI agents is perception-reasoning-action cycle,
+memory, non-structural vs. structural memory, with an where the AI agent receives the inputs from the environment
+--- Page 2 ---
+3
+Knowledge Memory (Passive & Static) Experience Memory (Proactive & Dynamic)
+Reference Books Global Rules Facts & Truths Feedbacks Timeline Trajectories & History
+Store objective laws, common sense, and independent information. Record actual interactions, observations, and feedbacks.
+General Definition: “Lasagna is a baked Italian dish typically Interaction Log: User requested a recipe for lasagna but explicitly
+Chatbots
+containing layers of pasta, ground meat, tomato sauce, and cheese.” specified a vegetarian version, rejecting the standard "ground meat".
+User Session Log: User repeatedly viewed the "Sony A7 IV" page, but
+Recommender Product Database: Item "Sony A7 IV Camera" has attributes: [Type: abandoned cart and bought a cheaper model, indicating price sensitivity
+System Mirrorless], [Sensor: Full-frame], [Price Bracket: High]. towards the [Price Bracket: High] attribute.
+Code
+Agents
+Financial Standard Strategy: "Mean Reversion" dictates buying an asset when
+Agents its current price deviates significantly below its historical average.
+Game Game Mechanic Rule: The enemy type "Ice Golem" is immune to Player Combat Log: The player executed 4 Attempts, where Attempts 1-
+Agents physical attacks but takes double damage from Fire-based spells. 3 with a sword failed, and Attempt 4 with a Fireball spell succeeded.
+Grasp Failure Log: #404: Robot attempted standard pinch grasp on a
+Robotics & General Affordance Database: A "Ceramic Mug" is a graspable object,
+specific ceramic mug's handle in the kitchen but failed because the
+Embodied AI typically lifted by applying a precision pinch grasp to its handle. handle was unexpectedly wet and slippery.
+Chemical Principle: Palladium(II) acetate is established in literature as Experiment Log: #RXN-99Used standard Palladium(II) acetate with
+Science a standard catalyst that typically accelerates cross-coupling reactions novel substrate Z. Unexpectedly observed rapid reaction completion at
+Agents only at elevated temperatures (>60°C). room temperature 25°C, contrasting with general heating requirement.
+lareneG
+gnidnatsrednU
+Evolution
+Personalized
+Memory
+Types Evolving
+Application Footprints
+Scenarios
+Language API Documentation:The official Python documentation for Project Debugging History:Commit log shows a fix for a
+json.loads() states it deserializes a JSON formatted string into a JSONDecodeErrorin the current project, caused by passing an empty
+Python dictionary object. string to json.loads(), which is not covered by the basic usage example.
+Trade Execution Log: Agent executed the standard “Mean Reversion”
+strategy on Stock XYZ at a 20-day low, but the trade resulted in a 5% loss
+as the price continued to fall.
+Fig. 2: Two types of agent memory, i.e., Knowledge Memory and Experience Memory, and their application across different
+agent scenarios. The synergy between static knowledge memory and dynamic experience memory enables agents to both
+understand the world’s rules and adapt to personal interactions.
+through its perception module, then reasoning with LLMs • Memory Extraction: The transformation of raw unstruc-
+across the inputs, the LLM’s internal knowledge and the tured observations o into structured memory units m.
+t
+contents stored in the memory system, and finally outputs the • Memory Storage: The organization and placement of
+actions to execute into the environment. Within this paradigm, extracted units into the memory structure M through
+the memory systems play an important role for the AI agent’s appropriate indexing and structural organization.
+reasoning and action process. The basic operations of memory • Memory Retrieval: The mechanism of retrieving relevant
+are defined in Definition II.2. stored information M ⊂M in response to the query q.
+rel
+Definition II.2 (Basic Operations of Memory). The basic • Memory Evolution: The post-processing phase where
+memory is refined, including internal self-evolving mech-
+operations of agent memory define the primitive actions that
+anisms (e.g., consolidation, abstraction) and external self-
+manipulate the memory M. These atomic operations include:
+exploration processes (e.g., new environmental feedback).
+• Write: Write(m,M)→M′, adding a new memory unit
+m into the memory repository M. Thislifecycleensuresthatmemoryremainscurrent,relevant,
+• Read: Read(q,M) → M q , retrieving relevant memory and optimally structured for supporting the agent’s reasoning.
+units M ⊆M based on query q.
+q
+• Update: Update(m,M)→M′, modifying existing mem- III. TAXONOMYOFAGENTMEMORY
+ory units based on new information.
+• Delete: Delete(m,M) → M′, removing obsolete or In this section, we present a comprehensive taxonomy
+irrelevant memory units from M. for agent memory from different perspectives. Specifically,
+memory is categorized on the basis of multiple dimensions,
+These operations collectively enable the dynamic manage-
+including temporal scope, functional roles and representational
+ment and evolution of the agent’s memory system.
+structures. We then introduce the graph-based memory as a
+While the basic operations describe the atomic actions on
+unified view of agent memory and conclude this section from
+memory, understanding how these operations are orchestrated
+an implementation perspective.
+over time is crucial for the full functionality of agent memory
+systems.Therefore,wefurtherformalizethetemporaldynamics
+ofmemorythroughtheconceptoflifecycle,whichcharacterizes A. Long-term vs. Short-term Memory
+how information flows through different processing stages.
+One of the most straightforward categorization of memory
+Definition II.3 (Lifecycle of Agent Memory). The Lifecycle is the temporal dimension, i.e., information retention durations:
+of Agent Memory describes the continuous, temporal flow of • Short-term Memory: Maintains recent, immediately
+informationprocessingwithintheagent,defininghowrawdata relevantinformationwithrapidaccessandlimitedcapacity.
+is transformed into stored knowledge and how the knowledge This includes the current conversation context, active
+evolvesovertime.ThelifecycleLisdefinedasacyclicprocess reasoning traces, and transient state variables. Short-
+consisting of four distinct stages: term memory is volatile and typically discarded after the
+--- Page 3 ---
+4
+Implicit relations Explicit node Information Lac F t a o m se il y In H to is le to ra ry nce attributes and typed edges sparsely encoded Structured Symptom: Stomachache memorization Information
+densely encoded Interactionhistory
+Text/Vector 1 {User: family history oflactose intolerance, stomachache}
+{ Agent: startingafood diary}
+Limited to Semanticand
+Text/Vector Similarity Type semantic search relational search
+Now Retrieval { { U U s s e e r r : : s f t a o m m i a ly c h h a is c t h o e ry s … … 0 0 . . 7 6 5 6 S L h o o n r g t connected R e s s u u b l g ts ra a p re hs
+Userquery …… …… …… Lackof Structured
+Retrievedmemory reasoning support reasoning support
+1 DayAgo
+Text/Vector-t
+Newmemory Lookup
+Coarse-grained evolving
+Text/Vector-1 operations: entire chunks
+reports Session-1
+has Long-termmemory reports
+Linear Dense vector Long-termmemory Interactionhistory memorization SS S ee e ss s… ss s ii i oo…o nn n -- - 12 t Short-termmemory Session-1 Symptom: Stomacha S c y h m e ptom: Heartburn Raw text status action status action
+Session-1 Session-1
+Active Prescription: Food Diary Prescription: Food Diary
+Now Retrieval Reasoning paths
+Userquery Relatedsubgraph
+Update nodes and edges within existing triples
+1 DayAgo Structured graph
+memorization
+Newtriples
+Newmemory
+sutats Lactose Intolerance Family History action Prescription:
+Active PPI Trial
+Resolved
+reports
+TraditionalAgentMemory Graph-basedAgentMemory
+MemoryExtraction MemoryExtraction
+Linear T st h o e m u a s c e h r a is c h h e a s v . ing T la h c e to u s s e e i r n ’s t o fa le m ra il n y c h e as a history of Structured perceptual Sess S io y n m -1 ptom: Stomachache status Ses R si e o s n o -t lved Ses S si y on m -t ptom: Heartburn action Ses P si r o e n s -t cription: PPI Trial
+extraction The agent suggested the user to start afood diary. extraction reports Sessio S n y - m t ptom: Heartburn Ses S si y on m -t ptom: Heartburn status Ses A si c o t n i - v t e
+Interactionhistory Extracted contents Interactionhistory Extracted contents
+MemoryStorage MemoryStorage
+has
+Session-1 Session-t Short-termmemory Session-1 Session-t Session-t
+Session-t Session-1
+MemoryRetrieval MemoryRetrieval
+Path-1:
+Resultsare unrelated fragments Path-2:
+{User: heartburn after… 0.66 Long
+Path-3:
+MemoryEvolving MemoryEvolving
+Updatedmemory
+stomachaches stomachaches are Fine-grained much better now evolving operations:
+Editing in nodes & edges level
+Old
+memory Updatedmemory
+Fig. 3: Comparison between traditional agent memory and graph-based agent memory
+immediate task completion, though significant elements • Episodic Memory: Records the chronological sequence
+may be consolidated into long-term storage. of past sessions. It transforms transient working memory
+• Long-term Memory: Stores persistent information across into a persistent and queryable autobiographical history. For
+sessions, including accumulated knowledge, historical instance, it notes that a customer requested a vegetarian
+interactions, learned patterns, and user preferences. Long- option or a canceled order. This allows the agent to recall
+term memory supports continuity across episodes, enables “what happened and when,” providing temporal grounding.
+transfer learning, and provides the foundation for person- • Sentiment Memory: Captures the emotional tone or senti-
+alization and adaptive behavior over extended timescales. ment derived from interactions. By logging user feedback or
+frustration levels, the agent can adapt its empathy and style
+B. Cognitive Structure of Memory in future turns. This layer adds a qualitative dimension to
+the raw interaction logs.
+We introduce the cognitive structure of the memory in [8]:
+• Semantic Memory: Stores general, decontextualized world
+knowledge and factual information (e.g., “Paris is the capital
+of France”). Within the graph structure, this forms the stable C. Knowledge vs. Experience Memory
+ontology,providingcommonsenseanddomain-specificfacts
+To define agent memory concretely, we can draw a parallel
+that ground the agent’s reasoning.
+to the human cognitive system. Human memory is a structured
+• Procedural Memory: Encodes skills, routines, and im- process involving the encoding, storage, and retrieval of
+mutable rules. It represents “how-to” knowledge, such as information, often categorized into different types. Similarly,
+standard operating procedures or game rules. In application, agent memory can be understood through two primary, com-
+this allows agents to execute complex tasks automatically plementary categories as shown in Figure 2:
+under standard conditions.
+Knowledge Memory (Passive & Static): This represents the
+• Associative Memory: Establishes latent links between agent’s passive and static repository of objective, global, and
+different concepts or data points within the knowledge base. verifiable information. It functions as an internal reference
+By connecting related pieces of information (e.g., symptoms library or textbook, containing canonical facts, universal rules,
+to diagnoses, or products to categories), it facilitates creative established procedures, and general truths about the world.
+reasoning and analogy-making, acting as the connective This memory is typically pre-loaded, slowly updated, and
+tissue of the knowledge graph. context-independent. Its purpose is to provide a stable, reliable
+• Working Memory: Acts as the agent’s “mental scratchpad” foundation for reasoning and action. For instance, it stores the
+for immediate experience. It temporarily holds the current factual definition of concepts, the immutable rules of a game,
+conversation turn,intermediate reasoning steps,and transient or standard scientific principles. In applications, a shopping
+variables. While ephemeral, it is the entry point for all agent’s product database or a robot’s general affordance model
+experience memory, characterized by fast access and direct constitutes Knowledge Memory. Generally, this memory is
+influence on the immediate next action. passive, serving as a reliable, factual backbone for reasoning.
+--- Page 4 ---
+5
+Experience Memory (Proactive & Dynamic): This is the factual triples to general thematic clusters or subgraphs; ❸
+agent’s personal logbook, actively recording its specific in- Temporal and dynamic structuring, where time-aware edges
+teractions, observations, and the outcomes of its actions. It can capture event sequences, state transitions, and knowledge
+includes user dialogue history, execution logs, trial-and-error evolution; ❹ Efficient structured retrieval, enabling traversal,
+trajectories,andfeedback.Forinstance,itnotesthataparticular subgraph extraction, and multi-hop relational queries beyond
+user requested a vegetarian lasagna variant, that a trade based mere semantic similarity.
+on a mean-reversion strategy actually resulted in a loss, or Notably, traditional memory forms can be viewed as degen-
+that a standard grasping procedure failed on a wet mug. This erate or simplified cases within the graph memory paradigm.
+memory is dynamic, personalized, and forms the basis for For instance, a linear buffer corresponds to a chain within
+learning from practice and adapting to specific contexts. a graph, and a vector memory can be interpreted as a fully-
+connected graph with similarity-weighted edges. Thus, graph-
+D. Non-structural vs. Structural Memory based memory does not merely replace existing designs but
+provides a unified and extensible framework.
+Traditional agent memory systems commonly adopt simple
+storage paradigms, including: Inessence,graph-basedagentmemoryelevatesmemoryfrom
+• Linear or buffer-based memory, such as fixed-length a passive, flat “log” to an active, structured “knowledge graph”
+token windows or conversation histories, which maintain tailored to the agent’s lived experience. It not only records
+recent interactions but suffer from information loss and lack “what happened” but, more importantly, models “how these
+relational context. things are connected.” This provides a powerful foundation
+• Vector-based memory, which encodes experiences into for associative reasoning, modeling long-term dependencies,
+dense embeddings stored in vector databases, enabling andachievingexplainableagentbehavior.Figure3summarizes
+semantic similarity search but struggling with structured the key distinctions between traditional agent memory and
+reasoning and hierarchical relationships. graph-based agent memory. In summary, graph-based agent
+• Key-value or log-based memory, which records events in memory re-conceptualizes memory from a passive recording
+sequential logs or attribute-value pairs, supporting straight- into an active, structured model of experience. By making
+forward lookup but offering limited capability for complex relationships first-class citizens, it provides a powerful foun-
+querying or dynamic updates. dation for the complex reasoning, long-term coherence, and
+A common thread among these traditional paradigms is adaptivebehaviorrequiredbysophisticatedautonomousagents.
+their treatment of memory as a sequential, flat, or implicitly Graph-based memory architectures, such as knowledge graphs
+structured store. While effective for certain patterns, they often and hypergraphs, have demonstrated superior performance in
+fall short in explicitly representing and efficiently reasoning applications requiring multi-session coherence, personalized
+over the complex web of relationships between pieces of adaptation, complex task planning, and hallucination reduction.
+knowledge, a capability critical for sophisticated planning, The subsequent sections delve into the technical realization
+causal understanding, and narrative coherence. More impor- of such memory systems, covering construction, retrieval,
+tantly, while these approaches enable basic recall and short- updating, and domain-specific applications.
+term context management, they exhibit notable limitations
+in scenarios requiring hierarchical knowledge organization,
+temporal tracking, and long-term adaptive learning. These
+F. An Alternative View from Implementation
+constraints become particularly evident in long-horizon tasks,
+multi-session interactions, and domains where knowledge
+In this paper, we use the lifecycle to introduce the memory,
+evolves dynamically.
+however, we can also have an alternative view of the memory
+from the implementation perspective, which can help readers
+E. Graph-based Memory: A Unified and General Perspective
+to understand this paper as a researcher or engineer. Specifi-
+Graph-based agent memory emerges as a powerful general- cally, the framework begins with underlying structures, which
+ization and enhancement of conventional memory frameworks. encompasses the foundational data representations including
+The core idea of graph-based agent memory is modeling graph-based structures, embeddings, and temporal sequences
+memory content as a dynamic, structured Memory Graph. In that form the basis of memory storage (Section V). The stored
+this paradigm, memory units (e.g., events, entities, concepts, representationsmanifestasvariousmemorycontents,including
+observations) are abstracted as nodes, and the semantic, conversational history, temporal records, and structured knowl-
+temporal, causal, or logical relationships between them are edge bases. These contents are curated by memory processes
+abstracted as edges. This explicit structural representation of extraction (Section IV) and evolution (Section VII), where
+transforms memory from a flat list of entries or a hidden relevantinformationisfilteredandrefinedbasedoncontextand
+state vector into a rich, interconnected network of knowledge. usage patterns. Finally, the usage interface enables Retrieval
+By representing memory elements as nodes and their (Section VI) of relevant information and facilitates reasoning
+relationships as edges, graph structures naturally support: tasks by accessing this curated memory. This implementation
+❶ Explicit relationship modeling, allowing agents to reason viewprovidesasystematicperspectivefromtheimplementation
+over causal dependencies and semantic associations between on how language models maintain, process, and leverage
+memory items; ❷ Hierarchical organization, from fine-grained memory to support the complex reasoning.
+
+[Output limited to first 5 pages.]

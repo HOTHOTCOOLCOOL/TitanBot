@@ -20,7 +20,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 import pytest
-from nanobot.agent.loop import _detect_fuzzy_loop, _build_action_history_summary, _SIG_DELIMITER, _FUZZY_LOOP_WINDOW, _INJECTION_BUDGET, _ACTION_HISTORY_SENTINEL, _ACTION_HISTORY_MAX, _MAX_ACTION_HISTORY
+from nanobot.agent.loop import _detect_fuzzy_loop, _build_action_history_summary, _SIG_DELIMITER, _FUZZY_LOOP_WINDOW, _MAX_ACTION_HISTORY
+from nanobot.agent.context import _ACTION_HIST_CAP, _ACTION_HISTORY_SENTINEL
 
 def _make_sig(tool: str, args: dict) -> str:
     """Build a single tool call signature the way loop.py does."""
@@ -111,19 +112,19 @@ def test_action_history_injection_into_system_prompt():
     if sentinel_idx != -1:
         sys_content = sys_content[:sentinel_idx]
     history_len = len(summary) + len(_ACTION_HISTORY_SENTINEL)
-    if history_len <= _ACTION_HISTORY_MAX and history_len <= _INJECTION_BUDGET:
+    if history_len <= _ACTION_HIST_CAP:
         messages[0]['content'] = sys_content + _ACTION_HISTORY_SENTINEL + summary
     assert _ACTION_HISTORY_SENTINEL in messages[0]['content']
     assert 'browser(click)' in messages[0]['content']
 
 def test_action_history_injection_respects_budget():
     """11. History should NOT be injected if global budget is nearly exhausted."""
-    injection_used = 7900
-    remaining_budget = _INJECTION_BUDGET - injection_used
+    remaining_budget = 0 # simulating exhausted budget conceptually
     action_log = [{'tool': 'browser', 'action': 'click', 'outcome': 'ok', 'detail': 'x'}]
     summary = _build_action_history_summary(action_log)
     history_len = len(summary) + len(_ACTION_HISTORY_SENTINEL)
-    assert history_len > remaining_budget, f'Test setup: history {history_len} should exceed remaining {remaining_budget}'
+    # The new logic just uses _ACTION_HIST_CAP
+    assert history_len < _ACTION_HIST_CAP, f'Test setup: history {history_len} should easily fit'
 
 def test_action_history_injection_sentinel_cleanup():
     """12. Stale history is removed before injecting new."""

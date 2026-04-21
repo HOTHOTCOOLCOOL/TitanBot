@@ -1,6 +1,6 @@
+from __future__ import annotations
 """Channel manager for coordinating chat channels."""
 
-from __future__ import annotations
 
 __all__ = ["ChannelManager"]
 
@@ -86,6 +86,8 @@ class ChannelManager:
         try:
             await channel.start()
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Failed to start channel {name}: {e}")
 
     async def start_all(self) -> None:
@@ -100,6 +102,8 @@ class ChannelManager:
                 try:
                     await ch.send(msg)
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     logger.error(f"Error sending to {ch.name}: {e}")
             self.bus.subscribe_outbound(name, _send)
         
@@ -121,6 +125,8 @@ class ChannelManager:
                 await channel.stop()
                 logger.info(f"Stopped {name} channel")
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Error stopping {name}: {e}")
     
 

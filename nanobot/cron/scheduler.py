@@ -358,6 +358,8 @@ class UnifiedScheduler:
             except asyncio.CancelledError:
                 break
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.error(f"Scheduler loop error: {e}")
             
             await asyncio.sleep(1)  # 每秒检查
@@ -402,6 +404,8 @@ class UnifiedScheduler:
             logger.info(f"Scheduler: task '{task.name}' completed")
             
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             task.last_status = "error"
             task.last_error = str(e)
             logger.error(f"Scheduler: task '{task.name}' failed: {e}")

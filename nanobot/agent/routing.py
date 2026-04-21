@@ -76,13 +76,10 @@ class ModelRouter:
         if not target_model_override and config.agents.vlm.enabled and config.agents.vlm.model:
             has_image = False
             
-            # Find the most recent user message's index, fallback to last 5 messages if none found
+            # Phase 57 Fix: Check last 5 messages rather than just the most recent user message.
+            # This ensures if User uploaded an Image -> Assistant replied -> User asked a follow-up,
+            # we still use the VLM so it can 'see' the previous image context.
             start_idx = max(0, len(messages) - 5)
-            for i in range(len(messages) - 1, -1, -1):
-                if messages[i].get("role") == "user":
-                    start_idx = min(i, start_idx)  # Include the last user message
-                    break
-                    
             recent_msgs = messages[start_idx:]
             
             for msg in recent_msgs:

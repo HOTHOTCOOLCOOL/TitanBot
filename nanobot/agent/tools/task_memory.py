@@ -1,3 +1,4 @@
+import asyncio
 """
 Task Knowledge Tool - 用于记录和管理任务知识
 """
@@ -144,4 +145,6 @@ Result: {task.get('result_summary', '')[:200]}"""
                 return f"Unknown action: {action}"
         
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error: {str(e)}"

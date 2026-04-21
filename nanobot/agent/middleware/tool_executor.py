@@ -1,10 +1,10 @@
+from __future__ import annotations
 """Phase 41: ToolExecutor — innermost onion layer.
 
 Handles concurrent tool execution via asyncio.gather, result normalization,
 and message assembly.  Extracted from loop.py _exec_tool closure (L792-L897).
 """
 
-from __future__ import annotations
 
 import asyncio
 import time

@@ -1,0 +1,4 @@
+PRINT_VIOLATION:
+ Found 3 illegal print() calls in Host Agent:\nnanobot\agent\tools\rpa_executor.py:310\nnanobot\agent\tools\rpa_executor.py:501\nnanobot\agent\tools\screen_capture.py:232
+ASYNC_VIOLATION:
+ Found 1 async except Exception blocks missing asyncio.CancelledError guards:\nnanobot\agent\knowledge_workflow.py:258

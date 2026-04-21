@@ -1,3 +1,4 @@
+import asyncio
 """Key Extraction for Knowledge Workflow.
 
 Extracts a concise task key from user requests via lightweight LLM call,
@@ -95,6 +96,8 @@ async def extract_key(
             logger.info(f"key_extractor: extracted key = '{key}'")
             return key
     except Exception as e:
+        if isinstance(e, asyncio.CancelledError):
+            raise
         logger.warning(f"key_extractor: key extraction failed: {e}")
 
     return fallback_key(user_request)

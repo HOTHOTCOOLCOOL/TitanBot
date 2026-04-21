@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Phase 41 (P41-5): HITLMiddleware — Human-in-the-Loop approval gateway.
 
 Pre:  Checks tool calls for high-risk operations (CapabilityTag.IS_HIGH_RISK).
@@ -6,7 +7,6 @@ Pre:  Checks tool calls for high-risk operations (CapabilityTag.IS_HIGH_RISK).
 Post: No-op (approval resolution happens in state_handler.py, not here).
 """
 
-from __future__ import annotations
 
 import asyncio
 import json

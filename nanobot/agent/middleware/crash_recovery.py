@@ -1,3 +1,5 @@
+from __future__ import annotations
+import asyncio
 """Phase 41: CrashRecoveryMiddleware — P40B-1 WAL checkpoint management.
 
 Pre:  Writes a checkpoint WAL file before tool execution so that crash
@@ -9,7 +11,6 @@ writing checkpoints for tool calls that will be rejected by L1 or suspended
 by HITL.
 """
 
-from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
@@ -53,6 +54,8 @@ class CrashRecoveryMiddleware(AgentMiddleware):
                 session_key, tool_infos
             )
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(
                 f"CrashRecoveryMiddleware.pre: WAL write failed (non-critical): {e}"
             )
@@ -64,6 +67,8 @@ class CrashRecoveryMiddleware(AgentMiddleware):
         try:
             self._agent.sessions.clear_checkpoint(self._ckpt_path)
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(
                 f"CrashRecoveryMiddleware.post: WAL clear failed (non-critical): {e}"
             )

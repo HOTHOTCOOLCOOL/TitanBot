@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Personal WeChat (微信) channel using HTTP long-poll API.
 
 Uses the ilinkai.weixin.qq.com API for personal WeChat messaging.
@@ -7,7 +8,6 @@ bot token obtained via QR code login.
 Protocol reverse-engineered from ``@tencent-weixin/openclaw-weixin`` v1.0.3.
 """
 
-from __future__ import annotations
 
 import asyncio
 import base64
@@ -382,6 +382,8 @@ class WeixinChannel(BaseChannel):
                         auth=False,
                     )
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     if self._is_retryable_qr_poll_error(e):
                         await asyncio.sleep(1)
                         continue
@@ -438,6 +440,8 @@ class WeixinChannel(BaseChannel):
                 await asyncio.sleep(1)
 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error("WeChat QR login failed: {}", e)
 
         return False
@@ -462,7 +466,7 @@ class WeixinChannel(BaseChannel):
             qr.make(fit=True)
             qr.print_ascii(invert=True)
         except ImportError:
-            print(f"\nLogin URL: {url}\n")
+            logger.info(f"\nLogin URL: {url}\n")
 
     # ------------------------------------------------------------------
     # Channel lifecycle
@@ -520,9 +524,12 @@ class WeixinChannel(BaseChannel):
                 # Normal for long-poll, just retry
                 continue
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 if not self._running:
                     break
                 consecutive_failures += 1
+                logger.error(f"WeChat polling error ({consecutive_failures}): {type(e).__name__} - {e}")
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                     consecutive_failures = 0
                     await asyncio.sleep(BACKOFF_DELAY_S)
@@ -613,8 +620,10 @@ class WeixinChannel(BaseChannel):
         for msg in msgs:
             try:
                 await self._process_message(msg)
-            except Exception:
-                pass
+            except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
+                logger.error(f"Error processing WeChat msg: {e}")
 
     # ------------------------------------------------------------------
     # Inbound message processing  (matches inbound.ts + process-message.ts)
@@ -870,6 +879,8 @@ class WeixinChannel(BaseChannel):
                     data = resp.content
                     break
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     has_more_candidates = idx + 1 < len(download_candidates)
                     should_fallback = (
                         download_source == "full_url"
@@ -904,6 +915,8 @@ class WeixinChannel(BaseChannel):
             return str(file_path)
 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error("Error downloading WeChat media: {}", e)
             return None
 
@@ -969,7 +982,9 @@ class WeixinChannel(BaseChannel):
                     break
                 try:
                     await self._send_typing(user_id, typing_ticket, TYPING_STATUS_TYPING)
-                except Exception:
+                except Exception as _e:
+                    if isinstance(_e, asyncio.CancelledError):
+                        raise
                     pass
         finally:
             pass
@@ -999,13 +1014,17 @@ class WeixinChannel(BaseChannel):
         typing_ticket = ""
         try:
             typing_ticket = await self._get_typing_ticket(msg.chat_id, ctx_token)
-        except Exception:
+        except Exception as _e:
+            if isinstance(_e, asyncio.CancelledError):
+                raise
             typing_ticket = ""
 
         if typing_ticket:
             try:
                 await self._send_typing(msg.chat_id, typing_ticket, TYPING_STATUS_TYPING)
-            except Exception:
+            except Exception as _e:
+                if isinstance(_e, asyncio.CancelledError):
+                    raise
                 pass
 
         typing_keepalive_stop = asyncio.Event()
@@ -1021,6 +1040,8 @@ class WeixinChannel(BaseChannel):
                 try:
                     await self._send_media_file(msg.chat_id, media_path, ctx_token)
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        raise
                     filename = Path(media_path).name
                     logger.error("Failed to send WeChat media {}: {}", media_path, e)
                     # Notify user about failure via text
@@ -1036,6 +1057,8 @@ class WeixinChannel(BaseChannel):
             for chunk in chunks:
                 await self._send_text(msg.chat_id, chunk, ctx_token)
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error("Error sending WeChat message: {}", e)
             raise
         finally:
@@ -1050,7 +1073,9 @@ class WeixinChannel(BaseChannel):
             if typing_ticket and not is_progress:
                 try:
                     await self._send_typing(msg.chat_id, typing_ticket, TYPING_STATUS_CANCEL)
-                except Exception:
+                except Exception as _e:
+                    if isinstance(_e, asyncio.CancelledError):
+                        raise
                     pass
 
     async def _start_typing(self, chat_id: str, context_token: str = "") -> None:
@@ -1064,6 +1089,8 @@ class WeixinChannel(BaseChannel):
                 return
             await self._send_typing(chat_id, ticket, TYPING_STATUS_TYPING)
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.debug("WeChat typing indicator start failed for {}: {}", chat_id, e)
             return
 
@@ -1077,7 +1104,9 @@ class WeixinChannel(BaseChannel):
                         break
                     try:
                         await self._send_typing(chat_id, ticket, TYPING_STATUS_TYPING)
-                    except Exception:
+                    except Exception as _e:
+                        if isinstance(_e, asyncio.CancelledError):
+                            raise
                         pass
             finally:
                 pass
@@ -1107,6 +1136,8 @@ class WeixinChannel(BaseChannel):
         try:
             await self._send_typing(chat_id, ticket, TYPING_STATUS_CANCEL)
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.debug("WeChat typing clear failed for {}: {}", chat_id, e)
 
     async def _send_text(

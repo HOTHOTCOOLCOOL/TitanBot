@@ -1,6 +1,6 @@
+from __future__ import annotations
 """OpenAI Codex Responses Provider."""
 
-from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -60,6 +60,8 @@ class OpenAICodexProvider(LLMProvider):
             try:
                 content, tool_calls, finish_reason = await _request_codex(url, headers, body, verify=True)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 if "CERTIFICATE_VERIFY_FAILED" not in str(e):
                     raise
                 logger.warning("SSL certificate verification failed for Codex API; retrying with verify=False")
@@ -70,6 +72,8 @@ class OpenAICodexProvider(LLMProvider):
                 finish_reason=finish_reason,
             )
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Codex Provider encountered an error calling {model}. Full exception:", exc_info=True)
             return LLMResponse(
                 content=f"Error calling Codex: {str(e)}",
@@ -237,7 +241,9 @@ async def _iter_sse(response: httpx.Response) -> AsyncGenerator[dict[str, Any], 
                     continue
                 try:
                     yield json.loads(data)
-                except Exception:
+                except Exception as _e:
+                    if isinstance(_e, asyncio.CancelledError):
+                        raise
                     continue
             continue
         buffer.append(line)
@@ -282,7 +288,9 @@ async def _consume_sse(response: httpx.Response) -> tuple[str, list[ToolCallRequ
                 args_raw = buf.get("arguments") or item.get("arguments") or "{}"
                 try:
                     args = json.loads(args_raw)
-                except Exception:
+                except Exception as _e:
+                    if isinstance(_e, asyncio.CancelledError):
+                        raise
                     args = {"raw": args_raw}
                 tool_calls.append(
                     ToolCallRequest(

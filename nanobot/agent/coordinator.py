@@ -155,7 +155,9 @@ class CoordinatorManager(BaseWorkerBridge):
             try:
                 for _ in proc.stdout:
                     pass
-            except Exception:
+            except Exception as _e:
+                if isinstance(_e, asyncio.CancelledError):
+                    raise
                 pass
             
         try:
@@ -164,6 +166,8 @@ class CoordinatorManager(BaseWorkerBridge):
                 # Drain the remaining stdout pipe in the background to prevent Windows 64KB buffer deadlocks
                 asyncio.create_task(asyncio.to_thread(_drain_stdout, process))
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Coordinator: Failed to start worker: {e}")
             
         if not port:
@@ -188,6 +192,8 @@ class CoordinatorManager(BaseWorkerBridge):
             async with self._get_session().post(url, headers=headers, json=payload) as resp:
                 resp.raise_for_status()
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             process.kill()
             return f"Error: Failed to dispatch task to worker {task_id}: {e}"
             
@@ -254,10 +260,14 @@ class CoordinatorManager(BaseWorkerBridge):
                             try:
                                 async with self._get_session().post(f"http://127.0.0.1:{worker_info['port']}/shutdown", headers=headers, timeout=2):
                                     pass
-                            except Exception:
+                            except Exception as _e:
+                                if isinstance(_e, asyncio.CancelledError):
+                                    raise
                                 pass
                             break
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.debug(f"Coordinator: heartbeat error to worker {task_id}: {e}")
                 
         # Remove from workers

@@ -1,3 +1,4 @@
+import asyncio
 """Web tools: web_search and web_fetch."""
 
 import html
@@ -155,6 +156,8 @@ class WebSearchTool(Tool):
                     lines.append(f"   {desc}")
             return "\n".join(lines)
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error: {e}"
 
 
@@ -253,6 +256,8 @@ class WebFetchTool(Tool):
             return json.dumps({"url": url, "finalUrl": str(r.url), "status": r.status_code,
                               "extractor": extractor, "truncated": truncated, "length": len(text), "text": text})
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return json.dumps({"error": str(e), "url": url})
     
     def _to_markdown(self, html: str) -> str:

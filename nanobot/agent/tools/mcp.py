@@ -1,3 +1,4 @@
+import asyncio
 """MCP client: connects to MCP servers and wraps their tools as native nanobot tools."""
 
 from contextlib import AsyncExitStack
@@ -83,4 +84,6 @@ async def connect_mcp_servers(
 
             logger.info(f"MCP server '{name}': connected, {len(tools.tools)} tools registered")
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"MCP server '{name}': failed to connect: {e}")

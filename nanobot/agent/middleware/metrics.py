@@ -1,9 +1,9 @@
+from __future__ import annotations
 """Phase 41 (P41-2): MetricsMiddleware — outermost timing layer.
 
 Records per-turn iteration elapsed time using the existing MetricsCollector.
 """
 
-from __future__ import annotations
 
 import time
 

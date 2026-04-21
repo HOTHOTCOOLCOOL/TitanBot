@@ -66,8 +66,13 @@ class Session:
         """Get recent messages in LLM format, preserving tool metadata."""
         out: list[dict[str, Any]] = []
         for m in self.messages[-max_messages:]:
-            entry: dict[str, Any] = {"role": m["role"], "content": m.get("content") or ""}
-            for k in ("tool_calls", "tool_call_id", "name"):
+            content = m.get("content")
+            if content is None and m["role"] == "assistant" and "tool_calls" in m:
+                pass # keep it None
+            elif content is None:
+                content = ""
+            entry: dict[str, Any] = {"role": m["role"], "content": content}
+            for k in ("tool_calls", "tool_call_id", "name", "media"):
                 if k in m:
                     entry[k] = m[k]
             out.append(entry)

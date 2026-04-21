@@ -374,6 +374,13 @@ class CoordinatorConfig(Base):
     ipc_mode: str = "http"
 
 
+class ValidatorConfig(Base):
+    """Phase 56: Pre-flight Skill Verifier configuration."""
+
+    enabled: bool = True
+    timeout_ms: int = Field(default=200, ge=50, le=5000)
+
+
 class AgentsConfig(Base):
     """Agent configuration."""
 
@@ -392,6 +399,7 @@ class AgentsConfig(Base):
     experimental: ExperimentalConfig = Field(default_factory=ExperimentalConfig)
     fast_model: FastModelConfig = Field(default_factory=FastModelConfig)
     coordinator: CoordinatorConfig = Field(default_factory=CoordinatorConfig)
+    validator: ValidatorConfig = Field(default_factory=ValidatorConfig)
 
 
 class ProviderConfig(Base):

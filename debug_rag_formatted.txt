@@ -1,0 +1,20 @@
+## Relevant Historical Context
+
+**1. [docs:ADR-49-ifcc-context-condensation.md]** (relevance: 79%)
+**本 ADR 采用的策略是**：借鉴 `<mem>` 标签的形式信号，通过纯工程手段（System Prompt + 解析管道 + 截断优化）实现语义等价的上下文凝缩效果，**完全不依赖模型训练**。
+
+**2. [docs:context.py]** (relevance: 79%)
+Args:
+            messages: Current message list.
+            content: Message content.
+            tool_calls: Optional tool calls.
+            reasoning_content: Thinking output (Kimi, DeepSeek-R1, etc.).
+            milestone_summary: Optional phase 49 IFCC summary.
+
+**3. [docs:context.py]** (relevance: 79%)
+# Phase 49: IFCC Protocol
+try:
+from nanobot.config.loader import get_config as _get_cfg_c
+_ifcc_enabled = getattr(getattr(_get_cfg_c().agents, 'memory_features', None), 'ifcc_enabled', True)
+if _ifcc_enabled:
+parts.append("## Context Condensation\nWhen you have definitively resolved a step (confirmed root cause, completed analysis),\nsummarize the key finding in <mem>concise conclusion ≤200 chars</mem>.\nPlace it AFTER any <think> block. This milestone survives context truncation.")

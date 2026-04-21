@@ -53,11 +53,15 @@ class WhatsAppChannel(BaseChannel):
                         try:
                             await self._handle_bridge_message(message)
                         except Exception as e:
+                            if isinstance(e, asyncio.CancelledError):
+                                raise
                             logger.error(f"Error handling bridge message: {e}")
                     
             except asyncio.CancelledError:
                 break
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 self._connected = False
                 self._ws = None
                 logger.warning(f"WhatsApp bridge connection error: {e}")
@@ -89,6 +93,8 @@ class WhatsAppChannel(BaseChannel):
             }
             await self._ws.send(json.dumps(payload))
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Error sending WhatsApp message: {e}")
     
     async def _handle_bridge_message(self, raw: str) -> None:

@@ -80,6 +80,8 @@ class QQChannel(BaseChannel):
             try:
                 await self._client.start(appid=self.config.app_id, secret=self.config.secret)
             except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    raise
                 logger.warning(f"QQ bot error: {e}")
             if self._running:
                 logger.info("Reconnecting QQ bot in 5 seconds...")
@@ -108,6 +110,8 @@ class QQChannel(BaseChannel):
                 content=msg.content,
             )
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Error sending QQ message: {e}")
 
     async def _on_message(self, data: "C2CMessage") -> None:
@@ -131,4 +135,6 @@ class QQChannel(BaseChannel):
                 metadata={"message_id": data.id},
             )
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error(f"Error handling QQ message: {e}")

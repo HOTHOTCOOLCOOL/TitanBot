@@ -183,6 +183,8 @@ class WecomChannel(BaseChannel):
                     "text": {"content": self.config.welcome_message},
                 })
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error("Error handling enter_chat: {}", e)
 
     async def _process_message(self, frame: Any, msg_type: str) -> None:
@@ -308,6 +310,8 @@ class WecomChannel(BaseChannel):
             )
 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error("Error processing WeCom message: {}", e)
 
     async def _download_and_save_media(
@@ -341,6 +345,8 @@ class WecomChannel(BaseChannel):
             return str(file_path)
 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error("Error downloading media: {}", e)
             return None
 
@@ -375,5 +381,7 @@ class WecomChannel(BaseChannel):
             logger.debug("WeCom message sent to {}", msg.chat_id)
 
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             logger.error("Error sending WeCom message: {}", e)
             raise

@@ -1,3 +1,4 @@
+import asyncio
 """File system tools: read, write, edit."""
 
 from pathlib import Path
@@ -67,6 +68,8 @@ class ReadFileTool(Tool):
         except PermissionError as e:
             return f"Error: {e}"
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error reading file: {str(e)}"
 
 
@@ -120,6 +123,8 @@ class WriteFileTool(Tool):
         except PermissionError as e:
             return f"Error: {e}"
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error writing file: {str(e)}"
 
 
@@ -186,6 +191,8 @@ class EditFileTool(Tool):
         except PermissionError as e:
             return f"Error: {e}"
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error editing file: {str(e)}"
 
 
@@ -249,4 +256,6 @@ class ListDirTool(Tool):
         except PermissionError as e:
             return f"Error: {e}"
         except Exception as e:
+            if isinstance(e, asyncio.CancelledError):
+                raise
             return f"Error listing directory: {str(e)}"

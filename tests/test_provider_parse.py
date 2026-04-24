@@ -186,3 +186,24 @@ class TestModelResolution:
         result = provider._resolve_model("openrouter/anthropic/claude-opus-4-5")
         assert result == "openrouter/anthropic/claude-opus-4-5"
         assert not result.startswith("openrouter/openrouter/")
+
+
+class TestContentFilterDetection:
+    """Test content filter classification across Azure error text variants."""
+
+    def test_detects_azure_content_management_policy_message(self) -> None:
+        message = (
+            "OpenAIException - The response was filtered due to the prompt triggering "
+            "Azure OpenAI's content management policy."
+        )
+        assert LiteLLMProvider._is_content_filter_error(message) is True
+
+    def test_detects_bff_content_filter_message(self) -> None:
+        assert LiteLLMProvider._is_content_filter_error(
+            "Azure OpenAI content filter blocked the prompt or completion."
+        ) is True
+
+    def test_ignores_regular_bad_request(self) -> None:
+        assert LiteLLMProvider._is_content_filter_error(
+            "BadRequestError: invalid request body"
+        ) is False

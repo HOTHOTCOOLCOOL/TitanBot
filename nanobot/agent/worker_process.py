@@ -15,14 +15,6 @@ from typing import Any
 from aiohttp import web
 from loguru import logger
 
-# Monkey-patch TaskKnowledgeStore to make it Read-Only in the worker process
-from nanobot.agent.knowledge.readonly_store import ReadOnlyKnowledgeStore
-from nanobot.agent.task_knowledge import TaskKnowledgeStore as OriginalTaskKnowledgeStore
-import nanobot.agent.knowledge_workflow
-import nanobot.agent.task_knowledge
-
-nanobot.agent.knowledge_workflow.TaskKnowledgeStore = lambda ws: ReadOnlyKnowledgeStore(OriginalTaskKnowledgeStore(ws))
-
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.factory import ProviderFactory
@@ -183,9 +175,10 @@ class WorkerNode:
             
             from nanobot.agent.worker.bridge import build_worker_toolset
             restricted_tools = build_worker_toolset(
-                sandbox=sandbox,
+                workspace=agent_loop.workspace,
                 restrict_to_workspace=agent_loop.restrict_to_workspace,
-                brave_api_key=agent_loop.brave_api_key
+                brave_api_key=agent_loop.brave_api_key,
+                worker_sandbox=sandbox
             )
             
             from datetime import datetime
@@ -216,14 +209,25 @@ When completed, provide a clear summary of findings."""
                 {"role": "user", "content": task},
             ]
 
-            final_content, _, _ = await agent_loop._run_agent_loop_v2(
+            # Execute agent iterations natively within the restricted subsystem loop
+            result = await agent_loop._run_agent_loop_v2(
                 initial_messages,
                 channel="system",
                 chat_id=f"worker:{task_id}",
                 tool_registry_override=restricted_tools,
             )
+            final_content = result.final_content
             
-            self.result = final_content if final_content else "Task completed (no textual response)"
+            # Enforce 5MB IPC memory barrier
+            from nanobot.agent.ipc_utils import enforce_ipc_limit
+            safe_content = enforce_ipc_limit(
+                payload=final_content if final_content else "Task completed (no textual response)",
+                workspace=self.workspace,
+                process_name="WorkerNode",
+                worker_sandbox=sandbox
+            )
+            
+            self.result = safe_content
             self.status = "completed"
             
             # Persist output to json in sandbox as fallback
@@ -272,6 +276,14 @@ def _bootstrap_security(argv: list[str]) -> None:
             
     import sys
     sys.addaudithook(_block_dangerous_ops)
+    
+    # Monkey-patch TaskKnowledgeStore to make it Read-Only in the worker process
+    from nanobot.agent.knowledge.readonly_store import ReadOnlyKnowledgeStore
+    from nanobot.agent.task_knowledge import TaskKnowledgeStore as OriginalTaskKnowledgeStore
+    import nanobot.agent.knowledge_workflow
+    import nanobot.agent.task_knowledge
+    
+    nanobot.agent.knowledge_workflow.TaskKnowledgeStore = lambda ws: ReadOnlyKnowledgeStore(OriginalTaskKnowledgeStore(ws))
 
 if __name__ == "__main__":
     _bootstrap_security(sys.argv)

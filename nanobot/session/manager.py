@@ -72,7 +72,7 @@ class Session:
             elif content is None:
                 content = ""
             entry: dict[str, Any] = {"role": m["role"], "content": content}
-            for k in ("tool_calls", "tool_call_id", "name", "media"):
+            for k in ("tool_calls", "tool_call_id", "name", "media", "is_skeleton", "milestone_summary"):
                 if k in m:
                     entry[k] = m[k]
             out.append(entry)

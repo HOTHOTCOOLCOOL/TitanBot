@@ -184,3 +184,12 @@ test_out_new.txt
 /browsers/
 /models/
 user_data/
+
+# ===== Large Test Output and Databases =====
+sandbox/
+sessions/
+memory/traces/
+.codex_tmp_*/
+.pytest_tmp_*/
+*.jsonl
+*.sqlite3

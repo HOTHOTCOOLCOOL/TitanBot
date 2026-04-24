@@ -193,24 +193,28 @@ class ExecTool(Tool):
             if not any(re.search(p, lower) for p in self.allow_patterns):
                 return "Error: Command blocked by safety guard (not in allowlist)"
 
-        if self.restrict_to_workspace:
-            if "..\\" in cmd or "../" in cmd:
-                return "Error: Command blocked by safety guard (path traversal detected)"
+        cwd_path = Path(cwd).resolve()
+        
+        if "..\\" in cmd or "../" in cmd:
+            return "Error: Command blocked by safety guard (path traversal detected)"
+        
+        # 🔴 Zone CWD Contract Enforcement: Ensure working directory itself does not escape Zone sandbox
+         # This must be strictly enforced regardless of restrict_to_workspace flag
+        restrict_dir = Path(self.working_dir).resolve() if self.working_dir else None
+        if restrict_dir and cwd_path != restrict_dir and restrict_dir not in cwd_path.parents:
+            return f"Error: Command blocked by safety guard (cwd '{cwd_path}' is outside restricted sandbox '{restrict_dir}')"
 
-            cwd_path = Path(cwd).resolve()
+        win_paths = re.findall(r"[A-Za-z]:\\[^\\\"']+", cmd)
+        posix_paths = re.findall(r"(?:^|[\s|>])(/[^\s\"'>]+)", cmd)
 
-            win_paths = re.findall(r"[A-Za-z]:\\[^\\\"']+", cmd)
-            # Only match absolute paths — avoid false positives on relative
-            # paths like ".venv/bin/python" where "/bin/python" would be
-            # incorrectly extracted by the old pattern.
-            posix_paths = re.findall(r"(?:^|[\s|>])(/[^\s\"'>]+)", cmd)
-
-            for raw in win_paths + posix_paths:
-                try:
-                    p = Path(raw.strip()).resolve()
-                except Exception:
-                    continue
-                if p.is_absolute() and cwd_path not in p.parents and p != cwd_path:
-                    return "Error: Command blocked by safety guard (path outside working dir)"
+        for raw in win_paths + posix_paths:
+            try:
+                p = Path(raw.strip()).resolve()
+            except Exception:
+                continue
+                
+            base_dir = restrict_dir or (cwd_path if self.restrict_to_workspace else None)
+            if base_dir and p.is_absolute() and base_dir not in p.parents and p != base_dir:
+                return "Error: Command blocked by safety guard (path outside working dir)"
 
         return None

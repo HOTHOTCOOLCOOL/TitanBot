@@ -17,7 +17,8 @@ async def test_state_handler_approve_always():
     mock_agent.memory_window = 10
     mock_agent._set_tool_context = MagicMock()
     mock_agent.tools.execute = AsyncMock(return_value="Success")
-    mock_agent._run_agent_loop = AsyncMock(return_value=("final text", ["exec"], [{"tool": "exec", "args": {}}]))
+    from nanobot.agent.loop import LoopResult
+    mock_agent._run_agent_loop = AsyncMock(return_value=LoopResult(final_content="final text", tools_used=["exec"], tool_calls_with_args=[{"tool": "exec", "args": {}}]))
     
     mock_auth_store = MagicMock()
     mock_agent._get_approval_store.return_value = mock_auth_store
@@ -31,7 +32,7 @@ async def test_state_handler_approve_always():
     assert session.pending_approval_task is None
 
     # Assert auth store recorded "always"
-    mock_auth_store.add_approval.assert_called_once_with("exec", "")
+    mock_auth_store.add_approval.assert_called_once_with("exec", "", {"command": "rm -rf /"})
 
     # Assert tool executed
     mock_agent.tools.execute.assert_called_once_with("exec", {"command": "rm -rf /"})
@@ -53,7 +54,8 @@ async def test_state_handler_reject():
     mock_agent.memory_window = 10
     mock_agent._set_tool_context = MagicMock()
     mock_agent.tools.execute = AsyncMock()
-    mock_agent._run_agent_loop = AsyncMock(return_value=("rejected text", [], []))
+    from nanobot.agent.loop import LoopResult
+    mock_agent._run_agent_loop = AsyncMock(return_value=LoopResult(final_content="rejected text", tools_used=[], tool_calls_with_args=[]))
 
     handler = StateHandler(mock_agent)
     msg = InboundMessage(channel="test", chat_id="1", content="reject", sender_id="user1")

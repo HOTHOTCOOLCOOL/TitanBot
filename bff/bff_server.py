@@ -64,6 +64,38 @@ def openai_error(message: str, error_type: str, status_code: int) -> JSONRespons
     )
 
 
+CONTENT_FILTER_MESSAGE = (
+    "Azure OpenAI content filter blocked the prompt or completion. "
+    "Please revise the prompt and retry."
+)
+
+
+def make_openai_error_content(message: str, error_type: str, status_code: int) -> dict:
+    return {"error": {"message": message, "type": error_type, "code": status_code}}
+
+
+def openai_error_payload(message: str, error_type: str, status_code: int) -> str:
+    return json.dumps(make_openai_error_content(message, error_type, status_code))
+
+
+def is_content_filter_error(error: Exception | str) -> bool:
+    err_str = str(error).lower()
+    return any(
+        phrase in err_str
+        for phrase in (
+            "content_filter",
+            "content filter",
+            "content management policy",
+            "response was filtered",
+            "triggering azure openai",
+        )
+    )
+
+
+def content_filter_error() -> JSONResponse:
+    return openai_error(CONTENT_FILTER_MESSAGE, "content_filter", 400)
+
+
 # ── Model resolution ──────────────────────────────────────────────────────────
 
 def resolve_model(client_model: str) -> tuple[str, str, str, str | None]:
@@ -92,6 +124,20 @@ def resolve_model(client_model: str) -> tuple[str, str, str, str | None]:
 
     # Generic provider (anthropic, openai, deepseek, etc.)
     return upstream_model, cfg.generic_api_key, cfg.generic_api_base, None
+
+
+def sanitize_reasoning_model_kwargs(upstream_model: str, kwargs: dict) -> None:
+    """
+    Drop request params that Azure reasoning models reject.
+
+    We keep litellm.drop_params=False globally so custom models can still
+    preserve tool_calls, and only strip unsupported params for known
+    reasoning-model families here.
+    """
+    if "gpt-5" in upstream_model or "o1" in upstream_model:
+        kwargs.pop("temperature", None)
+        kwargs.pop("top_p", None)
+        kwargs.pop("stop", None)
 
 
 # ── Request gating ─────────────────────────────────────────────────────────
@@ -159,12 +205,17 @@ async def _stream_litellm(kwargs: dict, user_id: str) -> AsyncGenerator[bytes, N
 
     except Exception as e:
         elapsed = time.monotonic() - start
-        # ⚠️  Do NOT log the api_key or full kwargs — only safe info
-        logger.error(f"[Stream] user={user_id} upstream error after {elapsed:.1f}s: {type(e).__name__}: {e}")
-        # Emit an SSE error event so client knows the stream terminated abnormally
-        error_payload = json.dumps({
-            "error": {"message": str(e), "type": "upstream_error", "code": 500}
-        })
+        if is_content_filter_error(e):
+            logger.warning(
+                f"[Stream] user={user_id} upstream content filter after {elapsed:.1f}s: "
+                f"{type(e).__name__}: {e}"
+            )
+            error_payload = openai_error_payload(CONTENT_FILTER_MESSAGE, "content_filter", 400)
+        else:
+            # ⚠️  Do NOT log the api_key or full kwargs — only safe info
+            logger.error(f"[Stream] user={user_id} upstream error after {elapsed:.1f}s: {type(e).__name__}: {e}")
+            # Emit an SSE error event so client knows the stream terminated abnormally
+            error_payload = openai_error_payload(str(e), "upstream_error", 500)
         yield f"data: {error_payload}\n\n".encode()
         yield b"data: [DONE]\n\n"
     finally:
@@ -197,10 +248,15 @@ async def _stream_text_completion(kwargs: dict, user_id: str) -> AsyncGenerator[
 
     except Exception as e:
         elapsed = time.monotonic() - start
-        logger.error(f"[Stream Completions] user={user_id} upstream error after {elapsed:.1f}s: {type(e).__name__}: {e}")
-        error_payload = json.dumps({
-            "error": {"message": str(e), "type": "upstream_error", "code": 500}
-        })
+        if is_content_filter_error(e):
+            logger.warning(
+                f"[Stream Completions] user={user_id} upstream content filter after {elapsed:.1f}s: "
+                f"{type(e).__name__}: {e}"
+            )
+            error_payload = openai_error_payload(CONTENT_FILTER_MESSAGE, "content_filter", 400)
+        else:
+            logger.error(f"[Stream Completions] user={user_id} upstream error after {elapsed:.1f}s: {type(e).__name__}: {e}")
+            error_payload = openai_error_payload(str(e), "upstream_error", 500)
         yield f"data: {error_payload}\n\n".encode()
         yield b"data: [DONE]\n\n"
     finally:
@@ -279,10 +335,8 @@ async def chat_completions(request: Request) -> Response:
             kwargs[param] = body[param]
             
     # 🟢 Reasoning Exception Bypass
-    # LiteLLM throws 'UnsupportedParamsError' if temperature != 1 is passed to gpt-5/o1
-    if "gpt-5" in upstream_model or "o1" in upstream_model:
-        kwargs.pop("temperature", None)
-        kwargs.pop("top_p", None)
+    # LiteLLM throws 'UnsupportedParamsError' if temperature/top_p/stop are passed to gpt-5/o1
+    sanitize_reasoning_model_kwargs(upstream_model, kwargs)
 
     is_streaming = bool(body.get("stream", False))
 
@@ -315,6 +369,12 @@ async def chat_completions(request: Request) -> Response:
         return JSONResponse(content=response.model_dump(exclude_none=True))
     except Exception as e:
         elapsed = time.monotonic() - start
+        if is_content_filter_error(e):
+            logger.warning(
+                f"[Response] user={user_id} upstream content filter after {elapsed:.1f}s: "
+                f"{type(e).__name__}: {e}"
+            )
+            return content_filter_error()
         logger.error(
             f"[Response] user={user_id} upstream error after {elapsed:.1f}s: "
             f"{type(e).__name__}: {e}"
@@ -356,9 +416,7 @@ async def text_completions(request: Request) -> Response:
         if param in body:
             kwargs[param] = body[param]
             
-    if "gpt-5" in upstream_model or "o1" in upstream_model:
-        kwargs.pop("temperature", None)
-        kwargs.pop("top_p", None)
+    sanitize_reasoning_model_kwargs(upstream_model, kwargs)
 
     is_streaming = bool(body.get("stream", False))
     logger.info(f"[Request Completions] user={user_id} upstream={upstream_model} stream={is_streaming}")
@@ -379,6 +437,11 @@ async def text_completions(request: Request) -> Response:
         return JSONResponse(content=response.model_dump(exclude_none=True))
     except Exception as e:
         elapsed = time.monotonic() - start
+        if is_content_filter_error(e):
+            logger.warning(
+                f"[Response Completions] user={user_id} upstream content filter after {elapsed:.1f}s: {e}"
+            )
+            return content_filter_error()
         logger.error(f"[Response Completions] user={user_id} upstream error: {e}")
         return openai_error(str(e), "upstream_error", 502)
 

@@ -111,6 +111,26 @@ class ExcelActuatorTool(Tool):
         super().__init__()
         self.workspace = Path(workspace)
 
+    @staticmethod
+    def _preflight_clean_locks(target_file: Path) -> int:
+        """在进程启动前精确清理当前操作的 Excel 的遗留锁文件，避免误杀无关锁。"""
+        cleaned = 0
+        try:
+            # Excel lock files prepend '~$' to the filename.
+            # Due to path length limits, sometimes it's truncated, but typically it is exact.
+            lock_name = f"~${target_file.name}"
+            lock_file = target_file.parent / lock_name
+            if lock_file.exists():
+                try:
+                    lock_file.unlink(missing_ok=True)
+                    cleaned += 1
+                    logger.info(f"[Pre-flight] Removed stale Excel lock: {lock_file.name}")
+                except OSError:
+                    pass  # 仍被占用则跳过，下次再清理
+        except Exception as e:
+            logger.debug(f"[Pre-flight] lock cleanup failed: {e}")
+        return cleaned
+
     async def execute(self, **kwargs: Any) -> str:
         file_path  = kwargs.get("file_path", "")
         sheet_name   = kwargs.get("sheet_name", "Occupancy Details")
@@ -120,15 +140,23 @@ class ExcelActuatorTool(Tool):
 
         if not file_path:
             return "Error: 'file_path' parameter is required."
-        if not Path(file_path).exists():
+            
+        target = Path(file_path)
+        if not target.exists():
             return (
                 f"Error: File not found: '{file_path}'. "
                 "Please verify the path exists and the file is accessible."
             )
+            
+        # Refined precise cleanup for this target only
+        self._preflight_clean_locks(target)
 
         # Ensure tmp output directory exists
         tmp_dir = self.workspace / "tmp"
         tmp_dir.mkdir(parents=True, exist_ok=True)
+        
+        self._preflight_clean_locks(Path(file_path).parent)
+        
         import time
         input_suffix = Path(file_path).suffix or ".xlsx"
         tmp_copy = tmp_dir / f"euro_cube_refreshed_{int(time.time())}{input_suffix}"

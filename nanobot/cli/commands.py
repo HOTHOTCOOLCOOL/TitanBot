@@ -417,6 +417,7 @@ def gateway(
             channel=job.payload.channel or "cli",
             chat_id=job.payload.to or "direct",
             return_trace=True,
+            is_headless=True,
         )
         response, trace_id = res_tuple if isinstance(res_tuple, tuple) else (res_tuple, None)
 
@@ -459,7 +460,7 @@ def gateway(
     # Create heartbeat service
     async def on_heartbeat(prompt: str) -> str:
         """Execute heartbeat through the agent."""
-        return await agent.process_direct(prompt, session_key="heartbeat")
+        return await agent.process_direct(prompt, session_key="heartbeat", is_headless=True)
 
     heartbeat = HeartbeatService(
         workspace=config.workspace_path,
@@ -542,7 +543,7 @@ def gateway(
 
         @dashboard_app.post("/api/cli_chat", dependencies=[Depends(verify_token)])
         async def cli_chat(req: CliChatReq):
-            reply = await agent.process_direct(req.message, session_key=req.session_id, channel="cli")
+            reply = await agent.process_direct(req.message, session_key=req.session_id, channel="api")
             return {"response": reply}
 
         console.print(f"[green]✓[/green] Web Dashboard: http://{host}:{port}  (Token: {config.gateway.token or 'auto'})")

@@ -49,7 +49,6 @@ class HITLMiddleware(AgentMiddleware):
 
             tags = tool_impl.get_effective_tags(tc.arguments, config_override=config_override)
             is_high_risk = bool(tags & CapabilityTag.IS_HIGH_RISK)
-            
             if not is_high_risk:
                 continue
 
@@ -64,16 +63,15 @@ class HITLMiddleware(AgentMiddleware):
             if is_approved:
                 continue
 
-            # Phase 38B: Cross-process capability inheritance / Worker block
-            if str(ctx.chat_id).startswith("worker:"):
-                logger.warning(f"HITL: Hard blocking high-risk tool '{tc.name}' for worker {ctx.chat_id}")
-                ctx.messages = self._agent.context.add_tool_result(
-                    ctx.messages, tc.id, tc.name,
-                    f"Error: High-Risk action ({tc.name}) blocked. Worker processes cannot inherit HITL approval dialogs."
-                )
+            # Phase 38B / 64: Cross-process capability inheritance / Headless block
+            if ctx.is_headless:
+                env_name = "Headless Envoy"
+                logger.warning(f"HITL: Hard blocking high-risk tool '{tc.name}' for headless execution {ctx.session_key}")
+                msg = f"Error: High-Risk action ({tc.name}) blocked. Headless processes cannot inherit HITL approval dialogs (HITL_REQUIRED_IN_HEADLESS)."
+                ctx.messages = self._agent.context.add_tool_result(ctx.messages, tc.id, tc.name, msg)
                 from nanobot.utils.trace_context import add_route_tag, InterceptTag
-                add_route_tag(InterceptTag.L1_INTERCEPT)
-                ctx.abort("l1_violation", "Worker HITL blocked")
+                add_route_tag(InterceptTag.L1_BLOCK)
+                ctx.abort("fatal_violation", msg)
                 break
 
             # ── HITL triggered ──

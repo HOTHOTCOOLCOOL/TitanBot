@@ -154,7 +154,8 @@ async def test_circuit_breaker_breaks_after_3_consecutive_all_exceptions():
             agent.tools.execute = AsyncMock(side_effect=RuntimeError("boom"))
 
             messages = [{"role": "system", "content": "test"}, {"role": "user", "content": "test"}]
-            final_content, tools_used, _ = await agent._run_agent_loop(messages)
+            result = await agent._run_agent_loop(messages)
+            final_content = result.final_content
 
             # After 3 consecutive all-exception turns, it should break with a warning
             assert final_content is not None

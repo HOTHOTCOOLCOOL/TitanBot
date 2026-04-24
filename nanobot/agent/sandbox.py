@@ -118,7 +118,7 @@ class PythonSandbox:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
-                cwd=str(config.workspace_path)
+                cwd=str(config.workspace_path / "sandbox")
             )
             
             payload_bytes = json.dumps(payload).encode("utf-8")

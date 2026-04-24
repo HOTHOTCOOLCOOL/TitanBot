@@ -44,14 +44,23 @@ def _register_default_tools(agent: "AgentLoop") -> None:
     """Register the default set of tools."""
     # File tools (restrict to workspace if configured)
     allowed_dir = agent.workspace if agent.restrict_to_workspace else None
-    agent.tools.register(ReadFileTool(allowed_dir=allowed_dir))
-    agent.tools.register(WriteFileTool(allowed_dir=allowed_dir))
-    agent.tools.register(EditFileTool(allowed_dir=allowed_dir))
-    agent.tools.register(ListDirTool(allowed_dir=allowed_dir))
+    
+    # Zone A (Workspace) is Read-only. Zone C (sandbox) is writable.
+    sandbox_dir = agent.workspace / "sandbox"
+    sandbox_dir.mkdir(parents=True, exist_ok=True)
+    
+    agent.tools.register(ReadFileTool(allowed_dir=allowed_dir, forbidden_dirs=None))
+    agent.tools.register(ListDirTool(allowed_dir=allowed_dir, forbidden_dirs=None))
+    
+    # Write and Edit are strictly limited to the Sandbox (Zone C)
+    agent.tools.register(WriteFileTool(allowed_dir=sandbox_dir, forbidden_dirs=None))
+    agent.tools.register(EditFileTool(allowed_dir=sandbox_dir, forbidden_dirs=None))
     
     # Shell tool
+    sandbox_dir = agent.workspace / "sandbox"
+    sandbox_dir.mkdir(parents=True, exist_ok=True)
     agent.tools.register(ExecTool(
-        working_dir=str(agent.workspace),
+        working_dir=str(sandbox_dir),
         timeout=agent.exec_config.timeout,
         restrict_to_workspace=agent.restrict_to_workspace,
     ))

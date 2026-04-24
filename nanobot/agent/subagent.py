@@ -112,9 +112,10 @@ class SubagentManager(BaseWorkerBridge):
 
             # Build subagent tools
             restricted_tools = build_worker_toolset(
-                sandbox=sandbox,
+                workspace=self.workspace,
                 restrict_to_workspace=self.restrict_to_workspace,
-                brave_api_key=self.brave_api_key
+                brave_api_key=self.brave_api_key,
+                worker_sandbox=sandbox
             )
             
             # Phase 46B: Allow Subagents to save experiences if task_knowledge is available
@@ -139,15 +140,25 @@ class SubagentManager(BaseWorkerBridge):
                 raise RuntimeError("SubagentManager missing agent_loop_ref. Cannot run subagent.")
 
             # Delegate completely to the middleware-protected agent loop
-            final_content, _, _, _ = await self.agent_loop_ref._run_agent_loop(
+            result = await self.agent_loop_ref._run_agent_loop(
                 initial_messages,
                 channel="system",
                 chat_id=f"worker:{task_id}",
                 tool_registry_override=restricted_tools,
             )
+            final_content = result.final_content
             
             if final_content is None:
                 final_content = "Task completed but no final response was generated, or loop aborted."
+            
+            # ADR-64 Decision 2: IPC Payload 5MB cap
+            from nanobot.agent.ipc_utils import enforce_ipc_limit
+            final_content = enforce_ipc_limit(
+                payload=final_content,
+                workspace=self.workspace,
+                process_name="SubagentManager",
+                worker_sandbox=sandbox
+            )
             
             logger.info(f"Subagent [{task_id}] completed successfully")
             await self._announce_result(task_id, label, task, final_content, origin, "ok")

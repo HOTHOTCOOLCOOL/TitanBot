@@ -31,24 +31,15 @@
   - ✅ ARCHITECTURE.md 经验法则 #23 & #24 沉淀
 - [x] **Phase 63**: `execute_phase` 工作流回归测试强化 (ADR-63) 完成。经 Harness 5 阶辩证，废弃 LLM 幻觉映射，引入绿色基线铁律 + Zone A/B/C 架构划区 + pytest(L1)/Codex(L2) 双层串联门控。`execute_phase.md` 精准更新，ARCHITECTURE.md 追加经验法则 #25。
 - [x] **Phase 56**: Pre-flight Skill Verifier (PSV) (ADR-56) 极值打磨后交付。经过严酷的 20 轮“同进程安全限制”攻防战，放弃粗筛黑名单，确立“零能力”执行环境：极限收缩 Allowlist（7 个纯数据包）、封锁全体魔术方法与单下划线私有桥、切断内置动态反射与 format_map 解析后门，实现同进程环境下的 AST 安全隔离闭环。
+- [x] **Phase 64**: Architectural Security Hardening (架构级防线与测试闭环清理) 经过多轮回炉终极交付，彻底打通 ExitKind 契约。
 
 ## 📅 Next Steps / Backlog (后续计划)
 
+- [ ] **Phase 65: Extreme Technical Debt Annihilation & L2 Automation** *(Active P0)*
+  - 核心目标: 构建 `.agent/scripts/auto_reviewer.py` 全自动 Codex L2 审查门控，结合 gpt-5.4 消除人类复制粘贴的误差。
+  - 流程升级: 重构 `execute_phase.md` 强制落地 Contract-First（红测先行）与 Micro-Commits（微提交防爆）。
+  - 护栏机制: 设计 Human-In-The-Loop 人工干预防暴走拦截，避免长上下文下的模型自循环破坏。
 
-- [ ] **Phase 64: 架构安全加固 — Phase 37-63 深度回顾** *(P0, ADR-64 已定稿，待编码落地)*
-  - 来源: Phase 37-63 全面回顾 + Harness 5阶辩证工作流 (ADR-64 定稿)
-  - 7项决策，按优先级排序:
-    - **P0 🔴 决策3**: LLM 输出侧强制转义 `[System:` → `[\System:]`，孤儿 tool 消息升格为 `role: system` (`context.py`, `loop.py`)
-    - **P0 🔴 决策5**: Context 降级感知通知在 `build_messages()` 末尾注入独立 `role: system` 消息，脱离 IFCC 压缩范围 (`context.py`)
-    - **P1 🟠 决策6**: ExcelActuator `connect()` 前 Pre-flight 扫除 `~$*.xlsx` 遗留锁文件，彻底避开强杀后的句柄释放窗口
-    - **P1 🟠 决策4**: `vector_store.search()` 惰性一致性校验 — 检索时 `os.path.exists()` O(1) 探针过滤失效源，标记待 GC
-    - **P2 🟡 决策2**: SubAgent IPC Payload 5MB 硬盖板 + 文件代偿引流（含前 1000 字前瞻预览）(`subagent.py`)
-    - **P2 🟡 决策7**: Blast Radius 静态评分表替换全局规划门；Blast ≥ 2 强阻塞 HITL 永不超时；Cron 无头模式直接 fail_task
-    - **P3 🟢 决策1**: Zone 执行区划隔离 — `exec`/`run_command` 的 `cwd` 强制锚定 `workspace/sandbox/`
-  - **刻意放弃**: 文件后缀黑名单、`_trusted` 内联信任字段、mtime-based GC、3秒自动同意、完全废弃 `[System:]` 协议
-  - ARCHITECTURE.md 追加经验法则 #26 (Zone 区划)、#27 (信任路径非字段)、#28 (降级显性通知)
-  - 详见 `docs/adr/ADR-64-architecture-security-hardening.md`
-  - **状态**: ADR 定稿，待进入编码实施阶段
 
 - [ ] **Phase 60: Enterprise Gateway LiteLLM Migration** *(P1, ADR 已定稿，待进入编码实施阶段)*
   - 来源: Phase 54 BFF 自研网关运营反思 + Harness 5-阶辩证工作流 (ADR-60 定稿)

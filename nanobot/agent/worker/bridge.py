@@ -105,7 +105,7 @@ Summarize this naturally for the user. Keep it brief. Do not mention technical d
         logger.debug(f"{sender_id.capitalize()} [{task_id}] announced result to {origin['channel']}:{origin['chat_id']}")
 
 
-def build_worker_toolset(sandbox: Path, restrict_to_workspace: bool, brave_api_key: str | None = None) -> "ToolRegistry":
+def build_worker_toolset(workspace: Path, restrict_to_workspace: bool, brave_api_key: str | None = None, worker_sandbox: Path | None = None) -> "ToolRegistry":
     """
     Build a restricted ToolRegistry for isolated workers.
     Workers are intentionally denied message, spawn, coordinator, and exec capabilities.
@@ -115,12 +115,22 @@ def build_worker_toolset(sandbox: Path, restrict_to_workspace: bool, brave_api_k
     from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
     
     restricted_tools = ToolRegistry()
-    allowed_dir = sandbox if restrict_to_workspace else None
+    
+    # 🔴 Zone A (reads) / Zone C (writes) strict boundary
+    if worker_sandbox:
+        allowed_dir = worker_sandbox
+        sandbox_dir = worker_sandbox
+    else:
+        allowed_dir = workspace if restrict_to_workspace else None
+        sandbox_dir = workspace / "sandbox"
+    sandbox_dir.mkdir(parents=True, exist_ok=True)
     
     restricted_tools.register(ReadFileTool(allowed_dir=allowed_dir))
-    restricted_tools.register(WriteFileTool(allowed_dir=allowed_dir))
-    restricted_tools.register(EditFileTool(allowed_dir=allowed_dir))
     restricted_tools.register(ListDirTool(allowed_dir=allowed_dir))
+    
+    # Writes MUST strictly align to Zone C
+    restricted_tools.register(WriteFileTool(allowed_dir=sandbox_dir))
+    restricted_tools.register(EditFileTool(allowed_dir=sandbox_dir))
     
     if brave_api_key:
         restricted_tools.register(WebSearchTool(api_key=brave_api_key))

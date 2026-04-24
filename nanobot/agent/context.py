@@ -302,24 +302,46 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
             system_prompt += f"\n\n## Current Session\nChannel: {channel}\nChat ID: {chat_id}"
         messages.append({"role": "system", "content": system_prompt})
 
+        oversized = []
         # Reconstruct multimodal history blocks before trimming
         for h_msg in history:
             if "media" in h_msg and h_msg["media"]:
                 if isinstance(h_msg.get("content"), str):
-                    h_msg["content"] = self._build_user_content(h_msg["content"], h_msg["media"])
+                    h_msg["content"] = self._build_user_content(h_msg["content"], h_msg["media"], oversized)
                 h_msg.pop("media", None)
 
+        # Current message (with optional image attachments) must be built before trimming
+        user_content = self._build_user_content(current_message, media, oversized)
+
         # Trim history so total context stays within budget
-        trimmed_history = self._trim_history(
-            history, system_prompt, current_message, context_limit
+        trimmed_history, dropped_imgs, skel_count = self._trim_history(
+            history, system_prompt, user_content, context_limit
         )
 
         # History
         messages.extend(trimmed_history)
 
-        # Current message (with optional image attachments)
-        user_content = self._build_user_content(current_message, media)
+        # Append fully resolved user_content
         messages.append({"role": "user", "content": user_content})
+
+        degradation_notices = []
+        for path in oversized:
+            degradation_notices.append(f"⚠️ An image attachment exceeding 20MB was dropped from the context (file_path: {path}). Processing continues without visual data.")
+        if dropped_imgs > 0:
+            degradation_notices.append(
+                f"⚠️ {dropped_imgs} image(s) removed due to token budget. "
+                "Do NOT assume visual context. If the task requires images, ask user to re-provide."
+            )
+        if skel_count > 0:
+            degradation_notices.append(
+                f"⚠️ {skel_count} history message(s) compressed to summaries. "
+                "Older context details may be incomplete."
+            )
+        if degradation_notices:
+            messages.append({
+                "role": "system",
+                "content": "[Context Integrity Notice]\n" + "\n".join(degradation_notices)
+            })
 
         # 🟢 Schema Consistency Sanitizer (Schema Strict Fix)
         # Persistent storage (especially HITL async approvals) might inject orphaned `role: tool` messages
@@ -346,8 +368,8 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
                     name = msg.get("name", "unknown_tool")
                     content = msg.get("content", "")
                     sanitized.append({
-                        "role": "user",
-                        "content": f"[System Observation: The previously requested tool '{name}' executed with result:]\n{content}"
+                        "role": "system",
+                        "content": f"[Orphan tool telemetry: '{name}'] {content}"
                     })
                     continue
             sanitized.append(msg)
@@ -382,25 +404,31 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         self,
         history: list[dict[str, Any]],
         system_prompt: str,
-        current_message: str,
+        current_message: list[dict[str, Any]] | str,
         context_limit: int,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], int, int]:
         """Drop oldest history messages until total fits within *context_limit* chars.
 
         Keeps at least the last 4 messages so the LLM has immediate conversation
-        continuity.
+        continuity. Returns (trimmed_list, dropped_images, skeletonized_count).
         """
-        overhead = len(system_prompt) + len(current_message)
+        # Ensure dynamic system prompt and current message are accurately sized including multimodality
+        overhead = self._estimate_chars([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": current_message}
+        ])
         history_chars = self._estimate_chars(history)
 
         if overhead + history_chars <= context_limit:
-            return history  # fits — no trimming needed
+            return history, 0, 0  # fits — no trimming needed
 
         from loguru import logger
         target = int(context_limit * 0.80) - overhead
         min_keep = 4  # always keep at least the last N messages
 
         trimmed = list(history)
+        dropped_imgs = 0
+        skel_count = 0
         eviction_idx = 0
         while len(trimmed) - eviction_idx > min_keep and self._estimate_chars(trimmed) > target:
             msg_to_evict = trimmed[eviction_idx]
@@ -412,6 +440,7 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
                 for block in msg_to_evict["content"]:
                     if isinstance(block, dict) and block.get("type") == "image_url":
                         has_image = True
+                        dropped_imgs += 1
                         new_content.append({"type": "text", "text": "[图片内容已在相关对话中被分析并压缩]"})
                     else:
                         new_content.append(block)
@@ -422,6 +451,7 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
 
             if msg_to_evict.get("milestone_summary") and not msg_to_evict.get("is_skeleton"):
                 # Downgrade message to its milestone skeleton
+                skel_count += 1
                 trimmed[eviction_idx] = {
                     "role": "assistant",
                     "content": f"（上下文已压缩） {msg_to_evict['milestone_summary']}",
@@ -438,11 +468,11 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
                 f"Context window optimization: dropped {dropped} oldest history "
                 f"messages ({history_chars} → {self._estimate_chars(trimmed)} chars)"
             )
-        return trimmed
+        return trimmed, dropped_imgs, skel_count
 
     _MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
 
-    def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
+    def _build_user_content(self, text: str, media: list[str] | None, oversized_drops: list[str] = None) -> str | list[dict[str, Any]]:
         """Build user message content with optional base64-encoded images."""
         if not media:
             return text
@@ -454,6 +484,8 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
             if p.is_file() and p.stat().st_size > self._MAX_IMAGE_BYTES:
                 from loguru import logger
                 logger.warning(f"Image too large ({p.stat().st_size} bytes), skipping: {path}")
+                if oversized_drops is not None:
+                    oversized_drops.append(path)
                 continue
             mime, _ = mimetypes.guess_type(path)
             if not p.is_file() or not mime or not mime.startswith("image/"):

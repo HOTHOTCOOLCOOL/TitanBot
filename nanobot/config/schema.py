@@ -352,7 +352,7 @@ class ReliabilityConfig(Base):
 class ExperimentalConfig(Base):
     """Phase 41: Experimental feature flags for grey deployment."""
 
-    middleware_enabled: bool = False  # Enable onion middleware pipeline (Phase 41)
+    middleware_enabled: bool = True  # Enable onion middleware pipeline (Phase 41)
     xml_fallback_enabled: bool = True   # Settings to control fallback xml-tool parsing
 
 

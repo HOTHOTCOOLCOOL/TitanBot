@@ -134,6 +134,7 @@ class VectorMemory:
         # Provider and model for query rewriting
         self.provider = provider
         self.model = model
+        self._flagged_for_gc: set[str] = set()
 
     # -- Lazy initialisation ------------------------------------------------
 
@@ -352,7 +353,7 @@ class VectorMemory:
         if not content:
             return 0
 
-        return self.ingest_text(content, source="history")
+        return self.ingest_text(content, source="history", metadata={"file_path": str(history_file)})
 
     # -- Public: ingest daily logs ------------------------------------------
 
@@ -379,7 +380,7 @@ class VectorMemory:
             total += self.ingest_text(
                 content,
                 source=f"daily_log:{date_str}",
-                metadata={"date": date_str},
+                metadata={"date": date_str, "file_path": str(md_file)},
             )
 
         logger.info(f"VectorMemory: ingested daily logs — {total} total chunks")
@@ -416,7 +417,7 @@ class VectorMemory:
             
             content = "\n".join(text_parts)
             source = f"knowledge:{key}"
-            total += self.ingest_text(content, source=source, metadata={"key": key}, clear_old_source=True)
+            total += self.ingest_text(content, source=source, metadata={"key": key, "file_path": str(tasks_file)}, clear_old_source=True)
             
         experiences = data.get("experiences", [])
         for exp in experiences:
@@ -425,7 +426,7 @@ class VectorMemory:
                 continue
             prompt = exp.get("prompt", "")
             content = f"Trigger: {trigger}\nPrompt: {prompt}"
-            total += self.ingest_text(content, source=f"knowledge_experience:{trigger}", metadata={"trigger": trigger}, clear_old_source=True)
+            total += self.ingest_text(content, source=f"knowledge_experience:{trigger}", metadata={"trigger": trigger, "file_path": str(tasks_file)}, clear_old_source=True)
             
         logger.info(f"VectorMemory: ingested knowledge tasks — {total} total chunks")
         return total
@@ -473,6 +474,65 @@ class VectorMemory:
         except Exception as e:
             logger.error(f"VectorMemory: failed to delete source '{source}': {e}")
             return False
+
+    def purge_flagged_gc(self, max_footprint_mb: int = 200) -> int:
+        """Physically delete chunks that were flagged during lazy checks, and verify physical footprint limit."""
+        if not self._ensure_init():
+            return 0
+            
+        purged = 0
+        if self._flagged_for_gc:
+            try:
+                flagged = list(self._flagged_for_gc)
+                self._collection.delete(ids=flagged)
+                self._flagged_for_gc.clear()
+                logger.info(f"VectorMemory: Purged {len(flagged)} ghost chunks from DB.")
+                purged = len(flagged)
+            except Exception as e:
+                logger.error(f"VectorMemory: Failed to purge ghost chunks: {e}")
+                
+        # Dynamic physical footprint verification
+        try:
+            if self._db_path.exists():
+                size_bytes = sum(f.stat().st_size for f in self._db_path.rglob('*') if f.is_file())
+                size_mb = size_bytes / (1024 * 1024)
+                if size_mb > max_footprint_mb:
+                    logger.warning(f"VectorMemory: Physical footprint ({size_mb:.1f}MB) exceeds {max_footprint_mb}MB limit. Compacting via full wiping.")
+                    
+                    try:
+                        self._client.delete_collection(self.COLLECTION_NAME)
+                    except Exception:
+                        pass
+                    
+                    import gc
+                    import shutil
+                    self._collection = None
+                    self._client = None
+                    gc.collect()
+                    
+                    try:
+                        if self._db_path.exists():
+                            shutil.rmtree(str(self._db_path), ignore_errors=True)
+                    except Exception as e:
+                        logger.error(f"VectorMemory: Failed to wipe physical footprint: {e}")
+                    
+                    self._init_done = False    
+                    self._ensure_init()
+                    self.full_reindex()
+                else:
+                    logger.debug(f"VectorMemory: Physical footprint is healthy ({size_mb:.1f}MB / {max_footprint_mb}MB limit).")
+        except Exception as e:
+            logger.error(f"VectorMemory: footprint verification failed: {e}")
+            
+        return purged
+
+    def _is_source_alive(self, result: dict) -> bool:
+        """O(1) disk probe to verify if the index source metadata file_path still exists."""
+        file_path = result.get("metadata", {}).get("file_path")
+        if file_path and not Path(file_path).exists():
+            self._flagged_for_gc.add(result.get("id"))
+            return False
+        return True
 
     # -- Public: semantic search --------------------------------------------
 
@@ -524,7 +584,7 @@ class VectorMemory:
             distances = results["distances"][0] if results.get("distances") else [0.0] * len(ids)
             metas = results["metadatas"][0] if results.get("metadatas") else [{}] * len(ids)
 
-            for doc, dist, meta in zip(docs, distances, metas):
+            for doc_id, doc, dist, meta in zip(ids, docs, distances, metas):
                 source = meta.get("source", "unknown") if meta else "unknown"
 
                 # Post-filter by source prefix
@@ -555,6 +615,7 @@ class VectorMemory:
                         pass
 
                 output.append({
+                    "id": doc_id,
                     "text": doc,
                     "source": source,
                     "score": score,  # keep full precision for sorting
@@ -566,9 +627,12 @@ class VectorMemory:
             
             # Format scores and take top_k
             final_output = []
-            for item in output[:top_k]:
-                item["score"] = round(item["score"], 4)
-                final_output.append(item)
+            for item in output:
+                if len(final_output) >= top_k:
+                    break
+                if self._is_source_alive(item):
+                    item["score"] = round(item["score"], 4)
+                    final_output.append(item)
 
             return final_output
 

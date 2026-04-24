@@ -308,9 +308,12 @@ class StateHandler:
             chat_id=msg.chat_id
         )
         
-        final_content, tools_used, tc_args, _ = await self.agent._run_agent_loop(
+        result = await self.agent._run_agent_loop(
             initial_messages, channel=msg.channel, chat_id=msg.chat_id
         )
+        final_content = result.final_content
+        tools_used = result.tools_used
+        tc_args = result.tool_calls_with_args
         
         # B-1: Guard against final_content being None (e.g., max iterations
         # reached without LLM producing a non-tool response).
@@ -352,9 +355,10 @@ class StateHandler:
             channel=origin_channel,
             chat_id=origin_chat_id,
         )
-        final_content, _, _, _ = await self.agent._run_agent_loop(
+        result = await self.agent._run_agent_loop(
             initial_messages, channel=origin_channel, chat_id=origin_chat_id
         )
+        final_content = result.final_content
 
         if final_content is None:
             final_content = "Background task completed."

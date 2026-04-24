@@ -110,6 +110,21 @@ class LiteLLMProvider(LLMProvider):
     _RETRY_BASE_DELAY = 1.0  # seconds
 
     @staticmethod
+    def _is_content_filter_error(error: Exception | str) -> bool:
+        """Detect Azure OpenAI content-filter responses across multiple error texts."""
+        err_str = str(error).lower()
+        return any(
+            phrase in err_str
+            for phrase in (
+                "content_filter",
+                "content filter",
+                "content management policy",
+                "response was filtered",
+                "triggering azure openai",
+            )
+        )
+
+    @staticmethod
     def _is_retryable(error: Exception) -> bool:
         """Determine if an error is transient and worth retrying.
 
@@ -230,8 +245,7 @@ class LiteLLMProvider(LLMProvider):
                 if isinstance(e, asyncio.CancelledError):
                     raise
                 
-                err_str = str(e).lower()
-                if "content_filter" in err_str or "content filter" in err_str:
+                if self._is_content_filter_error(e):
                     from nanobot.utils.exceptions import AzureContentFilterException
                     raise AzureContentFilterException(str(e))
 
@@ -477,8 +491,7 @@ class LiteLLMProvider(LLMProvider):
             if isinstance(e, asyncio.CancelledError):
                 raise
             
-            err_str = str(e).lower()
-            if "content_filter" in err_str or "content filter" in err_str:
+            if self._is_content_filter_error(e):
                 from nanobot.utils.exceptions import AzureContentFilterException
                 raise AzureContentFilterException(str(e))
 

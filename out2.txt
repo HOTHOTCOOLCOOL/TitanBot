@@ -1,0 +1,91 @@
+C:\Users\davidliu\AppData\Local\miniconda3\Lib\site-packages\requests\__init__.py:113: RequestsDependencyWarning: urllib3 (1.26.20) or chardet (6.0.0.post1)/charset_normalizer (3.4.4) doesn't match a supported version!
+  warnings.warn(
+============================= test session starts =============================
+platform win32 -- Python 3.13.11, pytest-9.0.2, pluggy-1.5.0 -- C:\Users\davidliu\AppData\Local\miniconda3\python.exe
+cachedir: .pytest_cache
+rootdir: D:\Python\nanobot
+configfile: pyproject.toml
+plugins: anyio-4.12.1, langsmith-0.7.22, asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 4 items / 3 deselected / 1 selected
+
+tests/agent/test_phase64_loop_result.py::test_process_direct_tool_then_text FAILED [100%]
+
+================================== FAILURES ===================================
+_____________________ test_process_direct_tool_then_text ______________________
+
+    @pytest.mark.asyncio
+    async def test_process_direct_tool_then_text():
+        """2. Normal convergence of tool -> text, proving real LoopResult logic."""
+        bus = MessageBus()
+        agent = AgentLoop(
+            model="gpt-4",
+            provider=AsyncMock(),
+            workspace=Path("."),
+            bus=bus
+        )
+    
+        from nanobot.providers.base import LLMResponse
+        # First turn: LLM calls a tool. Second turn: LLM returns text.
+        mock_tool = MagicMock()
+        mock_tool.id = "call_x"
+        mock_tool.name = "mock_tool"
+        mock_tool.arguments = {"a": 1}
+        call1 = LLMResponse(content="", tool_calls=[mock_tool])
+        call2 = LLMResponse(content="Final truth output", tool_calls=[])
+    
+        mock_llm = AsyncMock(side_effect=[call1, call2, call2])
+    
+        # Needs valid tool registration to avoid pipeline exception
+        agent.tools.registry = {"mock_tool": MagicMock()}
+        # Mock tool execution to just return string so no crash
+        agent.tools.execute = AsyncMock(return_value="tool output success")
+    
+        with patch.object(agent, "_call_llm_for_turn", mock_llm):
+            result = await agent.process_direct(
+                content="do tool please",
+                channel="api",
+                session_key="api:user"
+            )
+            assert "Final truth output" in result
+>           assert not agent.sessions.get_or_create("api:user").pending_save
+E           AssertionError: assert not {'key': 'do tool please', 'result_summary': 'Final truth output', 'steps': [{'args': {'a': 1}, 'tool': 'mock_tool'}], 'timestamp': 1776993643.7208166, ...}
+E            +  where {'key': 'do tool please', 'result_summary': 'Final truth output', 'steps': [{'args': {'a': 1}, 'tool': 'mock_tool'}], 'timestamp': 1776993643.7208166, ...} = Session(key='api:user', messages=[{'role': 'user', 'content': 'do tool please', 'timestamp': '2026-04-24T09:18:47.013690', 'media': None}, {'role': 'assistant', 'content': 'Final truth output', 'timestamp': '2026-04-24T09:18:47.013698', 'tools_used': ['mock_tool'], 'milestone_summary': None}, {'role': 'user', 'content': 'do tool please', 'timestamp': '2026-04-24T09:19:21.636774', 'media': None}, {'role': 'assistant', 'content': 'Final truth output', 'timestamp': '2026-04-24T09:19:21.636784', 'tools_used': ['mock_tool'], 'milestone_summary': None}, {'role': 'user', 'content': 'do tool please', 'timestamp': '2026-04-24T09:19:44.803745', 'media': None}, {'role': 'assistant', 'content': 'Final truth output', 'timestamp': '2026-04-24T09:19:44.803757', 'tools_used': ['mock_tool'], 'milestone_summary': None}, {'role': 'user', 'content': 'do tool please', 'timestamp': '2026-04-24T09:20:08.188760', 'media': None}, {'role': 'assistant', 'content': 'Final truth output', 'timestamp': '2026-04-24T09:20:08.188769', 'tools_used': ['mock_tool'], 'milestone_summary': None}, {'role': 'user', 'content': 'do tool please', 'timestamp': '2026-04-24T09:20:32.356858', 'media': None}, {'role': 'assistant', 'content': 'Final truth output', 'timestamp': '2026-04-24T09:20:32.356868', 'tools_used': ['mock_tool'], 'milestone_summary': None}, {'role': 'user', 'content': 'do tool please', 'timestamp': '2026-04-24T09:20:43.720782', 'media': None}, {'role': 'assistant', 'content': 'Final truth output', 'timestamp': '2026-04-24T09:20:43.720794', 'tools_used': ['mock_tool'], 'milestone_summary': None}], created_at=datetime.datetime(2026, 4, 24, 9, 18, 46, 720857), updated_at=datetime.datetime(2026, 4, 24, 9, 20, 43, 720798), metadata={}, last_consolidated=0, pending_knowledge=None, pending_save={'key': 'do tool please', 'steps': [{'tool': 'mock_tool', 'args': {'a': 1}}], 'tools_used': ['mock_tool'], 'user_request': 'do tool please', 'result_summary': 'Final truth output', 'timestamp': 1776993643.7208166}, pending_upgrade=None, pending_approval_task=None, last_task_key='do tool please', last_tool_calls=[{'tool': 'mock_tool', 'args': {'a': 1}}], message_count_since_consolidation=12, evicted_context=None, _last_saved_msg_count=12, _metadata_dirty=False).pending_save
+E            +    where Session(key='api:user', messages=[{'role': 'user', 'content': 'do tool please', 'timestamp': '2026-04-24T09:18:47.013690', 'media': None}, {'role': 'assistant', 'content': 'Final truth output', 'timestamp': '2026-04-24T09:18:47.013698', 'tools_used': ['mock_tool'], 'milestone_summary': None}, {'role': 'user', 'content': 'do tool please', 'timestamp': '2026-04-24T09:19:21.636774', 'media': None}, {'role': 'assistant', 'content': 'Final truth output', 'timestamp': '2026-04-24T09:19:21.636784', 'tools_used': ['mock_tool'], 'milestone_summary': None}, {'role': 'user', 'content': 'do tool please', 'timestamp': '2026-04-24T09:19:44.803745', 'media': None}, {'role': 'assistant', 'content': 'Final truth output', 'timestamp': '2026-04-24T09:19:44.803757', 'tools_used': ['mock_tool'], 'milestone_summary': None}, {'role': 'user', 'content': 'do tool please', 'timestamp': '2026-04-24T09:20:08.188760', 'media': None}, {'role': 'assistant', 'content': 'Final truth output', 'timestamp': '2026-04-24T09:20:08.188769', 'tools_used': ['mock_tool'], 'milestone_summary': None}, {'role': 'user', 'content': 'do tool please', 'timestamp': '2026-04-24T09:20:32.356858', 'media': None}, {'role': 'assistant', 'content': 'Final truth output', 'timestamp': '2026-04-24T09:20:32.356868', 'tools_used': ['mock_tool'], 'milestone_summary': None}, {'role': 'user', 'content': 'do tool please', 'timestamp': '2026-04-24T09:20:43.720782', 'media': None}, {'role': 'assistant', 'content': 'Final truth output', 'timestamp': '2026-04-24T09:20:43.720794', 'tools_used': ['mock_tool'], 'milestone_summary': None}], created_at=datetime.datetime(2026, 4, 24, 9, 18, 46, 720857), updated_at=datetime.datetime(2026, 4, 24, 9, 20, 43, 720798), metadata={}, last_consolidated=0, pending_knowledge=None, pending_save={'key': 'do tool please', 'steps': [{'tool': 'mock_tool', 'args': {'a': 1}}], 'tools_used': ['mock_tool'], 'user_request': 'do tool please', 'result_summary': 'Final truth output', 'timestamp': 1776993643.7208166}, pending_upgrade=None, pending_approval_task=None, last_task_key='do tool please', last_tool_calls=[{'tool': 'mock_tool', 'args': {'a': 1}}], message_count_since_consolidation=12, evicted_context=None, _last_saved_msg_count=12, _metadata_dirty=False) = get_or_create('api:user')
+E            +      where get_or_create = <nanobot.session.manager.SessionManager object at 0x0000022B41542900>.get_or_create
+E            +        where <nanobot.session.manager.SessionManager object at 0x0000022B41542900> = <nanobot.agent.loop.AgentLoop object at 0x0000022B41541A90>.sessions
+
+tests\agent\test_phase64_loop_result.py:83: AssertionError
+---------------------------- Captured stderr call -----------------------------
+2026-04-24 09:20:35.401 | INFO     | nanobot.plugin_loader:load_plugin:98 - Plugin loader: discovered tool 'browser' from browser.py\n2026-04-24 09:20:35.918 | INFO     | nanobot.plugin_loader:load_plugin:98 - Plugin loader: discovered tool 'browser_use_worker' from browser_use_worker.py\n2026-04-24 09:20:35.919 | INFO     | nanobot.plugin_loader:scan_plugins:141 - Plugin loader: loaded 2 tool(s) from nanobot\\plugins: browser, browser_use_worker\n2026-04-24 09:20:35.919 | INFO     | nanobot.plugin_loader:load_plugin:98 - Plugin loader: discovered tool 'browser' from browser.py\n2026-04-24 09:20:35.920 | INFO     | nanobot.plugin_loader:load_plugin:98 - Plugin loader: discovered tool 'browser_use_worker' from browser_use_worker.py\n2026-04-24 09:20:35.929 | INFO     | nanobot.plugin_loader:scan_plugins:141 - Plugin loader: loaded 2 tool(s) from D:\\Python\\nanobot\\nanobot\\plugins: browser, browser_use_worker\n2026-04-24 09:20:35.929 | WARNING  | nanobot.agent.tool_setup:_register_dynamic_tools:145 - Plugin 'browser' conflicts with built-in tool, skipping\n2026-04-24 09:20:35.929 | WARNING  | nanobot.agent.tool_setup:_register_dynamic_tools:145 - Plugin 'browser_use_worker' conflicts with built-in tool, skipping\n2026-04-24 09:20:35.929 | INFO     | nanobot.agent.tool_setup:_register_dynamic_tools:153 - Dynamic tools registered: browser, browser_use_worker\n2026-04-24 09:20:35.930 | INFO     | nanobot.agent.loop:_core_process_message:1215 - Processing message from api:user: do tool please\n2026-04-24 09:20:35.930 | INFO     | nanobot.agent.outcome_tracker:record_outcome:60 - KnowledgeWorkflow: recorded success for 'do tool please'\n2026-04-24 09:20:35.930 | INFO     | nanobot.agent.loop:_core_process_message:1242 - Implicit feedback: positive for 'do tool please'\n2026-04-24 09:20:35.932 | WARNING  | nanobot.agent.key_extractor:extract_key:101 - key_extractor: key extraction failed: 'coroutine' object has no attribute 'splitlines'\n2026-04-24 09:20:35.932 | ERROR    | nanobot.agent.vector_store:rewrite_query_with_anchors:804 - VectorMemory query rewriting failed (non-fatal): argument of type 'coroutine' is not iterable\n2026-04-24 09:20:41.278 | INFO     | nanobot.agent.vector_store:_load:73 - Loading embedding model: D:\\Python\\nanobot\\models\\sentence-transformers\\bge-m3 ...\n\rLoading weights:   0%|          | 0/391 [00:00<?, ?it/s]\rLoading weights: 100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 391/391 [00:00<00:00, 45954.35it/s]\n2026-04-24 09:20:43.063 | INFO     | nanobot.agent.vector_store:_load:88 - Embedding model loaded successfully using assembled components.\n2026-04-24 09:20:43.063 | INFO     | nanobot.agent.vector_store:_load:96 - Embedding dimension: 1024\n2026-04-24 09:20:43.089 | INFO     | nanobot.agent.vector_store:_ensure_init:222 - VectorMemory ready: collection='nanobot_memory', docs=319\n2026-04-24 09:20:43.695 | INFO     | nanobot.agent.loop:_run_agent_loop_v2:816 - Tool call: mock_tool({"a": 1})\n2026-04-24 09:20:43.713 | DEBUG    | nanobot.agent.middleware.tool_executor:_exec_one:45 - Tool mock_tool completed in 0.0s\n2026-04-24 09:20:43.720 | INFO     | nanobot.agent.loop:_execute_with_llm:1618 - Response to api:user: Final truth output\n2026-04-24 09:20:43.727 | ERROR    | nanobot.agent.verification:post_reflect:755 - L3: Success pattern extraction failed: argument of type 'coroutine' is not iterable
+============================== warnings summary ===============================
+tests/agent/test_phase64_loop_result.py::test_process_direct_tool_then_text
+  D:\Python\nanobot\nanobot\agent\key_extractor.py:101: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    logger.warning(f"key_extractor: key extraction failed: {e}")
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/agent/test_phase64_loop_result.py::test_process_direct_tool_then_text
+  D:\Python\nanobot\nanobot\agent\loop.py:1488: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    search_query, query_anchors = await self.context.vector_memory.rewrite_query_with_anchors(request_text, history)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/agent/test_phase64_loop_result.py::test_process_direct_tool_then_text
+  C:\Users\davidliu\AppData\Local\miniconda3\Lib\site-packages\chromadb\api\types.py:938: DeprecationWarning: The EmbeddingFunction class does not implement name(). This will be required in a future version.
+    self.name() is NotImplemented
+
+tests/agent/test_phase64_loop_result.py::test_process_direct_tool_then_text
+  C:\Users\davidliu\AppData\Local\miniconda3\Lib\site-packages\chromadb\api\collection_configuration.py:791: DeprecationWarning: The EmbeddingFunction class does not implement name(). This will be required in a future version.
+    embedding_function.name() != "default"
+
+tests/agent/test_phase64_loop_result.py::test_process_direct_tool_then_text
+  D:\Python\nanobot\nanobot\utils\task_manager.py:75: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    return await coro
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/agent/test_phase64_loop_result.py::test_process_direct_tool_then_text
+================ 1 failed, 3 deselected, 5 warnings in 12.63s =================

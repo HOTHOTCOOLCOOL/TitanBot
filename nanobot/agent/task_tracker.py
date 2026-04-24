@@ -346,8 +346,8 @@ class TaskTracker:
         
         return tasks[:limit]
     
-    def clear_old_tasks(self, days: int = 30) -> int:
-        """清理旧任务"""
+    def clear_old_tasks(self, days: int = 30, vector_memory=None) -> int:
+        """清理旧任务并且触发向量数据GC。"""
         cutoff = datetime.now().timestamp() - (days * 24 * 60 * 60)
         old_ids = []
         
@@ -360,6 +360,10 @@ class TaskTracker:
         
         if old_ids:
             self._save()
+            
+        # ADR-64: Trigger Purge Vector GC
+        if vector_memory and hasattr(vector_memory, 'purge_flagged_gc'):
+            vector_memory.purge_flagged_gc()
         
         return len(old_ids)
     

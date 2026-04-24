@@ -41,6 +41,7 @@ class TurnContext:
 
     __slots__ = (
         "messages", "iteration", "channel", "chat_id",
+        "session_key", "is_headless",
         "consecutive_all_exceptions", "recent_call_sigs",
         "action_log", "message_call_count", "loop_injection_used",
         "tool_calls", "results", "llm_response",
@@ -56,6 +57,8 @@ class TurnContext:
         iteration: int,
         channel: str | None,
         chat_id: str | None,
+        session_key: str | None = None,
+        is_headless: bool = False,
         # Cross-turn persistent state (passed by the while loop)
         consecutive_all_exceptions: int,
         recent_call_sigs: list[str],
@@ -68,6 +71,11 @@ class TurnContext:
         self.iteration = iteration
         self.channel = channel
         self.chat_id = chat_id
+        self.session_key = session_key or f"{channel}:{chat_id}"
+
+        # ADR-64 Invariant: 'cron', 'api', 'system' channels ALWAYS define Headless contexts statically without relying on caller
+        system_channels = {"cron", "api", "system"}
+        self.is_headless = is_headless or (channel in system_channels)
 
         # Cross-turn readable/mutable state
         self.consecutive_all_exceptions = consecutive_all_exceptions

@@ -27,7 +27,6 @@ class TestLoopCleanup:
         assert hasattr(loop, "_CONTINUE_TOOLS"), "_CONTINUE_TOOLS not found"
         assert hasattr(loop, "_WAIT_PHRASES"), "_WAIT_PHRASES not found"
         assert hasattr(loop, "_FAKE_COMPLETION_PHRASES"), "_FAKE_COMPLETION_PHRASES not found"
-        assert hasattr(loop, "_FAIL_INDICATORS"), "_FAIL_INDICATORS not found"
 
     def test_continue_tools_is_set(self):
         """_CONTINUE_TOOLS should be a set containing known tool names (message excluded to prevent loops)."""
@@ -53,10 +52,4 @@ class TestLoopCleanup:
         assert len(_FAKE_COMPLETION_PHRASES) > 0
         assert "已完成" in _FAKE_COMPLETION_PHRASES
 
-    def test_fail_indicators_is_list(self):
-        """_FAIL_INDICATORS should be a non-empty list."""
-        from nanobot.agent.loop import _FAIL_INDICATORS
-        assert isinstance(_FAIL_INDICATORS, list)
-        assert len(_FAIL_INDICATORS) > 0
-        assert "执行出错" in _FAIL_INDICATORS
-        assert "运行失败" in _FAIL_INDICATORS
+

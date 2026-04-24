@@ -657,6 +657,7 @@ class VerificationLayer:
         tools_used: list[str],
         tool_calls_with_args: list[dict],
         session: Any,
+        exit_kind: str = "success",
     ) -> None:
         """L3: Extract success patterns or failure lessons after agent loop.
 
@@ -672,6 +673,7 @@ class VerificationLayer:
             tools_used: List of tool names used during execution.
             tool_calls_with_args: Detailed tool call records.
             session: The current Session object.
+            exit_kind: The exit status of the loop ("success", "abort", "failure").
         """
         if not self.config.l3_enabled:
             return
@@ -686,10 +688,8 @@ class VerificationLayer:
         # if len(tools_used) < min_tools:
         #     return
 
-        # Check if the workflow succeeded (no fail indicators)
-        from nanobot.agent.loop import _FAIL_INDICATORS
-        content_lower = (final_content or "").lower()
-        workflow_failed = any(ind in content_lower for ind in _FAIL_INDICATORS)
+        # Check if the workflow succeeded (relying on ExitKind instead of _FAIL_INDICATORS)
+        workflow_failed = exit_kind != "success"
 
         if workflow_failed:
             # Failure patterns are handled by existing P29-1 (directive signal)

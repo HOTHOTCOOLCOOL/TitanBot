@@ -173,7 +173,8 @@ async def test_vlm_fallback_on_missing_provider():
             ]},
         ]
 
-        final_content, _, _ = await agent._run_agent_loop(messages)
+        result = await agent._run_agent_loop(messages)
+        final_content = result.final_content
 
         # Should have called provider.chat with the DEFAULT model (not VLM)
         call_kwargs = provider.chat.call_args
@@ -182,31 +183,7 @@ async def test_vlm_fallback_on_missing_provider():
 
 
 # ── L3: Workflow success false-negative fix ────────────────────
-
-def test_no_results_not_in_fail_indicators():
-    """L3: 'no results' should NOT be in the fail indicators list."""
-    from nanobot.agent.loop import _FAIL_INDICATORS
-    for ind in _FAIL_INDICATORS:
-        assert ind != "no results", "'no results' should be removed from _FAIL_INDICATORS"
-
-
-def test_fail_indicators_still_work():
-    """L3/DESIGN-4: legitimate fail indicators should still be present."""
-    from nanobot.agent.loop import _FAIL_INDICATORS
-    assert "not found" in _FAIL_INDICATORS
-    assert "执行失败" in _FAIL_INDICATORS
-    assert "无法完成此任务" in _FAIL_INDICATORS
-    assert "无法执行此操作" in _FAIL_INDICATORS
-
-
-def test_workflow_succeeded_with_no_results_response():
-    """L3: A response containing 'No results' should still be considered successful."""
-    from nanobot.agent.loop import _FAIL_INDICATORS
-    response = "No results matching your exact criteria, but I found 3 similar reports."
-    _content_lower = response.lower()
-    _workflow_succeeded = not any(ind in _content_lower for ind in _FAIL_INDICATORS)
-    # After removing 'no results', this should now be considered successful
-    assert _workflow_succeeded is True
+# P64: _FAIL_INDICATORS replaced by ExitKind pattern
 
 
 # ── L4 / C1: Consolidation lock ───────────────────────────────

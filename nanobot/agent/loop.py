@@ -10,6 +10,16 @@ import time
 import traceback
 import re
 from typing import Any
+from dataclasses import dataclass, field
+
+@dataclass
+class LoopResult:
+    final_content: str | None = None
+    tools_used: list[str] = field(default_factory=list)
+    tool_calls_with_args: list[dict] = field(default_factory=list)
+    milestone_summary: str | None = None
+    action_reason: str | None = None
+    exit_kind: str = "success"
 
 from loguru import logger
 
@@ -57,14 +67,7 @@ _FAKE_COMPLETION_PHRASES = [
 ]
 
 # Keywords in the LLM response that suggest the workflow failed
-# L3: Removed 'no results' — too generic, causes false negatives in legitimate responses
-# DESIGN-4: Use specific action-failure phrases to reduce false positives in analytical responses
-_FAIL_INDICATORS = [
-    "无法完成此任务", "无法执行此操作", "不能执行此操作",
-    "not found", "no emails found",
-    "执行失败", "操作失败", "执行出错", "运行失败", "获取失败",
-    "multiple consecutive tool failures", "circuit breaker",
-]
+# (Removed in Phase 64: ExitKind architectural refactoring ensures failures are explicit)
 
 # Phase 39 / 42C: Chitchat routing extracted to nanobot.agent.routing
 
@@ -549,7 +552,9 @@ class AgentLoop:
         injection_used: int = 0,
         target_model_override: str | None = None,
         tool_registry_override: ToolRegistry | None = None,
-    ) -> tuple[str | None, list[str], list[dict], str | None]:
+        session_key: str | None = None,
+        is_headless: bool = False,
+    ) -> LoopResult:
         """
         Run the agent iteration loop.
 
@@ -559,531 +564,17 @@ class AgentLoop:
             chat_id: Current chat or user ID.
 
         Returns:
-            Tuple of (final_content, list_of_tools_used, tool_calls_with_args).
+            Strongly typed LoopResult representation of the iteration output.
         """
-        # Phase 41: Middleware pipeline switch (config-driven grey deployment)
-        cfg = self._get_config()
-        _mw_enabled = getattr(
-            getattr(cfg.agents, 'experimental', None),
-            'middleware_enabled', False
+        # Phase 64: Unified provenance base invariant
+        # All tracking and provenance validation occurs strictly via the middleware stack context rules.
+        return await self._run_agent_loop_v2(
+            initial_messages, channel, chat_id,
+            injection_used, target_model_override,
+            tool_registry_override=tool_registry_override,
+            session_key=session_key,
+            is_headless=is_headless,
         )
-        if _mw_enabled:
-            return await self._run_agent_loop_v2(
-                initial_messages, channel, chat_id,
-                injection_used, target_model_override,
-                tool_registry_override=tool_registry_override,
-            )
-
-        # ─── Legacy path (original code below — untouched) ───
-        current_tools = tool_registry_override or self.tools
-        messages = initial_messages
-        iteration = 0
-        final_content = None
-        tools_used: list[str] = []
-        tool_calls_with_args: list[dict] = []
-        message_call_count = 0  # Track message() calls to prevent floods
-        consecutive_all_exceptions = 0  # B1: circuit breaker counter
-        # L14: Track recent tool call signatures to detect infinite loops
-        _recent_call_sigs: list[str] = []
-        _DUPLICATE_THRESHOLD = 3  # Break after N identical consecutive calls
-        # Phase 33: Action log for browser/rpa actions (history awareness)
-        _action_log: list[dict] = []
-        # Phase 33: Track injection budget consumed by enrich_context (passed from caller)
-        _loop_injection_used = injection_used
-        _milestone_summary = None
-
-        while iteration < self.max_iterations:
-            iteration += 1
-
-            # Phase 33: Inject action history into system prompt before LLM call
-            if _action_log and any(e["tool"] in ("browser", "rpa") for e in _action_log):
-                history_summary = _build_action_history_summary(_action_log)
-                if history_summary and messages and messages[0].get("role") == "system":
-                    sys_content = messages[0]["content"]
-                    # Remove stale history from previous iteration (idempotent)
-                    sentinel_idx = sys_content.find(_ACTION_HISTORY_SENTINEL)
-                    if sentinel_idx != -1:
-                        sys_content = sys_content[:sentinel_idx]
-                    # Budget check: must fit within BOTH per-injection cap AND global remaining budget
-                    history_len = len(history_summary) + len(_ACTION_HISTORY_SENTINEL)
-                    remaining_budget = _INJECTION_BUDGET - _loop_injection_used
-                    if history_len <= _ACTION_HISTORY_MAX and history_len <= remaining_budget:
-                        messages[0]["content"] = sys_content + _ACTION_HISTORY_SENTINEL + history_summary
-                        _loop_injection_used += history_len
-
-            config = self._get_config()
-            target_model, provider_for_turn = ModelRouter.determine_target_model(
-                messages=messages,
-                default_model=self.model,
-                default_provider=self.provider,
-                config=config,
-                vlm_provider_cache=self._vlm_provider_cache,
-                target_model_override=target_model_override,
-            )
-
-            # Phase 21E: Check streaming config
-            _streaming_enabled = getattr(
-                getattr(config.agents, 'streaming', None), 'enabled', False
-            )
-
-            try:
-              with metrics.timer("llm_call"):
-                if _streaming_enabled and channel and chat_id:
-                    # Streaming path: forward tokens in real-time
-                    response = await asyncio.wait_for(
-                        self._stream_llm_call(
-                            provider_for_turn, messages, target_model,
-                            channel, chat_id, tool_registry_override=current_tools,
-                        ),
-                        timeout=_LLM_CALL_TIMEOUT,
-                    )
-                else:
-                    response = await asyncio.wait_for(
-                        provider_for_turn.chat(
-                            messages=messages,
-                            tools=current_tools.get_definitions(),
-                            model=target_model,
-                            temperature=self.temperature,
-                            max_tokens=self.max_tokens,
-                        ),
-                        timeout=_LLM_CALL_TIMEOUT,
-                    )
-            except asyncio.TimeoutError:
-                logger.error(f"LLM call timed out after {_LLM_CALL_TIMEOUT}s (model={target_model})")
-                final_content = f"⚠️ LLM call timed out after {_LLM_CALL_TIMEOUT}s. Please try again."
-                break
-
-            # Aggregate token usage
-            if response.usage:
-                metrics.record_tokens(
-                    prompt=response.usage.get("prompt_tokens", 0),
-                    completion=response.usage.get("completion_tokens", 0),
-                    total=response.usage.get("total_tokens", 0),
-                )
-
-            # Phase 49 IFCC extraction
-            _resp_content = response.content
-            _milestone_summary = None
-            if _resp_content:
-                try:
-                    from nanobot.config.loader import get_config as _get_cfg_l
-                    if getattr(getattr(_get_cfg_l().agents, 'memory_features', None), 'ifcc_enabled', True):
-                        from nanobot.agent.tag_extractor import extract_mem_content
-                        _clean, _milestone_summary = extract_mem_content(_resp_content)
-                        response.content = _clean
-                except Exception as e:
-                    if isinstance(e, asyncio.CancelledError):
-                        raise
-                    logger.debug(f"IFCC extraction failed: {e}")
-
-            if response.has_tool_calls:
-                tool_call_dicts = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments)
-                        }
-                    }
-                    for tc in response.tool_calls
-                ]
-                messages = self.context.add_assistant_message(
-                    messages, response.content, tool_call_dicts,
-                    reasoning_content=response.reasoning_content,
-                    milestone_summary=_milestone_summary,
-                )
-
-                # Log and record all tool calls
-                for tool_call in response.tool_calls:
-                    tools_used.append(tool_call.name)
-                    tool_calls_with_args.append({
-                        "tool": tool_call.name,
-                        "args": tool_call.arguments
-                    })
-                    args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-                    logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
-
-                # Phase 31 L1: Rigid rule interception (pre-execution)
-                verification = self._get_verification()
-                cfg = self._get_config()
-                overrides = cfg.agents.sandbox.capability_overrides if cfg and getattr(cfg, 'agents', None) and getattr(cfg.agents, 'sandbox', None) else {}
-                rule_result = verification.check_rules(response.tool_calls, messages, registry=current_tools, config_overrides=overrides)
-                if not rule_result.passed:
-                    # Inject violation feedback as a synthetic tool result
-                    # so the LLM can self-correct instead of hard-failing
-                    logger.warning(f"L1: Blocking {len(rule_result.violations)} violation(s)")
-                    for tool_call in response.tool_calls:
-                        messages = self.context.add_tool_result(
-                            messages, tool_call.id, tool_call.name,
-                            f"Error: Action blocked by verification layer. {rule_result.rewrite_hint}"
-                        )
-                    continue
-
-                # Phase 32: Smart HITL Approval Check
-                hitl_suspended = False
-                for tc in response.tool_calls:
-                    tool_impl = current_tools.get(tc.name)
-                    if tool_impl:
-                        from nanobot.agent.capability import CapabilityTag
-                        override_val = overrides.get(tc.name)
-                        config_override = CapabilityTag(override_val) if override_val is not None else None
-                        tags = tool_impl.get_effective_tags(tc.arguments, config_override=config_override)
-                        if bool(tags & CapabilityTag.IS_HIGH_RISK):
-                            approval_store = self._get_approval_store()
-                            is_approved = approval_store.is_approved(tc.name, tc.arguments) if approval_store else False
-                            
-                            if not is_approved:
-                                if str(chat_id).startswith("worker:"):
-                                    logger.warning(f"HITL: Hard blocking high-risk tool '{tc.name}' for worker {chat_id}")
-                                    messages = self.context.add_tool_result(
-                                        messages, tc.id, tc.name,
-                                        f"Error: High-Risk action ({tc.name}) blocked. Worker processes cannot inherit HITL approval dialogs."
-                                    )
-                                    # Fallthrough to block loop
-                                    hitl_suspended = True
-                                    final_content = None # Signal logic to just loop over and not halt
-                                    # Break the tool checking loop, but flag that worker is blocked
-                                    break
-                                
-                                logger.info(f"HITL: Suspending loop for {tc.name} approval")
-                                if channel and chat_id:
-                                    session_key = self.sessions.resolve_key(f"{channel}:{chat_id}")
-                                    session = self.sessions._cache.get(session_key)
-                                    if session:
-                                        # Generate a short ID based on the task ID
-                                        short_id = tc.id[-4:].upper()
-                                        
-                                        session.pending_approval_task = {
-                                            "tool": tc.name,
-                                            "arguments": tc.arguments,
-                                            "id": tc.id,
-                                            "short_id": short_id,
-                                            "timestamp": time.time(),
-                                        }
-                                        self.sessions.save(session)
-                                        self.sessions.register_approval(short_id, session.key)
-                                        
-                                        hitl_msg = (
-                                            f"⚠️ **Action Required!**\n\n"
-                                            f"The agent is attempting a High-Risk operation:\n"
-                                            f"- **Tool**: `{tc.name}`\n"
-                                            f"- **Args**: `{json.dumps(tc.arguments, ensure_ascii=False)}`\n\n"
-                                            f"Please reply with:\n"
-                                            f"1. `Approve {short_id}` (allow this time)\n"
-                                            f"2. `Always {short_id}` (allow this and future identical actions)\n"
-                                            f"3. `Reject {short_id}` (block the action)\n\n"
-                                            f"*(You can also just reply 'Approve' if approving from the origin channel)*"
-                                        )
-                                        
-                                        # Broadcast remote approval prompt to all master identities
-                                        for target in self._get_config().master_identities.keys():
-                                            if ":" in target:
-                                                t_chan, t_chat = target.split(":", 1)
-                                                # Prevent double sending if the master is the current session
-                                                if f"{t_chan}:{t_chat}" != session_key:
-                                                    b_msg = f"🔔 **Remote Approval Request [{short_id}]**\nOrigin: `{session_key}`\n\n{hitl_msg}"
-                                                    asyncio.create_task(self.bus.publish_outbound(OutboundMessage(
-                                                        channel=t_chan, chat_id=t_chat, content=b_msg
-                                                    )))
-
-                                        hitl_suspended = True
-                                        final_content = hitl_msg
-                                        break
-                if hitl_suspended:
-                    if str(chat_id).startswith("worker:"):
-                        continue  # Worker block: let LLM retry instead of breaking entire loop
-                    break
-
-                # Phase 40B-1: Write checkpoint WAL before tool execution
-                _ckpt_path = None
-                _ckpt_enabled = getattr(getattr(self._get_config().agents, 'reliability', None), 'checkpoint_enabled', True)
-                if _ckpt_enabled and channel and chat_id:
-                    _ckpt_session_key = self.sessions.resolve_key(f"{channel}:{chat_id}")
-                    _ckpt_tool_infos = [
-                        {"name": tc.name, "arguments": tc.arguments}
-                        for tc in response.tool_calls
-                    ]
-                    _ckpt_path = self.sessions.write_checkpoint(_ckpt_session_key, _ckpt_tool_infos)
-
-                # Execute tool calls concurrently via asyncio.gather
-                async def _exec_tool(tc):
-                    _start = time.monotonic()
-                    with metrics.timer("tool_execution"):
-                        res = await current_tools.execute(tc.name, tc.arguments)
-                    _elapsed_ms = (time.monotonic() - _start) * 1000
-                    metrics.increment("tool_executions_count")
-                    logger.debug(f"Tool {tc.name} completed in {_elapsed_ms / 1000:.1f}s")
-                    # Phase 22D: Emit domain event for observability
-                    _is_err = isinstance(res, BaseException) or (isinstance(res, str) and res.startswith("Error: "))
-                    await self.bus.publish_event(ToolExecutedEvent(
-                        event_type="tool_executed",
-                        tool_name=tc.name,
-                        duration_ms=_elapsed_ms,
-                        success=not _is_err,
-                        error=str(res)[:200] if _is_err else None,
-                    ))
-                    return res
-
-                results = await asyncio.gather(
-                    *[_exec_tool(tc) for tc in response.tool_calls],
-                    return_exceptions=True,
-                )
-
-                # Phase 40B-1: Clear checkpoint after successful tool execution
-                self.sessions.clear_checkpoint(_ckpt_path)
-
-                # Phase 33: Action log tracking (for browser/rpa/browser_use tools)
-                for tool_call, result in zip(response.tool_calls, results):
-                    if tool_call.name in ("browser", "rpa", "browser_use_worker"):
-                        _is_err_al = isinstance(result, BaseException) or (
-                            isinstance(result, str) and (
-                                result.startswith("Error:") or "⚠️ ACTION FAILED:" in result
-                            )
-                        )
-                        _is_verify = isinstance(result, str) and "__IMAGE__:" in result and not _is_err_al
-                        _action_log.append({
-                            "tool": tool_call.name,
-                            "action": tool_call.arguments.get("action", ""),
-                            "outcome": "error" if _is_err_al else ("pending_verify" if _is_verify else "ok"),
-                            "detail": str(result)[:80] if _is_err_al else tool_call.arguments.get("selector", "")[:80],
-                        })
-                        if len(_action_log) > _MAX_ACTION_HISTORY:
-                            del _action_log[:-_MAX_ACTION_HISTORY]
-
-                # B1: circuit breaker — count consecutive all-exception turns
-                def _is_error_result(r):
-                    if isinstance(r, BaseException):
-                        return True
-                    if isinstance(r, str):
-                        s = str(r).strip()
-                        if s.startswith("Error:"):
-                            return True
-                        # Phase 33: Diagnostic screenshots embed error context in ANCHORS text
-                        if "⚠️ ACTION FAILED:" in s:
-                            return True
-                    return False
-                    
-                error_count = sum(1 for r in results if _is_error_result(r))
-                if error_count == len(results) and len(results) > 0:
-                    consecutive_all_exceptions += 1
-                    logger.warning(f"All {len(results)} tools failed (streak: {consecutive_all_exceptions})")
-                    # Phase 35 fix: Uniform threshold of 3 for all tools.
-                    # Browser no longer gets extra retries (5→3) because:
-                    # 1. Graduated fallback hints (JS→mouse_click→RPA) already guide strategy changes at 3 failures
-                    # 2. With weaker VLM making decisions, more retries just wastes time
-                    _cb_threshold = 3
-                    if consecutive_all_exceptions >= _cb_threshold:
-                        logger.error(f"Circuit breaker: {consecutive_all_exceptions} consecutive all-exception turns (threshold={_cb_threshold}). Breaking agent loop.")
-                        
-                        # Phase 37: Extract structured post-mortem (replaces P29-5 1-line experience)
-                        _user_req = ""
-                        for _m in reversed(messages):
-                            if _m.get("role") == "user" and isinstance(_m.get("content"), str):
-                                _user_req = _m["content"][:200]
-                                break
-                        _last_err = str(results[0])[:500] if results else "Unknown error"
-                        from nanobot.agent.commands import _safe_create_task
-                        _safe_create_task(
-                            self._extract_trace_postmortem(
-                                request_text=_user_req,
-                                tool_calls_with_args=tool_calls_with_args,
-                                action_log=_action_log,
-                                last_error=_last_err,
-                                break_reason="circuit_breaker",
-                            ),
-                            name="p37_postmortem_cb",
-                        )
-
-                        for tool_call, result in zip(response.tool_calls, results):
-                            normalized_res = _normalize_tool_result(result, tool_call.name, max_chars=getattr(getattr(self._get_config().agents, 'context', None), 'max_tool_result_chars', _MAX_TOOL_RESULT_CHARS))
-                            messages = self.context.add_tool_result(
-                                messages, tool_call.id, tool_call.name, normalized_res
-                            )
-                        final_content = "⚠️ Multiple consecutive tool failures detected. Please check your request and try again."
-                        break
-                else:
-                    consecutive_all_exceptions = 0
-
-                # Add results to messages in original order
-                for tool_call, result in zip(response.tool_calls, results):
-                    if isinstance(result, BaseException):
-                        logger.error(f"Tool {tool_call.name} raised: {result}")
-                    normalized_res = _normalize_tool_result(result, tool_call.name, max_chars=getattr(getattr(self._get_config().agents, 'context', None), 'max_tool_result_chars', _MAX_TOOL_RESULT_CHARS))
-                    messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, normalized_res
-                    )
-
-                # 🟢 Schema Strict Validation Fix
-                # OpenAI's API schema STRICTLY FORBIDS ANY messages between consecutive tool results
-                # associated with the same assistant block. If `add_tool_result` appended
-                # a multimodal user message (e.g. screenshot), it might get interleaved.
-                # We must sink all non-tool messages that appear AFTER the latest `assistant`
-                # to the absolute end of the messages list to guarantee tool contiguity.
-                _last_asst_idx = -1
-                for _idx in range(len(messages) - 1, -1, -1):
-                    if messages[_idx].get("role") == "assistant" and messages[_idx].get("tool_calls"):
-                        _last_asst_idx = _idx
-                        break
-                if _last_asst_idx != -1:
-                    _tail = messages[_last_asst_idx + 1:]
-                    _tool_msgs = [m for m in _tail if m.get("role") == "tool"]
-                    _other_msgs = [m for m in _tail if m.get("role") != "tool"]
-                    messages = messages[:_last_asst_idx + 1] + _tool_msgs + _other_msgs
-
-                # Phase 32 L3: Anti-pattern audit (fire-and-forget, log-only)
-                try:
-                    verification.audit_antipatterns(tool_calls_with_args)
-                except Exception as e:
-                    if isinstance(e, asyncio.CancelledError):
-                        raise
-                    logger.debug(f"L3 anti-pattern audit error (non-critical): {e}")
-                
-                # Track message() calls and guard against floods
-                for tc in response.tool_calls:
-                    if tc.name == "message":
-                        message_call_count += 1
-                if message_call_count >= _MAX_MESSAGE_CALLS:
-                    logger.warning(f"Message flood guard: {message_call_count} message() calls, breaking loop")
-                    break
-
-                # L14: Duplicate tool call detection — prevent infinite loops
-                # Build signature for this iteration's tool calls
-                # Phase 33: Use _SIG_DELIMITER instead of "|" for fuzzy detection compatibility
-                _iter_sig = _SIG_DELIMITER.join(
-                    f"{tc.name}:{json.dumps(tc.arguments, sort_keys=True)}"
-                    for tc in response.tool_calls
-                )
-                _recent_call_sigs.append(_iter_sig)
-                # Phase 33: Keep enough for both exact-match and fuzzy detection
-                _SIG_RETENTION = max(_DUPLICATE_THRESHOLD, _FUZZY_LOOP_WINDOW)
-                if len(_recent_call_sigs) > _SIG_RETENTION:
-                    del _recent_call_sigs[:-_SIG_RETENTION]
-                # Check if last N are ALL identical (exact-match L14)
-                if (len(_recent_call_sigs) >= _DUPLICATE_THRESHOLD
-                        and len(set(_recent_call_sigs[-_DUPLICATE_THRESHOLD:])) == 1):
-                    logger.warning(
-                        f"Duplicate tool call detected ({_DUPLICATE_THRESHOLD}x): "
-                        f"{_iter_sig[:120]}... Breaking loop."
-                    )
-                    # Phase 37: Post-mortem for duplicate loop
-                    _user_req_l14 = ""
-                    for _m in reversed(messages):
-                        if _m.get("role") == "user" and isinstance(_m.get("content"), str):
-                            _user_req_l14 = _m["content"][:200]
-                            break
-                    from nanobot.agent.commands import _safe_create_task
-                    _safe_create_task(
-                        self._extract_trace_postmortem(
-                            request_text=_user_req_l14,
-                            tool_calls_with_args=tool_calls_with_args,
-                            action_log=_action_log,
-                            last_error=f"Duplicate loop: {_iter_sig[:200]}",
-                            break_reason="duplicate_loop",
-                        ),
-                        name="p37_postmortem_l14",
-                    )
-                    final_content = (
-                        "⚠️ I appear to be stuck in a loop calling the same tool repeatedly. "
-                        "Please rephrase your request or try a different approach."
-                    )
-                    break
-
-                # Phase 33: Fuzzy loop detection (semantic loops with similar but not identical calls)
-                if _detect_fuzzy_loop(_recent_call_sigs):
-                    logger.warning("Fuzzy loop detected: tool-action pattern repeating. Breaking loop.")
-                    # Phase 37: Post-mortem for fuzzy loop
-                    _user_req_fz = ""
-                    for _m in reversed(messages):
-                        if _m.get("role") == "user" and isinstance(_m.get("content"), str):
-                            _user_req_fz = _m["content"][:200]
-                            break
-                    from nanobot.agent.commands import _safe_create_task
-                    _safe_create_task(
-                        self._extract_trace_postmortem(
-                            request_text=_user_req_fz,
-                            tool_calls_with_args=tool_calls_with_args,
-                            action_log=_action_log,
-                            last_error=f"Fuzzy loop: {_recent_call_sigs[-1][:200] if _recent_call_sigs else 'N/A'}",
-                            break_reason="fuzzy_loop",
-                        ),
-                        name="p37_postmortem_fuzzy",
-                    )
-                    final_content = (
-                        "⚠️ I appear to be stuck repeating similar actions without progress. "
-                        "Please check if the page loaded correctly, or try a different approach."
-                    )
-                    break
-
-                # 根据最后执行的工具决定是否提示继续
-                last_tool = response.tool_calls[-1].name if response.tool_calls else ""
-                
-                if last_tool in _CONTINUE_TOOLS:
-                    messages.append({"role": "user", "content": i18n_msg("agent_continue_prompt")})
-            else:
-                final_content = response.content
-                _fc_preview = (final_content or "")[:120]
-                logger.debug(f"LLM returned non-tool response: {_fc_preview}")
-                
-                # Check for premature termination by reasoning models (sending a "wait" message or "fake completion" but no tools)
-                _content_str = (final_content or "").lower()
-                
-                # If it contains wait phrases
-                if len(_content_str) < 150 and any(p in _content_str for p in _WAIT_PHRASES):
-                    _matched_wait = [p for p in _WAIT_PHRASES if p in _content_str]
-                    logger.warning(f"Wait-phrase detected {_matched_wait}, pushing for tool usage: {final_content[:80]}")
-                    
-                    # Forward this intermediate status to the user
-                    if channel and chat_id:
-                        await self.bus.publish_outbound(OutboundMessage(
-                            channel=channel, chat_id=chat_id, content=final_content
-                        ))
-                    
-                    # Add to context
-                    messages = self.context.add_assistant_message(
-                        messages, final_content, tool_calls=None, reasoning_content=response.reasoning_content, milestone_summary=_milestone_summary
-                    )
-                    
-                    # Force it to call tools
-                    messages.append({
-                        "role": "user",
-                        "content": i18n_msg("agent_wait_nudge")
-                    })
-                    continue
-                
-                # If it contains fake completion phrases
-                if len(_content_str) < 150 and any(p in _content_str for p in _FAKE_COMPLETION_PHRASES):
-                    _matched_fake = [p for p in _FAKE_COMPLETION_PHRASES if p in _content_str]
-                    logger.warning(f"Fake-completion detected {_matched_fake}, pushing for tool usage: {final_content[:80]}")
-                    
-                    # Add to context
-                    messages = self.context.add_assistant_message(
-                        messages, final_content, tool_calls=None, reasoning_content=response.reasoning_content, milestone_summary=_milestone_summary
-                    )
-                    
-                    # Force it to call tools
-                    messages.append({
-                        "role": "user",
-                        "content": i18n_msg("agent_fake_completion_nudge")
-                    })
-                    continue
-                
-                break
-
-        # Unconditional trace dump for side-effect checking (ADR-44)
-        from nanobot.utils.trace_context import get_current_trace_id
-        tid = get_current_trace_id()
-        if tid != "no-trace":
-            try:
-                from nanobot.agent.trace_archive import TraceArchive
-                archive = TraceArchive(self.workspace)
-                archive.dump_tool_calls(tid, tool_calls_with_args, _action_log)
-            except Exception as e:
-                if isinstance(e, asyncio.CancelledError):
-                    raise
-                logger.debug(f"Failed to dump tool calls for {tid}: {e}")
-
-        return final_content, tools_used, tool_calls_with_args, _milestone_summary
 
     # ── Phase 41: Middleware-based agent loop helpers ──────────────
 
@@ -1187,7 +678,9 @@ class AgentLoop:
         injection_used: int = 0,
         target_model_override: str | None = None,
         tool_registry_override: ToolRegistry | None = None,
-    ) -> tuple[str | None, list[str], list[dict]]:
+        session_key: str | None = None,
+        is_headless: bool = False,
+    ) -> LoopResult:
         """Phase 41: Middleware-based agent loop.
 
         This is the v2 replacement for _run_agent_loop that uses the onion
@@ -1202,6 +695,8 @@ class AgentLoop:
         messages = list(initial_messages)
         iteration = 0
         final_content = None
+        action_reason = None
+        _exit_kind = "failure"
         tools_used: list[str] = []
         tool_calls_with_args: list[dict] = []
 
@@ -1238,6 +733,10 @@ class AgentLoop:
 
             # Phase 49 IFCC extraction
             _resp_content = response.content
+            if _resp_content:
+                import re
+                _resp_content = re.sub(r'\[System:', r'[\\System:', _resp_content)
+                response.content = _resp_content
             _milestone_summary = None
             if _resp_content:
                 try:
@@ -1283,6 +782,7 @@ class AgentLoop:
                     messages.append({"role": "user", "content": i18n_msg("agent_fake_completion_nudge")})
                     continue
 
+                _exit_kind = "success"
                 break
 
             # 3. Has tool calls — build TurnContext and run pipeline
@@ -1315,6 +815,8 @@ class AgentLoop:
                 iteration=iteration,
                 channel=channel,
                 chat_id=chat_id,
+                session_key=session_key,
+                is_headless=is_headless,
                 consecutive_all_exceptions=consecutive_all_exceptions,
                 recent_call_sigs=recent_call_sigs,
                 action_log=action_log,
@@ -1339,10 +841,14 @@ class AgentLoop:
                 if ctx.action_reason == "l1_violation":
                     continue
                 final_content = ctx.final_content
+                action_reason = ctx.action_reason
+                _exit_kind = "approval_pending" if action_reason == "hitl" else "abort"
                 break
 
             if ctx.action == TurnAction.FINISH:
                 final_content = ctx.final_content
+                action_reason = ctx.action_reason
+                _exit_kind = "success"
                 break
 
             # CONTINUE_TOOLS nudge
@@ -1372,7 +878,14 @@ class AgentLoop:
                     final_milestone = m["milestone_summary"]
                     break
 
-        return final_content, tools_used, tool_calls_with_args, final_milestone
+        return LoopResult(
+            final_content=final_content,
+            tools_used=tools_used,
+            tool_calls_with_args=tool_calls_with_args,
+            milestone_summary=final_milestone,
+            action_reason=action_reason,
+            exit_kind=_exit_kind,
+        )
 
     # ── Phase 21E: streaming helper ──────────────────────────────
 
@@ -1631,7 +1144,7 @@ class AgentLoop:
             logger.error(f"Phase 40B: Checkpoint recovery scan failed: {e}")
     
     async def _process_message(
-        self, msg: InboundMessage, session_key: str | None = None
+        self, msg: InboundMessage, session_key: str | None = None, is_headless: bool = False
     ) -> OutboundMessage | None:
         from nanobot.utils.trace_context import (
             generate_trace_id, _trace_id_var, _route_tags_var,
@@ -1651,7 +1164,7 @@ class AgentLoop:
             add_route_tag(RoutingTag.SUBAGENT_CALLBACK)
 
         try:
-            out_msg = await self._core_process_message(msg, session_key)
+            out_msg = await self._core_process_message(msg, session_key, is_headless)
 
             # 3. 统一出站打标 — 所有 return 路径在此一次性覆盖，零遗漏
             if out_msg is not None:
@@ -1671,7 +1184,7 @@ class AgentLoop:
             _trace_id_var.reset(t_token)
             _route_tags_var.reset(r_token)
 
-    async def _core_process_message(self, msg: InboundMessage, session_key: str | None = None) -> OutboundMessage | None:
+    async def _core_process_message(self, msg: InboundMessage, session_key: str | None = None, is_headless: bool = False) -> OutboundMessage | None:
         """
         Process a single inbound message.
 
@@ -1856,11 +1369,12 @@ class AgentLoop:
                 )
                 return await self._execute_with_llm(
                     session, msg, extracted_key=task_key,
-                    few_shot_context=few_shot, intent=intent
+                    few_shot_context=few_shot, intent=intent,
+                    session_key=session_key, is_headless=is_headless
                 )
 
         # ── Step 5: No match → LLM execution ──
-        return await self._execute_with_llm(session, msg, extracted_key=task_key, intent=intent)
+        return await self._execute_with_llm(session, msg, extracted_key=task_key, intent=intent, session_key=session_key, is_headless=is_headless)
 
     def _snip_history(
         self,
@@ -1902,12 +1416,22 @@ class AgentLoop:
             system_msgs = [m for m in messages if m.get("role") == "system"]
             non_system = [m for m in messages if m.get("role") != "system"]
             
+            original_non_system_len = len(non_system)
+            
             while non_system and _count_tokens(system_msgs + non_system) > budget:
                 # 丢弃最旧的消息，定位到下一个合法 user-turn 边界
                 non_system = non_system[1:]
                 # 确保不以 tool/assistant 消息开头
                 while non_system and non_system[0].get("role") != "user":
                     non_system = non_system[1:]
+            
+            if len(non_system) < original_non_system_len:
+                # ADR-64: Inject degradation structural notice to preserve zero-trust guarantees
+                evicted_turns = original_non_system_len - len(non_system)
+                system_msgs.append({
+                    "role": "system",
+                    "content": f"[Context Integrity Notice]\n⚠️ {evicted_turns} recent turn(s) were physically snipped to satisfy the rigid {budget} token window limit. The user context below is incomplete."
+                })
             
             return system_msgs + non_system
         except Exception as e:
@@ -1922,6 +1446,8 @@ class AgentLoop:
         extracted_key: str | None = None,
         few_shot_context: str = "",
         intent: str = "task",
+        session_key: str | None = None,
+        is_headless: bool = False,
     ) -> OutboundMessage:
         """Execute a user request via the LLM agent loop.
 
@@ -2049,11 +1575,18 @@ class AgentLoop:
                 initial_messages[0]["content"] += f"\n\n{memory_hint}"
                 injection_used += len(memory_hint)
 
-        final_content, tools_used, tool_calls_with_args, final_milestone = await self._run_agent_loop(
+        result = await self._run_agent_loop(
             initial_messages, channel=msg.channel, chat_id=msg.chat_id,
             injection_used=injection_used,
             target_model_override=target_model_override,
+            session_key=session_key,
+            is_headless=is_headless,
         )
+        final_content = result.final_content
+        tools_used = result.tools_used
+        tool_calls_with_args = result.tool_calls_with_args
+        final_milestone = result.milestone_summary
+        action_reason = result.action_reason
 
         # Phase 31 L3: Post-reflection & knowledge extraction (fire-and-forget)
         if tools_used and verification.config.l3_enabled:
@@ -2065,6 +1598,7 @@ class AgentLoop:
                     tools_used=tools_used,
                     tool_calls_with_args=tool_calls_with_args,
                     session=session,
+                    exit_kind=result.exit_kind,
                 ),
                 name="l3_post_reflect",
             )
@@ -2111,27 +1645,10 @@ class AgentLoop:
         # But ONLY if the workflow appears to have succeeded
         save_prompt = ""
         if tool_calls_with_args and not session.pending_approval_task:
-            _content_lower = (final_content or "").lower()
-
-            # Phase 31 Retro: skip _FAIL_INDICATORS when response is
-            # analytical (tool results contain the keywords as data,
-            # not as agent failure). Heuristic: if analysis tools were
-            # used and no tool errors occurred, treat as quoting.
-            _ANALYSIS_TOOLS = {"attachment_analyzer", "web_fetch", "web_search"}
-            _is_analytical = bool(set(tools_used) & _ANALYSIS_TOOLS)
-            # B-3 fix: Check final_content for error indicators instead of
-            # tc["args"] (which is always a dict, never a str starting with "Error:").
-            # Also check if the last tool result text contains error markers.
-            _had_tool_errors = any(
-                ind in _content_lower
-                for ind in ["error:", "⚠️ action failed:", "执行失败", "操作失败"]
-            )
-            if _is_analytical and not _had_tool_errors:
+            if result.exit_kind == "success":
                 _workflow_succeeded = True
             else:
-                _workflow_succeeded = not any(
-                    ind in _content_lower for ind in _FAIL_INDICATORS
-                )
+                _workflow_succeeded = False
 
             if _workflow_succeeded:
                 task_key = extracted_key or request_text[:50]
@@ -2216,6 +1733,7 @@ class AgentLoop:
         channel: str = "cli",
         chat_id: str = "direct",
         return_trace: bool = False,
+        is_headless: bool = False,
     ) -> str | tuple[str, str | None]:
         """
         Process a message directly (for CLI or cron usage).
@@ -2237,9 +1755,12 @@ class AgentLoop:
             chat_id=chat_id,
             content=content
         )
-        
-        response = await self._process_message(msg, session_key=session_key)
+        response = await self._process_message(msg, session_key=session_key, is_headless=is_headless)
         out_content = response.content if response else ""
+        
+        # ADR-64: Routine garbage collection self-sustains GC invariants implicitly during automatic background operations
+        if session_key == "heartbeat" and hasattr(self, "task_tracker") and hasattr(self, "vector_store"):
+            self.task_tracker.clear_old_tasks(vector_memory=self.vector_store)
         
         if return_trace:
             trace_id = response.metadata.get("trace_id") if response and response.metadata else None

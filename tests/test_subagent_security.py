@@ -19,7 +19,8 @@ class MockAgentLoop:
             "chat_id": chat_id,
             "tool_registry_override": tool_registry_override
         })
-        return "mock_result", [], []
+        from nanobot.agent.loop import LoopResult
+        return LoopResult(final_content="mock_result")
 
 
 @pytest.fixture

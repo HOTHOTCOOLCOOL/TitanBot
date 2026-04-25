@@ -116,6 +116,12 @@ def _register_default_tools(agent: "AgentLoop") -> None:
     # ADR-53: Excel OLAP automation (Windows-only; gracefully no-ops if pywin32 missing)
     agent.tools.register(ExcelActuatorTool(workspace=agent.workspace))
 
+    # KG topology navigator (ADR-67) — zero-overhead fallback for search failures
+    # Zero context pollution: only consumes tokens when the agent explicitly calls it.
+    from nanobot.agent.tools.knowledge_map import KnowledgeMapTool
+    agent.tools.register(KnowledgeMapTool(agent.workspace))
+
+
 
 def _register_dynamic_tools(agent: "AgentLoop") -> None:
     """Scan the plugins directory and register discovered tools (sync, no lifecycle hooks).

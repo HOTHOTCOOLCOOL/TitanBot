@@ -214,17 +214,36 @@
 
 ---
 
+### 20. KnowledgeMapTool (`knowledge_map.py`) ✅
+
+> KG topology navigator (ADR-67) — zero-overhead fallback for search failures.
+
+| Dimension | Status | Notes |
+|-----------|--------|-------|
+| Error Prefix | ✅ | `"Error: Knowledge graph is currently empty or unavailable."` |
+| Output Format | ✅ | Numbered domain list with emoji hub markers — human + LLM readable |
+| Output Cap | ✅ | Strictly ≤ 3,000 chars (well under 50K global cap) |
+| Smart Defaults | ✅ | Zero parameters — no decision load on the LLM |
+| Description | ✅ | Explicitly states when to use vs. when NOT to use (Search-First doctrine) |
+| Idempotency | ✅ | Pure read, no side effects — safe to call repeatedly |
+| Cache | ✅ | Lazy mtime-based cache, O(N) recompute only on `graph.json` change |
+| Security | ✅ | `DATA_READ` only, no writes, no external network calls |
+
+**Strength**: Zero context-window overhead until called. Complements `MemorySearchTool` as a Fallback path rather than replacing it.
+
+---
+
 ## Summary
 
 | Status | Count | Percentage |
 |--------|-------|------------|
-| ✅ Compliant | 19/19 | **100%** |
+| ✅ Compliant | 20/20 | **100%** |
 | ⚠️ Minor notes | 2 | `send_email` non-idempotent (by design); `click`/`fill`/`type` non-idempotent (expected) |
 | ❌ Non-compliant | 0 | — |
 
 ### Key Findings
 
-1. **Error prefix consistency**: All 19 tools use `"Error: ..."` prefix ✅
+1. **Error prefix consistency**: All 20 tools use `"Error: ..."` prefix ✅
 2. **Output truncation**: Handled globally by `ToolRegistry` (50K char cap) ✅
 3. **Smart defaults**: All tools have sensible defaults reducing model decision load ✅
 4. **Unified action pattern**: `OutlookTool`, `CronTool`, `MemorySearchTool` use action-based design reducing tool count ✅

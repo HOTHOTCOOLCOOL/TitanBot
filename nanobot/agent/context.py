@@ -8,6 +8,8 @@ import platform
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
 from nanobot.agent.vector_store import VectorMemory
@@ -22,6 +24,8 @@ class ContextBuilder:
     """
     
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md", "KNOWLEDGE.md", "docs/rules/ARCHITECTURE.md"]
+    _REASONING_TEMPLATE_MAX_CHARS = 1000
+    _SKILL_INJECTION_BUDGET = 8000
     
     def __init__(self, workspace: Path, language: str = "zh", provider=None, model=None,
                  embedding_model: str | None = None):
@@ -48,6 +52,9 @@ class ContextBuilder:
         
         # Core identity
         parts.append(self._get_identity())
+
+        # Global execution safety protocol
+        parts.append(self._get_complex_task_protocol())
         
         # Bootstrap files
         bootstrap = self._load_bootstrap_files()
@@ -64,12 +71,50 @@ class ContextBuilder:
             parts.append(f"# Memory\n\n{memory}")
         
         # Skills - progressive loading
-        # 1. Always-loaded skills: include full content
-        always_skills = self.skills.get_always_skills()
-        if always_skills:
-            always_content = self.skills.load_skills_for_context(always_skills)
-            if always_content:
-                parts.append(f"# Active Skills\n\n{always_content}")
+        # 1. Always-loaded skills and explicitly requested skills
+        target_skills = self.skills.get_always_skills()
+        if skill_names:
+            for s in skill_names:
+                if s not in target_skills:
+                    target_skills.append(s)
+                    
+        # P1: Resolve and inject prerequisites
+        final_skills = []
+        for s in target_skills:
+            deps = self.skills.resolve_dependencies(s)
+            for dep in deps:
+                if dep not in final_skills:
+                    from loguru import logger
+                    logger.debug(f"Injected prerequisite skill '{dep}' for target skill '{s}'")
+                    final_skills.append(dep)
+            if s not in final_skills:
+                final_skills.append(s)
+
+        if final_skills:
+            budget = getattr(self, "_SKILL_INJECTION_BUDGET", 8000)
+            injected_skills = []
+            current_len = 0
+            
+            for skill_name in final_skills:
+                # Approximate length based on load_skills_for_context output
+                content_raw = self.skills.load_skill(skill_name)
+                if content_raw:
+                    stripped = self.skills._strip_frontmatter(content_raw)
+                    block = f"### Skill: {skill_name}\n\n{stripped}"
+                    block_len = len(block) + 4
+                    
+                    if current_len + block_len > budget:
+                        from loguru import logger
+                        logger.warning(f"Skill injection budget exceeded ({current_len} > {budget}). Dropping '{skill_name}' and subsequent skills.")
+                        break
+                        
+                    injected_skills.append(skill_name)
+                    current_len += block_len
+
+            if injected_skills:
+                always_content = self.skills.load_skills_for_context(injected_skills)
+                if always_content:
+                    parts.append(f"# Active Skills\n\n{always_content}")
         
         # 2. Available skills: only show summary (agent uses read_file to load)
         skills_summary = self.skills.build_skills_summary()
@@ -92,6 +137,102 @@ Skills with available="false" need dependencies installed first - you can try in
             pass
         
         return "\n\n---\n\n".join(parts)
+
+    @classmethod
+    def _truncate_reasoning_template(cls, summary: str) -> str:
+        """Apply the strict reasoning-template prompt budget."""
+        return summary[:cls._REASONING_TEMPLATE_MAX_CHARS]
+
+    @classmethod
+    def _format_kg_context(cls, entries: list[dict[str, Any]]) -> str:
+        """Format KG entries while enforcing the reasoning-template cap."""
+        if not entries:
+            return ""
+
+        parts = []
+        for entry in entries:
+            name = str(entry.get("name", ""))
+            summary = str(entry.get("summary", ""))
+            if entry.get("type") == "reasoning_template":
+                summary = cls._truncate_reasoning_template(summary)
+            parts.append(f"- **{name}**: {summary}")
+
+        return "## Entity Knowledge\n" + "\n".join(parts)
+
+    def _resolve_kg_context(
+        self,
+        kg: Any,
+        query: str,
+        prefetch_rag: list[dict[str, Any]] | None = None,
+        anchors: list[str] | None = None,
+        fallback_text: str | None = None,
+    ) -> str:
+        """Build KG prompt context with type-aware formatting."""
+        if hasattr(kg, "get_entity_context_entries"):
+            entries = kg.get_entity_context_entries(
+                query,
+                prefetch_rag=prefetch_rag,
+                anchors=anchors,
+            )
+            if entries:
+                return self._format_kg_context(entries)
+            return kg.get_entity_context(query, prefetch_rag=prefetch_rag, anchors=anchors)
+        if fallback_text is not None:
+            return fallback_text
+        return kg.get_entity_context(query, prefetch_rag=prefetch_rag, anchors=anchors)
+
+    @staticmethod
+    def _task_step_icon(status: str) -> str:
+        """Map task step status to a compact icon for prompt injection."""
+        normalized = (status or "").lower()
+        if normalized == "completed":
+            return "✅"
+        if normalized in {"running", "in_progress"}:
+            return "🔄"
+        if normalized == "failed":
+            return "❌"
+        return "⏳"
+
+    @classmethod
+    def _format_task_tracker_status(cls, tracker: Any | None) -> str:
+        """Format active task progress for L0 injection with a hard 400-char cap."""
+        if tracker is None:
+            return ""
+
+        task = tracker.get_active_task() if hasattr(tracker, "get_active_task") else None
+        if not task:
+            return ""
+
+        progress = {}
+        if hasattr(tracker, "get_progress"):
+            try:
+                progress = tracker.get_progress(task.task_id) or {}
+            except Exception:
+                progress = {}
+
+        current_step = progress.get("current_step") or ""
+        progress_percent = progress.get("progress_percent", 0)
+        task_status = getattr(task.status, "value", task.status)
+
+        lines = [
+            f"\n\n## 📋 Active Task Tracker (ID: {task.task_id[:8]})",
+            f"**Goal**: {task.user_request[:100]}",
+            f"**Status**: {task_status} | **Progress**: {progress_percent}%",
+        ]
+        if current_step:
+            lines.append(f"**Current Step**: {current_step}")
+
+        steps = task.steps[-3:] if task.steps else []
+        if steps:
+            for step in steps:
+                step_status = getattr(step, "status", "pending")
+                lines.append(
+                    f"- {cls._task_step_icon(step_status)} {step.name} ({step_status})"
+                )
+        else:
+            lines.append("- ⏳ no recorded steps yet")
+
+        return "\n".join(lines)[:400]
     
     def _get_identity(self) -> str:
         """Get the core identity section."""
@@ -158,6 +299,8 @@ NEVER say "I have sent the email," "Task completed," or "✅ 已发送" unless y
 
 NEVER just describe what you would do - actually call the tools and DO it!
 
+**P0 Pseudo-Plan Guided Retrieval**: Before you call ANY tool for a complex task, you MUST emit a `<think>` block containing a numbered or bulleted list representing your pseudo-plan. You must outline the steps you intend to take.
+
 Always be helpful, accurate, and concise. When using tools, think step by step: what you know, what you need, and why you chose this tool.
 When remembering something important, use the `memory` tool with action='store'. Background processes will later distill it into preferences.json.
 To recall past events, use the `memory` tool with action='search', or grep {workspace_path}/memory/HISTORY.md.
@@ -169,6 +312,18 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
 
 ## ⚠️ 语言要求 / Language
 {self._get_language_instruction()}"""
+
+    def _get_complex_task_protocol(self) -> str:
+        """Fallback planning-gate anchor for workspaces with stale bootstrap files."""
+        return """## Complex Task Protocol
+When the user requests a complex mutating task such as:
+- a system migration or logging migration
+- a large refactor or bulk file edit
+- a database/schema change
+- any job that would require more than 3 mutating steps
+
+you MUST call `write_artifact` first and write `implementation_plan.md`.
+Do NOT call mutating execution tools until the user approves that plan."""
     
     def _get_language_instruction(self) -> str:
         """Get the language instruction based on configured language."""
@@ -238,7 +393,17 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
         try:
             from nanobot.agent.task_tracker import get_active_tracker
             tracker = get_active_tracker()
-            if tracker:
+            status_text = self._format_task_tracker_status(tracker)
+            if status_text:
+                # ADR-59: Strict budget enforcement
+                if len(system_prompt) + len(status_text) <= context_limit:
+                    system_prompt += status_text
+                    task = tracker.get_active_task() if tracker else None
+                    if task:
+                        logger.debug(f"L0: Injected TaskTracker status for {task.task_id[:8]}")
+                else:
+                    logger.debug("TaskTracker injection skipped: budget exceeded")
+            elif False:
                 task = tracker.get_active_task()
                 if task:
                     steps = task.steps[-3:] if task.steps else []
@@ -253,7 +418,6 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
                     if len(system_prompt) + len(status_text) <= context_limit:
                         system_prompt += status_text
         except Exception as e:
-            from loguru import logger
             logger.debug(f"TaskTracker injection skipped: {e}")
         
         # Inject VectorMemory RAG context
@@ -267,7 +431,6 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
                 if rag_context:
                     system_prompt += f"\n\n{rag_context}"
         except Exception as e:
-            from loguru import logger
             logger.debug(f"Vector search skipped: {e}")
 
         # P1: Inject Knowledge Graph Entity Context (Phase 24: entity summaries)
@@ -277,25 +440,24 @@ When the user says "记住"/"remember"/"别忘了"/"don't forget", actively stor
             from nanobot.config.loader import get_config
             _mem_feat = get_config().agents.memory_features
             if _mem_feat.knowledge_graph_enabled:
-                if pre_fetched_kg is not None:
-                    if pre_fetched_kg:
-                        system_prompt += f"\n\n{pre_fetched_kg}"
-                else:
-                    kg = knowledge_graph  # D2: prefer cached instance
-                    if kg is None:
-                        from nanobot.agent.knowledge_graph import KnowledgeGraph
-                        kg = KnowledgeGraph(self.workspace, vector_memory=self.vector_memory)
-                    kq_query = search_query or current_message
-                    # KG3/Phase 34: Pass anchors and prefetch_rag
-                    kg_context = kg.get_entity_context(
-                        kq_query, 
-                        prefetch_rag=rag_results if 'rag_results' in locals() else None, 
-                        anchors=query_anchors
-                    )
-                    if kg_context:
-                        system_prompt += f"\n\n{kg_context}"
+                kg = knowledge_graph  # D2: prefer cached instance
+                if kg is None:
+                    from nanobot.agent.knowledge_graph import KnowledgeGraph
+                    kg = KnowledgeGraph(self.workspace, vector_memory=self.vector_memory)
+                kq_query = search_query or current_message
+                kg_prefetch_rag = rag_results if 'rag_results' in locals() else pre_fetched_rag
+                kg_context = self._resolve_kg_context(
+                    kg,
+                    kq_query,
+                    prefetch_rag=kg_prefetch_rag,
+                    anchors=query_anchors,
+                    fallback_text=pre_fetched_kg,
+                )
+                if not kg_context and pre_fetched_kg is not None:
+                    kg_context = pre_fetched_kg
+                if kg_context:
+                    system_prompt += f"\n\n{kg_context}"
         except Exception as e:
-            from loguru import logger
             logger.debug(f"Knowledge Graph lookup skipped: {e}")
 
         if channel and chat_id:

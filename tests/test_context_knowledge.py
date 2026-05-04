@@ -1,27 +1,34 @@
-"""Tests for context.py KNOWLEDGE.md loading and date hint."""
+"""Tests for context.py bootstrap loading and prompt invariants."""
+
+from pathlib import Path
+import shutil
+from uuid import uuid4
 
 import pytest
-from pathlib import Path
 
 from nanobot.agent.context import ContextBuilder
 
 
 @pytest.fixture
-def workspace_with_knowledge(tmp_path: Path) -> Path:
+def workspace_with_knowledge() -> Path:
     """Create a workspace with a KNOWLEDGE.md file."""
-    (tmp_path / "memory").mkdir()
-    (tmp_path / "KNOWLEDGE.md").write_text(
+    workspace = Path(".pytest_tmp_context") / f"with_knowledge_{uuid4().hex}"
+    (workspace / "memory").mkdir(parents=True)
+    (workspace / "KNOWLEDGE.md").write_text(
         "# System Knowledge\n\n## Rules\n- Sales reports arrive next day\n",
         encoding="utf-8",
     )
-    return tmp_path
+    yield workspace
+    shutil.rmtree(workspace, ignore_errors=True)
 
 
 @pytest.fixture
-def workspace_without_knowledge(tmp_path: Path) -> Path:
+def workspace_without_knowledge() -> Path:
     """Create a workspace without KNOWLEDGE.md."""
-    (tmp_path / "memory").mkdir()
-    return tmp_path
+    workspace = Path(".pytest_tmp_context") / f"without_knowledge_{uuid4().hex}"
+    (workspace / "memory").mkdir(parents=True)
+    yield workspace
+    shutil.rmtree(workspace, ignore_errors=True)
 
 
 class TestKnowledgeLoading:
@@ -39,14 +46,92 @@ class TestKnowledgeLoading:
         """Missing KNOWLEDGE.md does not cause errors."""
         ctx = ContextBuilder(workspace_without_knowledge, language="zh")
         prompt = ctx.build_system_prompt()
-        # Should still generate a valid prompt
         assert "nanobot" in prompt
 
 
-class TestDateHint:
+class TestPromptHints:
     def test_date_hint_in_identity(self, workspace_without_knowledge: Path):
-        """Date interpretation hint appears in identity section."""
+        """Date interpretation hint appears in the identity section."""
         ctx = ContextBuilder(workspace_without_knowledge, language="zh")
         prompt = ctx.build_system_prompt()
         assert "日期理解提示" in prompt
         assert "KNOWLEDGE.md" in prompt
+
+    def test_complex_task_protocol_in_prompt(self, workspace_without_knowledge: Path):
+        """Planning Gate fallback instructions should always be present."""
+        ctx = ContextBuilder(workspace_without_knowledge, language="zh")
+        prompt = ctx.build_system_prompt()
+        assert "Complex Task Protocol" in prompt
+        assert "`write_artifact`" in prompt
+        assert "implementation_plan.md" in prompt
+
+
+class TestReasoningTemplatePromptBudget:
+    def test_reasoning_template_truncated(self, workspace_without_knowledge: Path):
+        """T03: reasoning_template entities are truncated to 1000 chars."""
+        from nanobot.agent.knowledge_graph import KnowledgeGraph
+
+        workspace = workspace_without_knowledge
+        kg = KnowledgeGraph(workspace)
+        kg._add_triple("Reasoning: Huge", "is", "huge")
+        kg.rebuild_entity_index()
+        long_text = "A" * 1500
+        kg._entities["Reasoning: Huge"]["type"] = "reasoning_template"
+        kg._entities["Reasoning: Huge"]["summary"] = long_text
+        kg._save()
+
+        ctx = ContextBuilder(workspace, language="zh")
+        messages = ctx.build_messages([], "Tell me about Reasoning: Huge", knowledge_graph=kg)
+        sys_prompt = messages[0]["content"]
+
+        assert "A" * 1000 in sys_prompt
+        assert "A" * 1050 not in sys_prompt
+
+    def test_reasoning_template_truncated_with_prefetched_kg(
+        self, workspace_without_knowledge: Path
+    ):
+        """T03: pre-fetched KG injection follows the same 1000-char cap."""
+        from nanobot.agent.knowledge_graph import KnowledgeGraph
+
+        workspace = workspace_without_knowledge
+        kg = KnowledgeGraph(workspace)
+        kg._add_triple("Reasoning: Huge", "is", "huge")
+        kg.rebuild_entity_index()
+        long_text = "A" * 1500
+        kg._entities["Reasoning: Huge"]["type"] = "reasoning_template"
+        kg._entities["Reasoning: Huge"]["summary"] = long_text
+        kg._save()
+
+        ctx = ContextBuilder(workspace, language="zh")
+        pre_fetched_kg = kg.get_entity_context("Tell me about Reasoning: Huge")
+        messages = ctx.build_messages(
+            [],
+            "Tell me about Reasoning: Huge",
+            knowledge_graph=kg,
+            pre_fetched_kg=pre_fetched_kg,
+        )
+        sys_prompt = messages[0]["content"]
+
+        assert "A" * 1000 in sys_prompt
+        assert "A" * 1050 not in sys_prompt
+
+    def test_non_reasoning_template_not_truncated(
+        self, workspace_without_knowledge: Path
+    ):
+        """T03: Non-reasoning templates are not truncated."""
+        from nanobot.agent.knowledge_graph import KnowledgeGraph
+
+        workspace = workspace_without_knowledge
+        kg = KnowledgeGraph(workspace)
+        kg._add_triple("Normal Entity", "is", "large")
+        kg.rebuild_entity_index()
+        long_text = "B" * 1500
+        kg._entities["Normal Entity"]["type"] = ""
+        kg._entities["Normal Entity"]["summary"] = long_text
+        kg._save()
+
+        ctx = ContextBuilder(workspace, language="zh")
+        messages = ctx.build_messages([], "Tell me about Normal Entity", knowledge_graph=kg)
+        sys_prompt = messages[0]["content"]
+
+        assert "B" * 1500 in sys_prompt

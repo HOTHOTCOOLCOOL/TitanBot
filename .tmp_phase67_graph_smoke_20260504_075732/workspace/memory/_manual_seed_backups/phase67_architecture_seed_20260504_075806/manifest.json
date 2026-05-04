@@ -1,0 +1,22 @@
+{
+  "memory\\graph.json": {
+    "relative_path": "memory\\graph.json",
+    "exists": true,
+    "is_dir": false
+  },
+  "memory\\HISTORY.md": {
+    "relative_path": "memory\\HISTORY.md",
+    "exists": true,
+    "is_dir": false
+  },
+  "memory\\2026-05-04.md": {
+    "relative_path": "memory\\2026-05-04.md",
+    "exists": true,
+    "is_dir": false
+  },
+  "memory\\vectordb": {
+    "relative_path": "memory\\vectordb",
+    "exists": true,
+    "is_dir": true
+  }
+}

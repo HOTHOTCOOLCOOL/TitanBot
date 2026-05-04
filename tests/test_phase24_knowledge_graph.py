@@ -382,3 +382,34 @@ class TestIntegration:
         kg._add_triple("David", "lives in", "Shenzhen")
         kg.rebuild_entity_index()
         assert len(kg._entities["David"]["triple_indices"]) == 2
+
+# ── Phase 65: Reasoning Skill Distillation ──────────────────────────
+
+class TestReasoningTemplateSchema:
+    """Tests for ReasoningSkill distillation schema preservation."""
+
+    def test_rebuild_preserves_reasoning_template_type(self, kg):
+        """T02: rebuild_entity_index does not erase manually curated reasoning_template type."""
+        kg._add_triple("Reasoning: Test", "is", "test")
+        kg.rebuild_entity_index()
+        kg._entities["Reasoning: Test"]["type"] = "reasoning_template"
+        kg._entities["Reasoning: Test"]["summary"] = "A template."
+        
+        # Rebuild again, should preserve the type
+        kg.rebuild_entity_index()
+        assert kg._entities["Reasoning: Test"]["type"] == "reasoning_template"
+
+    def test_rebuild_preserves_manual_reasoning_template_without_triples(self, kg):
+        """T02: standalone manual reasoning_template entities survive reindex flows."""
+        kg._entities["Reasoning: Manual"] = {
+            "type": "reasoning_template",
+            "summary": "Standalone template.",
+            "triple_indices": [],
+            "updated_at": "2026-05-03T00:00:00",
+        }
+
+        kg.rebuild_entity_index()
+
+        assert kg._entities["Reasoning: Manual"]["type"] == "reasoning_template"
+        assert kg._entities["Reasoning: Manual"]["summary"] == "Standalone template."
+        assert kg._entities["Reasoning: Manual"]["triple_indices"] == []

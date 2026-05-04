@@ -15,13 +15,20 @@
 - [x] **Phase 55**: Architecture Maintenance (技术债还款) shipped (ADR-55).
 - [x] **Phase 57**: Context Intelligence Upgrade (Waterfall Budget, Visual Silent Downgrade) shipped and verified (ADR-57).
 - [x] **Phase 58**: Documentation Architecture Refactoring (Docs-as-Context) shipped (ADR-58).
-- [x] **Phase 61**: Command Control Tiering - Isolated HITL vs Destructive (ADR-61) shipped and verified.
+- [x] **Phase 61**: Command Control Tiering - Isolated HITL vs Destructive (ADR-61) shipped, regression-hardened, and manually accepted.
+  - ✅ 2026-05-03 人工验收通过（`docs/tests/manual_guides/phase_61_manual_test_guide.md`）：场景 1 `rpa(action=click)` 点击屏幕中心直接放行；场景 2 `rpa(action=press, keys=['win'])` 正确进入 HITL 并在 `Reject` 后终止；场景 3 `exec("echo test | cmd")` 无审批路径，直接被 L1 安全层拦截。
+  - ✅ RPA 执行层补强：修复 PyAutoGUI FailSafe 角落误伤普通点击的问题，非角落目标会先脱离急停角再继续执行，避免把执行层 emergency stop 误判成 Phase 61 权限回归。
+  - ✅ 定向回归：`.venv311\\Scripts\\python.exe -m pytest tests/test_rpa_failsafe.py tests/test_rpa_find.py tests/adversarial/test_rpa_bounds.py -q` → **24 passed**
 - [x] **Phase 62 & 59**: Azure OpenAI Migration Security Hardening & Antigravity Planning Gate integrated.
   - ✅ Schema 全链路 Null 合规: 追踪 `add_message()` 到 `build_messages()`，保证带 tool_calls 时 content 强制为 null
   - ✅ Worker/Cron 防御降级: 增设 `AzureContentFilterException` 在 400 content_filter 报错时执行优雅解绑（Graceful Pause），不无限重试
   - ✅ 严格身份边界（伪装消融）: 删除旧版利用 user role 发送 `[System:...]` 的注入模型，改用虚拟助手与虚拟 Tool Call 安全回传系统事件。软化强硬 HITL 提示文本
   - ✅ Antigravity - Planning Gate V1: 实装 `write_artifact` 强制实施计划写板与 HITL 审查；实装 `update_task_progress` 进度透明化；实装 TaskTracker 最末 3 步状态直注 System Prompt
   - ✅ Antigravity - 防御规则池: 实装 `KI Rules` 战术规则短阵，实现匹配关键字时的微小上下文注入；新增测试断言保证单规则不越界 500 字符
+  - ✅ 2026-05-03 人工验收进展：**Phase 62 已通过**。其中后端 Cron 熔断探针 `tests/verify_phase62_content_filter_fuse.py` 跑通，确认 `Cron: job '...' reached fatal error state (Content Filter)`、`enabled=false`、`nextRunAtMs=null`、且无二次重试；Planning Gate 也已通过人工链路验证。
+  - ✅ 2026-05-03 人工验收进展：**Phase 59 KI Rule 注入已通过**。日志已实锤出现 `L0: Injected KI rule excel-com.ki.json`，且模型行为与规则一致。
+  - ⏳ 2026-05-03 当前剩余验收口：**Phase 59 TaskTracker 透明化** 已补齐 runtime wiring、探针脚本与回归测试；下一步仅需在 dashboard/live 会话里复测一次“你刚才进行到哪一步了？”并观察 `L0: Injected TaskTracker status for ...`。
+  - ✅ 2026-05-03 retrospective 固化：已把本轮教训回写到 ADR-62 与 workflow 护栏，明确“回答像对不等于机制生效”，并把 `Runtime Artifact Parity Checklist`、`Proof Signals`、`False Positive Success Paths` 升级为设计 / 执行阶段的强制项。
   - ✅ 双轨制日志边界确立：Host Agent 体系强制 loguru，Tool Payload IPC stdout 豁免并 Ruff 保护
   - ✅ 全域 print() 审计清零：`rpa_executor.py` (15处), `screen_capture.py` (3处), `channels/weixin.py`, `config/loader.py`
   - ✅ Async CancelledError 守卫：`browser_use_worker.py`, `rpa_executor.py` async 路径加固
@@ -55,15 +62,25 @@
   - ✅ `TOOLS.md` 审计条目 #20（20/20 Compliant）
   - ✅ `tests/unit/test_knowledge_map.py` — 4 个单元测试（A2/A3/A4/A5 验收项）
   - ✅ **Bugfix (Harness 误操作遗留)**: 修复截断后长度 = `_MAP_OUTPUT_CAP + len(suffix)` 的越界 Bug，重写极长实体名测试消灭“受限于 Hub 数量无法触发截断”的假阳性绿灯漏洞。
+  - ✅ 2026-05-04 人工验收通过（`docs/tests/manual_guides/phase_67_manual_test_guide.md`）：Scenario 1 PASS；Scenario 2 PASS WITH NOTE（运行时以 `knowledge_map` + `memory` 并行 fan-out 体现 fallback 意图，而非严格串行链）；Regression Target 1 PASS（`exec("echo hello")`）；Regression Target 2 PASS（dashboard 对大 `tasks_tracking.json` 输出显示 `[OUTPUT TRUNCATED]`）。
   - 详见 `docs/adr/ADR-67-knowledge-map-tool.md`
+- [x] **Job 20260426: Copilot Studio External Consultant Tool**: `consult_copilot_studio` 已完成配置契约、内建注册、Direct Line mock 回归和人工验收手册沉淀，具备进入真实租户联调的交付状态。
+- [x] **Job 20260503: ReasoningSkill KG Prompt Budget**: `reasoning_template` 现已作为 Knowledge Graph 单一真源实体稳定持久化，`context.py` 在注入时对其施加严格 1000 字符预算截断，且 `rebuild_entity_index()` 不再抹掉人工维护的类型元数据。
+- [x] **Job 20260503: Phase 68 Paper Integration Slice**: `loop.py` 的 pre-dispatch P0 可观测 gate 与 `verification.py` / `verification_mw.py` 的 workspace 写边界拦截已经落地，并在 `tests/test_phase68_paper_integration.py`、Zone A 回归集和限域 `auto_reviewer.py` 验收中于 2026-05-04 全部通过。
 
 ## 📅 Next Steps / Backlog (后续计划)
 
-- [ ] **Phase 65: Extreme Technical Debt Annihilation & L2 Automation** *(Active P0)*
-  - 核心目标: 构建 `.agent/scripts/auto_reviewer.py` 全自动 Codex L2 审查门控，结合 gpt-5.4 消除人类复制粘贴的误差。
-  - 流程升级: 重构 `execute_phase.md` 强制落地 Contract-First（红测先行）与 Micro-Commits（微提交防爆）。
-  - ✅ 本次会话进展（工作流文档层）: `execute_phase.md` 已升级为 Artifact-First 协同协议，新增 `codex_handoff.md` / `codex_result.md` / `codex_feedback.md` 三件套，默认“自动派工优先、人工转交 Artifact 兜底”，不再让用户充当消息总线。
-  - ⏳ 下一步代码化落点: 实装 Codex 派工器、`codex_result.md` 完成信号检测器、以及 plan-scoped approval token，真正把文档协议接入自动执行链。
+- [x] **Phase 65: Extreme Technical Debt Annihilation & L2 Automation** *(Completed as contract / regression slice on 2026-05-04)*
+  - 核心交付: `execute_phase.md` 已升级为 Artifact-First 协同协议，新增 `codex_handoff.md` / `codex_result.md` / `codex_feedback.md` 三件套，默认“自动派工优先、人工转交 Artifact 兜底”，不再让用户充当消息总线。
+  - 核心交付: `nanobot harness start/status/advance` 与 `nanobot/agent/harness/` lite-only orchestration 已落地，A1-A6 对应 CLI 回归通过，且 `auto_reviewer.py` 已支持按 Artifact 限域的本地 L2 fallback 以避免验收被外部 provider 长时间卡死。
+  - 核心交付: 2026-05-04 新增 `tests/test_phase65_execute_phase_contract.py`，把 `execute_phase` 的 handoff/result/feedback 契约与代表性 Phase 65 job 回执一致性锁进回归；联同 `tests/test_harness_cli.py`、`tests/test_auto_reviewer.py` 执行 `.\\.venv311\\Scripts\\python.exe -m pytest tests/test_commands.py tests/test_cli_input.py tests/test_harness_cli.py tests/test_auto_reviewer.py tests/test_phase65_execute_phase_contract.py -W ignore -v` -> **24 passed**。
+  - 结论: 当前 manual guide 的剩余价值已收敛到真实多会话 / HITL / provider / sandbox 环境验收；核心 contract 不再需要每次靠人工重复确认。
+  - 拆分说明: 剩余的 runtime orchestration / auto-dispatch / approval-scoped automation 已从 Phase 65 中拆出，转入 Phase 68 独立推进。
+
+- [ ] **Phase 68: Runtime Dispatch & Approval-Scoped Orchestration** *(New P0 successor to Phase 65)*
+  - 核心目标: 实装 Codex 派工器、`codex_result.md` 完成信号检测器、以及 plan-scoped approval token，真正把 Phase 65 已落地的文档协议接入自动执行链。
+  - 验收重点: 真实多会话 / HITL / provider / sandbox 环境下的自动派工、回执检测、返工闭环与防暴走拦截。
+  - 非目标: 不重做 Phase 65 已经锁定的 Artifact-first contract、A1-A6 CLI 边界或已有 L2 fallback 回归。
   - 护栏机制: 设计 Human-In-The-Loop 人工干预防暴走拦截，避免长上下文下的模型自循环破坏。
 
 
@@ -84,4 +101,3 @@
   - 问题: `_SENSITIVE_PATHS_RESOLVED` 在 Windows 上将 `/etc/`、`/usr/bin/` 等 Linux 路径通过 `realpath()` 解析到当前盘根目录（如 `D:\etc\`），导致策略语义漂移和潜在误拦截
   - 建议方案: 按 `sys.platform` 分别构造敏感路径前缀集，或将 bare keyword（如 `system32`）与 absolute prefix 分开处理
   - 参考: `nanobot/agent/verification.py` L85-117 (`_resolve_sensitive_paths()`)
-

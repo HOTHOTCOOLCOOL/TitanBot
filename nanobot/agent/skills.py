@@ -592,6 +592,51 @@ class SkillsLoader:
         merged = {**defaults, **user_config}
         return merged
 
+    def resolve_dependencies(self, skill_name: str, visited: set[str] = None) -> list[str]:
+        """
+        Recursively resolve prerequisites for a skill based on its config (P1).
+        
+        Uses config.defaults.json / config.json "depends_on" array.
+        Returns a deduplicated list of dependency skill names in post-order 
+        (deepest dependencies first), breaking circular dependencies.
+        """
+        if visited is None:
+            visited = set()
+            
+        if skill_name in visited:
+            logger.warning(f"Circular dependency detected involving skill '{skill_name}'")
+            return []
+            
+        visited.add(skill_name)
+        
+        cfg = self.get_effective_config(skill_name)
+        depends_on = cfg.get("depends_on", [])
+        
+        if not isinstance(depends_on, list):
+            logger.warning(f"Skill '{skill_name}' has invalid depends_on format (expected list)")
+            depends_on = []
+            
+        result = []
+        for dep in depends_on:
+            if dep in visited:
+                logger.warning(f"Circular dependency detected involving skill '{dep}'")
+                continue
+                
+            if self.load_skill(dep) is None:
+                logger.warning(f"Missing prerequisite skill '{dep}' for '{skill_name}'")
+                continue
+                
+            # Recursively resolve dependencies of the dependency
+            sub_deps = self.resolve_dependencies(dep, visited.copy())
+            for sub_dep in sub_deps:
+                if sub_dep not in result:
+                    result.append(sub_dep)
+                    
+            if dep not in result:
+                result.append(dep)
+                
+        return result
+
     # ── SK5: Dynamic Hooks System ────────────────────────────────────────
 
     # Built-in hook types that can be referenced by name in SKILL.md frontmatter

@@ -393,6 +393,8 @@ Do not include markdown fences."""
             The rebuilt entities dict.
         """
         entities: dict[str, dict[str, Any]] = {}
+        previous_entities = self._entities
+        now = datetime.now().isoformat()
 
         for idx, t in enumerate(self._triples):
             for field in ("subject", "object"):
@@ -400,14 +402,29 @@ Do not include markdown fences."""
                 if not name:
                     continue
                 if name not in entities:
+                    previous = previous_entities.get(name, {})
                     entities[name] = {
-                        "type": "",
-                        "summary": self._entities.get(name, {}).get("summary", ""),
+                        "type": previous.get("type", ""),
+                        "summary": previous.get("summary", ""),
                         "triple_indices": [],
-                        "updated_at": datetime.now().isoformat(),
+                        "updated_at": now,
                     }
                 if idx not in entities[name]["triple_indices"]:
                     entities[name]["triple_indices"].append(idx)
+
+        # Preserve standalone reasoning templates so manually curated entities
+        # remain durable across reindex flows even without backing triples.
+        for name, info in previous_entities.items():
+            if name in entities:
+                continue
+            if info.get("type") != "reasoning_template":
+                continue
+            entities[name] = {
+                "type": info.get("type", ""),
+                "summary": info.get("summary", ""),
+                "triple_indices": [],
+                "updated_at": info.get("updated_at", now),
+            }
 
         self._entities = entities
         return entities
@@ -585,24 +602,25 @@ Do not include markdown fences. If no meaningful bridging facts can be deduced, 
             logger.error(f"Bridging facts generation failed: {e}")
             return 0
 
-    def get_entity_context(self, query: str, prefetch_rag: list[dict[str, Any]] | None = None, anchors: list[str] | None = None) -> str:
-        """KG3: Return matching entity summaries for the query.
-
-        Preferred over get_1hop_context when entity summaries are available.
-        Falls back to get_1hop_context if no entity summaries exist.
-        """
+    def get_entity_context_entries(
+        self,
+        query: str,
+        prefetch_rag: list[dict[str, Any]] | None = None,
+        anchors: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return matched entity summaries with type metadata preserved."""
         if not self._entities:
-            return self.get_1hop_context(query)
+            return []
 
         # Check if any entities have summaries
         has_summaries = any(e.get("summary") for e in self._entities.values())
         if not has_summaries:
-            return self.get_1hop_context(query)
+            return []
 
         query_lower = query.lower()
         query_words = set(tokenize_key(query_lower))
         if not query_words and not anchors:
-            return ""
+            return []
 
         # Phase 28C: Semantic retrieval from Vector DB
         semantic_boost = {}
@@ -659,17 +677,37 @@ Do not include markdown fences. If no meaningful bridging facts can be deduced, 
                 matched_entities.append((name, info, score))
 
         if not matched_entities:
-            # Fallback to raw triple matching
-            return self.get_1hop_context(query)
+            return []
 
         # Sort by score descending, cap at 5 entities
         matched_entities.sort(key=lambda x: x[2], reverse=True)
         matched_entities = matched_entities[:5]
 
-        parts = []
+        entries = []
         for name, info, score in matched_entities:
-            summary = info.get("summary", "")
-            parts.append(f"- **{name}**: {summary}")
+            entries.append({
+                "name": name,
+                "summary": info.get("summary", ""),
+                "type": info.get("type", ""),
+                "score": score,
+            })
+
+        return entries
+
+    def get_entity_context(self, query: str, prefetch_rag: list[dict[str, Any]] | None = None, anchors: list[str] | None = None) -> str:
+        """KG3: Return matching entity summaries for the query.
+
+        Preferred over get_1hop_context when entity summaries are available.
+        Falls back to get_1hop_context if no entity summaries exist.
+        """
+        entries = self.get_entity_context_entries(query, prefetch_rag=prefetch_rag, anchors=anchors)
+        if not entries:
+            # Fallback to raw triple matching
+            return self.get_1hop_context(query)
+
+        parts = []
+        for entry in entries:
+            parts.append(f"- **{entry['name']}**: {entry['summary']}")
 
         return "## Entity Knowledge\n" + "\n".join(parts)
 

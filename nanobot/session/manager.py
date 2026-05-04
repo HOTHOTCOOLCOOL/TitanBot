@@ -86,6 +86,7 @@ class Session:
         self.pending_save = None
         self.pending_upgrade = None
         self.pending_approval_task = None
+        self.last_task_key = None
         self.last_tool_calls = None
         self.message_count_since_consolidation = 0
         self.evicted_context = None

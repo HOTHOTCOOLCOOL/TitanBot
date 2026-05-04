@@ -1,0 +1,348 @@
+{
+  "triples": [
+    {
+      "source": "Apple",
+      "predicate": "is",
+      "target": "Tech Company",
+      "context": "original"
+    },
+    {
+      "source": "Steve Jobs",
+      "predicate": "founded",
+      "target": "Apple",
+      "context": "original"
+    },
+    {
+      "source": "系统架构设计",
+      "predicate": "涵盖",
+      "target": "业务架构",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "系统架构设计",
+      "predicate": "涵盖",
+      "target": "应用架构",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "系统架构设计",
+      "predicate": "涵盖",
+      "target": "数据架构",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "系统架构设计",
+      "predicate": "涵盖",
+      "target": "集成架构",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "系统架构设计",
+      "predicate": "涵盖",
+      "target": "部署与基础设施架构",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "系统架构设计",
+      "predicate": "涵盖",
+      "target": "安全架构",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "系统架构设计",
+      "predicate": "涵盖",
+      "target": "稳定性与可靠性架构",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "系统架构设计",
+      "predicate": "涵盖",
+      "target": "可观测性与运维架构",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "系统架构设计",
+      "predicate": "涵盖",
+      "target": "开发治理与交付架构",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "系统架构设计",
+      "predicate": "常用方法",
+      "target": "架构方法论",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "业务架构",
+      "predicate": "关注",
+      "target": "业务能力地图",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "业务架构",
+      "predicate": "关注",
+      "target": "业务流程编排",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "业务架构",
+      "predicate": "关注",
+      "target": "领域事件",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "业务架构",
+      "predicate": "关注",
+      "target": "上下游边界",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "应用架构",
+      "predicate": "关注",
+      "target": "DDD",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "应用架构",
+      "predicate": "关注",
+      "target": "限界上下文",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "应用架构",
+      "predicate": "关注",
+      "target": "模块化单体",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "应用架构",
+      "predicate": "关注",
+      "target": "微服务拆分",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "应用架构",
+      "predicate": "关注",
+      "target": "六边形架构",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "数据架构",
+      "predicate": "关注",
+      "target": "领域模型",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "数据架构",
+      "predicate": "关注",
+      "target": "CQRS",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "数据架构",
+      "predicate": "关注",
+      "target": "Event Sourcing",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "数据架构",
+      "predicate": "关注",
+      "target": "缓存策略",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "数据架构",
+      "predicate": "关注",
+      "target": "分库分表",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "集成架构",
+      "predicate": "关注",
+      "target": "API Gateway",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "集成架构",
+      "predicate": "关注",
+      "target": "事件驱动架构",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "集成架构",
+      "predicate": "关注",
+      "target": "Outbox Pattern",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "集成架构",
+      "predicate": "关注",
+      "target": "Saga",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "集成架构",
+      "predicate": "关注",
+      "target": "幂等设计",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "部署与基础设施架构",
+      "predicate": "关注",
+      "target": "Kubernetes",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "部署与基础设施架构",
+      "predicate": "关注",
+      "target": "Service Mesh",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "部署与基础设施架构",
+      "predicate": "关注",
+      "target": "基础设施即代码",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "部署与基础设施架构",
+      "predicate": "关注",
+      "target": "蓝绿发布",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "安全架构",
+      "predicate": "关注",
+      "target": "Zero Trust",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "安全架构",
+      "predicate": "关注",
+      "target": "OAuth/OIDC",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "安全架构",
+      "predicate": "关注",
+      "target": "Secrets 管理",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "安全架构",
+      "predicate": "关注",
+      "target": "最小权限",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "稳定性与可靠性架构",
+      "predicate": "关注",
+      "target": "限流",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "稳定性与可靠性架构",
+      "predicate": "关注",
+      "target": "熔断",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "稳定性与可靠性架构",
+      "predicate": "关注",
+      "target": "重试退避",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "稳定性与可靠性架构",
+      "predicate": "关注",
+      "target": "降级",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "稳定性与可靠性架构",
+      "predicate": "关注",
+      "target": "容量评估",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "可观测性与运维架构",
+      "predicate": "关注",
+      "target": "日志",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "可观测性与运维架构",
+      "predicate": "关注",
+      "target": "指标",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "可观测性与运维架构",
+      "predicate": "关注",
+      "target": "分布式追踪",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "可观测性与运维架构",
+      "predicate": "关注",
+      "target": "告警噪音治理",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "开发治理与交付架构",
+      "predicate": "关注",
+      "target": "ADR",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "开发治理与交付架构",
+      "predicate": "关注",
+      "target": "架构评审",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "开发治理与交付架构",
+      "predicate": "关注",
+      "target": "平台工程",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "开发治理与交付架构",
+      "predicate": "关注",
+      "target": "CI/CD",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "架构方法论",
+      "predicate": "包含",
+      "target": "C4 模型",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "架构方法论",
+      "predicate": "包含",
+      "target": "4+1 视图",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "架构方法论",
+      "predicate": "包含",
+      "target": "TOGAF",
+      "context": "Phase 67 architecture manual test seed"
+    },
+    {
+      "source": "架构方法论",
+      "predicate": "包含",
+      "target": "演进式架构",
+      "context": "Phase 67 architecture manual test seed"
+    }
+  ],
+  "_aliases": {
+    "系统设计": "系统架构设计",
+    "软件架构": "系统架构设计",
+    "应用层架构": "应用架构",
+    "基础设施架构": "部署与基础设施架构",
+    "运维架构": "可观测性与运维架构",
+    "可靠性架构": "稳定性与可靠性架构"
+  }
+}

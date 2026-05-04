@@ -462,6 +462,78 @@ def test_r07_malformed_pattern_fail_open():
     r07_violations = [v for v in result.violations if "R07" in v]
     assert len(r07_violations) == 0
 
+# ── L2 Codex Regression: exact-path / UNC / root deny patterns ────────
+# These tests pin the A1 fix (resolved_prefix vs resolved_norm split).
+# If someone reverts to using the trailing-sep path for fnmatch, these
+# will catch the regression.
+
+def test_r07_deny_exact_fullpath():
+    """R07 (L2-A1): Exact fullpath deny pattern should block the matching file.
+
+    This failed before the resolved_prefix/resolved_norm split because
+    the trailing os.sep on resolved_check broke fnmatch matching for
+    patterns like 'c:\\app\\.env' (the actual path became 'c:\\app\\.env\\').
+    """
+    import os
+    # Build a platform-appropriate exact deny pattern
+    target_path = os.path.normpath(os.path.realpath("/app/.env")).lower()
+    cfg = VerificationConfig(
+        l1_enabled=True,
+        path_deny_patterns=[target_path],
+    )
+    v = VerificationLayer(config=cfg)
+
+    tc = FakeToolCall(name="write_file", arguments={"path": "/app/.env", "content": "SECRET=x"})
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
+    assert result.passed is False, (
+        f"Exact fullpath deny '{target_path}' should have blocked, "
+        f"but got violations={result.violations}"
+    )
+    assert any("deny pattern" in v for v in result.violations)
+
+
+def test_r07_deny_forward_slash_path():
+    """R07 (L2-A1): Forward-slash path should be normalized and matched."""
+    import os
+    # Use forward slashes — normpath should handle them
+    target_path = os.path.normpath(os.path.realpath("/app/config.yaml")).lower()
+    cfg = VerificationConfig(
+        l1_enabled=True,
+        path_deny_patterns=[target_path],
+    )
+    v = VerificationLayer(config=cfg)
+
+    tc = FakeToolCall(name="write_file", arguments={"path": "/app/config.yaml", "content": "x"})
+    result = v.check_rules([tc], registry=_FAKE_REGISTRY)
+    assert result.passed is False, (
+        f"Forward-slash deny '{target_path}' should have blocked"
+    )
+
+
+def test_r07_deny_basename_catches_any_directory():
+    """R07 (L2-A1): Basename-level pattern '*.pem' should block .pem in any directory."""
+    cfg = VerificationConfig(
+        l1_enabled=True,
+        path_deny_patterns=["*.pem"],
+    )
+    v = VerificationLayer(config=cfg)
+
+    # Regular path
+    tc1 = FakeToolCall(name="write_file", arguments={"path": "/app/certs/secret.pem", "content": "x"})
+    result1 = v.check_rules([tc1], registry=_FAKE_REGISTRY)
+    assert result1.passed is False
+
+    # Deep nested path
+    tc2 = FakeToolCall(name="edit_file", arguments={"file_path": "/a/b/c/d/key.pem", "content": "x"})
+    result2 = v.check_rules([tc2], registry=_FAKE_REGISTRY)
+    assert result2.passed is False
+
+    # Non-pem should pass
+    tc3 = FakeToolCall(name="write_file", arguments={"path": "/app/readme.md", "content": "x"})
+    result3 = v.check_rules([tc3], registry=_FAKE_REGISTRY)
+    r07_pem = [v for v in result3.violations if "deny pattern" in v]
+    assert len(r07_pem) == 0
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # L3: Post-reflection & Knowledge Extraction
@@ -497,6 +569,7 @@ async def test_l3_post_reflect_extracts_success_pattern():
             {"tool": "message", "args": {}},
         ],
         session=MagicMock(),
+        exit_kind="success",
     )
 
     # Verify add_experience was called with a success pattern
@@ -528,6 +601,7 @@ async def test_l3_post_reflect_processes_short_workflows_p39():
         tools_used=["message"],
         tool_calls_with_args=[{"tool": "message", "args": {}}],
         session=MagicMock(),
+        exit_kind="success",
     )
 
     # Should call LLM now in Phase 39
@@ -546,6 +620,7 @@ async def test_l3_post_reflect_disabled():
         tools_used=["a", "b", "c"],
         tool_calls_with_args=[{"tool": "a", "args": {}}] * 3,
         session=MagicMock(),
+        exit_kind="success",
     )
 
     mock_provider.chat.assert_not_called()
@@ -572,6 +647,7 @@ async def test_l3_post_reflect_handles_error():
         tools_used=["a", "b", "c"],
         tool_calls_with_args=[{"tool": "a", "args": {}}] * 3,
         session=MagicMock(),
+        exit_kind="success",
     )
 
 
@@ -588,12 +664,15 @@ async def test_l3_skips_failed_workflows():
     )
 
     # final_content contains a fail indicator
+    # Phase 64: ExitKind refactoring — post_reflect now uses explicit exit_kind
+    # parameter instead of scanning final_content text for failure indicators.
     await v.post_reflect(
         request_text="send email",
         final_content="很抱歉，无法完成此任务",
         tools_used=["outlook", "message", "exec"],
         tool_calls_with_args=[{"tool": "outlook", "args": {}}] * 3,
         session=MagicMock(),
+        exit_kind="failure",
     )
 
     # Should NOT call LLM since workflow failed

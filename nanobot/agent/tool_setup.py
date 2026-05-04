@@ -10,6 +10,7 @@ from loguru import logger
 from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
+from nanobot.agent.tools.consult_copilot import ConsultCopilotTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.cron import CronTool
@@ -25,6 +26,7 @@ from nanobot.agent.tools.excel_actuator import ExcelActuatorTool
 from nanobot.agent.tools.draw import DrawImageTool
 from nanobot.agent.memory import MemoryStore
 from nanobot.plugin_loader import scan_plugins, unload_plugins
+from nanobot.tools.write_artifact import WriteArtifactTool
 
 if TYPE_CHECKING:
     from nanobot.agent.loop import AgentLoop
@@ -55,6 +57,7 @@ def _register_default_tools(agent: "AgentLoop") -> None:
     # Write and Edit are strictly limited to the Sandbox (Zone C)
     agent.tools.register(WriteFileTool(allowed_dir=sandbox_dir, forbidden_dirs=None))
     agent.tools.register(EditFileTool(allowed_dir=sandbox_dir, forbidden_dirs=None))
+    agent.tools.register(WriteArtifactTool(agent.workspace))
     
     # Shell tool
     sandbox_dir = agent.workspace / "sandbox"
@@ -68,6 +71,7 @@ def _register_default_tools(agent: "AgentLoop") -> None:
     # Web tools
     agent.tools.register(WebSearchTool(api_key=agent.brave_api_key))
     agent.tools.register(WebFetchTool())
+    agent.tools.register(ConsultCopilotTool())
     
     # Message tool
     message_tool = MessageTool(send_callback=agent.bus.publish_outbound)

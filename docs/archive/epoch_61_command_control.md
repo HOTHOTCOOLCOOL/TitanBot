@@ -2,6 +2,14 @@
 
 **Date:** 2026-04-19
 **Status:** Completed
+**Manual Acceptance:** Passed on 2026-05-03
+
+## 人工验收结果 (2026-05-03)
+
+- **场景 1 / PERMIT**：`rpa(action=click)` 点击屏幕中心，无高危审批弹窗，实际执行成功并返回物理点击坐标。为消除执行层误伤，本轮同时补入了 PyAutoGUI FailSafe 角落恢复逻辑，确保“鼠标已停在急停角”不会把普通中心点击误报成权限失败。
+- **场景 2 / HITL**：`rpa(action=press, keys=['win'])` 被正确提升为 `SENSITIVE`，执行前挂起并弹出 `Action Required`。人工回复 `Reject` 后动作终止，未继续按下 Win 键。
+- **场景 3 / L1 HARD BLOCK**：`exec("echo test | cmd")` 在工具执行前被安全层直接拦截，没有进入审批路径。运行日志记录为 2 条 L1 violation，符合现有 pipe-to-shell 规则与 Tag-Driven destructive guard 的双保险设计预期。
+- **噪音说明**：同批日志中的 `nanobot.channels.weixin:start:532 ConnectError` 属外部网络/翻墙环境问题，不计入 Phase 61 验收结论。
 
 ## 架构变化深度剖析 (Architectural Deep Dive)
 

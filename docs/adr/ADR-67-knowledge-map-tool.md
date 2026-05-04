@@ -73,4 +73,17 @@ CORPUS2SKILL 论文揭示了 RAG 系统的根本盲点：**LLM 只能看到检�
 | `nanobot/agent/tool_setup.py` | 追加 2 行注册代码 |
 | `TOOLS.md` | 追加第 20 条审计条目 |
 | `tests/unit/test_knowledge_map.py` | NEW |
-| `progress_report.md` | ADR-67 落入已完成列表 |
+| `progress_report.md` | ADR-67 落入已完成列表，并补充人工验收结论 |
+| `docs/archive/phase_67_knowledge_map_tool.md` | 追加人工验收记录 |
+| `docs/tests/manual_guides/phase_67_manual_test_guide.md` | 补充现场验收备注 |
+
+---
+
+## Manual Acceptance (2026-05-04)
+
+- **Scenario 1**: PASS. The agent invoked `knowledge_map` and summarized the top hubs from `workspace/memory/graph.json` correctly.
+- **Scenario 2**: PASS WITH NOTE. The accepted runtime path used `knowledge_map` together with broad and refined `memory` searches in the same tool round, so the fallback intent was satisfied via parallel fan-out rather than a strictly serial `memory -> knowledge_map -> memory` chain.
+- **Regression Target 1**: PASS. `exec("echo hello")` was still resolved through the normal tool registry and returned `hello`.
+- **Regression Target 2**: PASS. Reading a large `tasks_tracking.json` payload produced `[OUTPUT TRUNCATED — original length: 52,183 chars]` in the dashboard without crashing the loop.
+- **Operator note**: For truncation verification, the dashboard response is the source of truth. The backend `Response to dashboard:web:` log line may only show a head preview and may not include the visible truncation footer.
+- See `docs/archive/phase_67_knowledge_map_tool.md` for the acceptance record and test-environment notes.

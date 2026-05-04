@@ -281,7 +281,7 @@ class BrowserConfig(Base):
     """Headless browser automation configuration (Phase 26)."""
 
     enabled: bool = True                # Master switch
-    headless: bool = False              # Headless by default; use browser(action='ensure_visible') for RPA
+    headless: bool = True              # Headless by default; use browser(action='ensure_visible') for RPA
     executable_path: str = ""           # Path to Chrome/Chromium binary. Empty = Playwright default.
     default_timeout_ms: int = 30000
     viewport_width: int = 1920
@@ -468,6 +468,13 @@ class MCPServerConfig(Base):
     url: str = ""  # HTTP: streamable HTTP endpoint URL
 
 
+class CopilotStudioConfig(Base):
+    """Copilot Studio Direct Line tool configuration."""
+
+    enabled: bool = False
+    secret: str = ""
+
+
 class ToolsConfig(Base):
     """Tools configuration."""
 
@@ -475,6 +482,7 @@ class ToolsConfig(Base):
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+    copilot_studio: CopilotStudioConfig = Field(default_factory=CopilotStudioConfig)
 
 
 class Config(Base):

@@ -34,3 +34,8 @@ From the Blast Radius Analysis, the following core features are the most suscept
 2. **Global Tool Registry Output Limit**:
    - Verify that standard truncations across all tools still function.
    - **Test**: Ask the agent to read a very large file, and ensure it ends with `[OUTPUT TRUNCATED]` without crashing the loop.
+
+## Field Notes From 2026-05-04 Acceptance
+- Scenario 2 may surface as a parallel tool fan-out (`knowledge_map` plus one or more `memory` calls in the same reasoning round) rather than a strictly serial fallback chain. Treat this as acceptable if `knowledge_map` clearly participates in refining the topic map and the later `memory` query becomes more specific.
+- For the truncation regression, the dashboard-visible reply is the source of truth. The backend `Response to dashboard:web:` log line may only print a head preview and may not include the final `[OUTPUT TRUNCATED]` footer even when truncation is functioning correctly.
+- If the live workspace already contains strong architecture-related RAG/KG context, Scenario 2 can short-circuit before explicit tool invocation. In that case, rerun against a graph-only test workspace or otherwise reduce pre-injected topic memory.

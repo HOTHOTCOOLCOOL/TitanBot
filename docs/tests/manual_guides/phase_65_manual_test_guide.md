@@ -4,6 +4,34 @@
 
 > 注意：本手册验证的是**工作流约束和制品产出**。它不等于系统已经具备完整的自动派工代码。
 
+## Automated Confirmation (2026-05-04)
+
+本手册中的核心 Artifact-first 契约现在已经有自动化回归证据，不再只能依赖人工口头复核：
+
+- `tests/test_phase65_execute_phase_contract.py`
+  - 校验 `execute_phase.md` 仍然要求 `codex_handoff.md` / `codex_result.md` / `codex_feedback.md`
+  - 校验代表性 Phase 65 job 的 `codex_handoff.md` 结构完整
+  - 校验 `codex_result.md` 对 `task.md` 做逐条覆盖
+  - 校验 `codex_feedback.md` 仍然是结构化返工单，而不是自由文本中继
+- `tests/test_harness_cli.py`
+  - 校验 Harness Phase 1 的 A1-A6 不回退，保证上游 orchestration helper 仍符合预期
+- `tests/test_auto_reviewer.py`
+  - 校验 Stage 3 审查在 Artifact 限域与本地 fallback 方向上仍保持 Phase 65 follow-up 的基本契约
+
+推荐预检命令：
+
+- `.\\.venv311\\Scripts\\python.exe -m pytest tests/test_commands.py tests/test_cli_input.py tests/test_harness_cli.py tests/test_auto_reviewer.py tests/test_phase65_execute_phase_contract.py -W ignore -v`
+
+2026-05-04 记录结果：
+
+- `24 passed`
+
+因此，这份 manual guide 现在主要保留给以下剩余人工价值：
+
+- 真实 AgentManager / Codex 多会话交接体验
+- HITL / 审批拦截 / provider 故障下的操作层现象
+- 任何需要真实 IDE、真实路径可见性、真实人工接力的环境级验收
+
 ## 测试准备
 
 1. 确保工作区已包含最新的 `.agent/workflows/execute_phase.md`。

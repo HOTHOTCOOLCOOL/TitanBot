@@ -30,6 +30,21 @@ class MemoryManager:
         # L4/C1: Prevents concurrent consolidation tasks from corrupting session state / MEMORY.md
         self._consolidation_lock = asyncio.Lock()
 
+    async def consolidate_memory(self, session: "Session", session_manager: "SessionManager | None" = None, archive_all: bool = False) -> None:
+        """Backward-compatible session-based consolidation entrypoint.
+
+        Older call sites and tests still pass a live ``Session`` object. Internally
+        we now consolidate from an immutable snapshot to avoid races with
+        concurrent session mutation, so this adapter simply converts the session
+        to a snapshot and forwards to the snapshot implementation.
+        """
+        session_snapshot = session.to_snapshot()
+        await self.consolidate_memory_from_snapshot(
+            session_snapshot,
+            session_manager=session_manager,
+            archive_all=archive_all,
+        )
+
     async def consolidate_memory_from_snapshot(self, session_snapshot: dict, session_manager: "SessionManager | None" = None, archive_all: bool = False) -> None:
         """Consolidate old messages into MEMORY.md + HISTORY.md using a snapshot.
 

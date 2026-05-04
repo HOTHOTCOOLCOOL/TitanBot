@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "9cbb3f85-2020-4ddc-85e6-44e36909f48d",
+      "name": "Phase62 Content Filter Fuse Probe",
+      "enabled": true,
+      "schedule": {
+        "kind": "every",
+        "atMs": null,
+        "everyMs": 60000,
+        "expr": null,
+        "tz": null
+      },
+      "payload": {
+        "kind": "agent_turn",
+        "message": "Synthetic content filter probe",
+        "deliver": false,
+        "channel": null,
+        "to": null
+      },
+      "state": {
+        "nextRunAtMs": 1777800332561,
+        "lastRunAtMs": null,
+        "lastStatus": null,
+        "lastError": null,
+        "retryCount": 0,
+        "parentTraceId": null
+      },
+      "createdAtMs": 1777800272549,
+      "updatedAtMs": 1777800272549,
+      "deleteAfterRun": false
+    }
+  ]
+}

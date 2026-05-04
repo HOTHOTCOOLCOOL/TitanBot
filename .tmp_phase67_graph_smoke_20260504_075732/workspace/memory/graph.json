@@ -1,0 +1,7 @@
+﻿{
+  "triples": [
+    {"source": "Apple", "predicate": "is", "target": "Tech Company", "context": "original"},
+    {"source": "Steve Jobs", "predicate": "founded", "target": "Apple", "context": "original"}
+  ],
+  "_aliases": {}
+}

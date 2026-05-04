@@ -31,7 +31,7 @@ from nanobot.agent.tools.registry import ToolRegistry
 
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.coordinator import CoordinatorManager
-from nanobot.agent.task_tracker import TaskTracker, TaskStatus
+from nanobot.agent.task_tracker import TaskTracker, TaskStatus, Step
 from nanobot.agent.knowledge_workflow import KnowledgeWorkflow
 from nanobot.agent.personalization import MemoryDistiller
 from nanobot.session.manager import Session, SessionManager
@@ -73,22 +73,35 @@ _FAKE_COMPLETION_PHRASES = [
 
 # ── Phase 40A-1: Tool Result Truncation Constants ──
 _MAX_TOOL_RESULT_CHARS: int = 16_000   # 硬上限：约 8000 token
-_TOOL_RESULT_HEAD_CHARS: int = 8_000   # 截断时保留头部字符数
+_TOOL_RESULT_HEAD_CHARS: int = 8_000   # 截断时保留头部字符数（legacy constant, kept for reference)
 
 def _normalize_tool_result(result: Any, tool_name: str, max_chars: int = 16_000) -> str:
-    """强制截断超长工具结果，保留头尾以保证信息完整性。"""
+    """强制截断超长工具结果，采用 10/90 尾部偏重截断策略。
+
+    ADR-66 C2: Replaced the symmetric 50/50 split with a tail-heavy 10/90 ratio.
+    Rationale: stacktraces, JSON parse errors, and crash details almost always
+    appear at the BOTTOM of tool output (e.g., pytest output, npm errors, API
+    responses). Preserving 90% of the tail ensures the most diagnostically
+    valuable content survives truncation.
+
+    The previous strategy of attempting json.loads() on the full text was
+    removed: it introduces OOM risk on large payloads and a logic bug where
+    the JSON branch output could itself exceed max_chars.
+
+    Python str slicing operates on Unicode codepoints (not bytes), so
+    multi-byte UTF-8 characters (e.g. CJK) are never split mid-character.
+    """
     if isinstance(result, BaseException):
         return f"Error: {result}"
     text = str(result) if result is not None else "(empty)"
     if len(text) <= max_chars:
         return text
-    head_chars = max_chars // 2
-    head = text[:head_chars]
-    tail = text[-(max_chars - head_chars):] 
+    head_chars = max_chars // 10          # 10% → ~1600 chars: leading context
+    tail_chars = max_chars - head_chars   # 90% → ~14400 chars: error / stacktrace
     return (
-        f"{head}\n\n"
-        f"... [TRUNCATED: {len(text)} chars → {max_chars} chars limit] ...\n\n"
-        f"... (last segment) {tail}"
+        f"{text[:head_chars]}\n\n"
+        f"...[TRUNCATED: {len(text)} chars total — preserving head={head_chars}, tail={tail_chars} chars]...\n\n"
+        f"{text[-tail_chars:]}"
     )
 
 
@@ -132,13 +145,21 @@ def _detect_fuzzy_loop(recent_sigs: list[str]) -> bool:
 
     for sig in window:
         for sub_sig in sig.split(_SIG_DELIMITER):
-            tool_part = sub_sig.split(":", 1)[0].strip()
-            args_json = sub_sig.split(":", 1)[1] if ":" in sub_sig else "{}"
+            parts = sub_sig.split(":", 1)
+            tool_part = parts[0].strip()
+            args_json = parts[1] if len(parts) > 1 else "{}"
             try:
-                import json as _json
-                args = _json.loads(args_json)
-                action = args.get("action", "")
-            except Exception:
+                # ADR-66 C1: Use json_repair to handle malformed signatures
+                # without silently killing the detection (was bare json.loads + silent except)
+                import json_repair as _json_repair
+                args = _json_repair.loads(args_json)
+                action = args.get("action", "") if isinstance(args, dict) else ""
+            except Exception as e:
+                # Non-silent degradation: log at WARNING so it appears in production logs
+                logger.warning(
+                    f"[loop_detect] sig parse failed — detection may be degraded: {e!r} "
+                    f"(sig prefix: {sub_sig[:60]!r})"
+                )
                 action = ""
                 args_json = "{}"
 
@@ -162,11 +183,12 @@ def _detect_fuzzy_loop(recent_sigs: list[str]) -> bool:
     call_tuples: list[tuple[str, str]] = []
     for sig in window:
         for sub_sig in sig.split(_SIG_DELIMITER):
-            tool_part = sub_sig.split(":", 1)[0].strip()
-            args_json = sub_sig.split(":", 1)[1] if ":" in sub_sig else "{}"
+            parts = sub_sig.split(":", 1)
+            tool_part = parts[0].strip()
+            args_json = parts[1] if len(parts) > 1 else "{}"
             try:
-                import json as _json
-                action = _json.loads(args_json).get("action", "")
+                import json_repair as _json_repair
+                action = _json_repair.loads(args_json).get("action", "") if isinstance(_json_repair.loads(args_json), dict) else ""
             except Exception:
                 action = ""
             pair_name = f"{tool_part}.{action}" if action else tool_part
@@ -229,6 +251,24 @@ def _is_error_result(r) -> bool:
         if "⚠️ ACTION FAILED:" in s:
             return True
     return False
+
+
+_P0_PLAN_LINE_RE = re.compile(r"(?m)^\s*(?:\d+\.|-|\*)\s+\S+")
+_P0_THINK_BLOCK_RE = re.compile(r"(?is)<think>(.*?)</think>")
+
+
+def _has_p0_plan_steps(text: str | None) -> bool:
+    """Return True when text contains at least one numbered/bulleted plan step."""
+    return bool(text and _P0_PLAN_LINE_RE.search(text))
+
+
+def _is_valid_p0_plan(raw_text: str | None, reasoning: str | None) -> bool:
+    """Accept either a valid <think> block or native reasoning_content steps."""
+    if raw_text:
+        for block in _P0_THINK_BLOCK_RE.findall(raw_text):
+            if _has_p0_plan_steps(block):
+                return True
+    return _has_p0_plan_steps(reasoning)
 
 
 class AgentLoop:
@@ -401,6 +441,83 @@ class AgentLoop:
             from nanobot.config.loader import get_config
             self._config = get_config()
         return self._config
+
+    @staticmethod
+    def _task_step_name_from_call(tool_call: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+        """Derive a compact human-readable step name from a recorded tool call."""
+        tool_name = str(tool_call.get("tool") or tool_call.get("name") or "tool")
+        args = tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {}
+
+        suffix = ""
+        if isinstance(args.get("action"), str) and args["action"]:
+            suffix = args["action"]
+        elif isinstance(args.get("path"), str) and args["path"]:
+            suffix = Path(args["path"]).name
+        elif isinstance(args.get("query"), str) and args["query"]:
+            suffix = args["query"][:40]
+        elif isinstance(args.get("url"), str) and args["url"]:
+            suffix = args["url"][:40]
+
+        step_name = f"{tool_name}: {suffix}" if suffix else tool_name
+        return step_name, tool_name, args
+
+    def _track_request_start(self, request_text: str, extracted_key: str | None, intent: str) -> str | None:
+        """Create a task-tracker entry for a non-chitchat request."""
+        if intent == "chitchat_safe":
+            return None
+
+        task_key = extracted_key or request_text[:60]
+        task_id = self.task_tracker.create_task(task_key, request_text)
+        self.task_tracker.update_status(task_id, TaskStatus.RUNNING)
+        logger.debug(f"TaskTracker: created active task {task_id[:8]}")
+        return task_id
+
+    def _track_request_outcome(
+        self,
+        task_id: str | None,
+        *,
+        tool_calls_with_args: list[dict],
+        exit_kind: str,
+        pending_review: bool,
+        final_content: str | None,
+    ) -> None:
+        """Persist a concise step summary for follow-up transparency prompts."""
+        if not task_id:
+            return
+
+        task = self.task_tracker.get_task(task_id)
+        if not task:
+            return
+
+        steps: list[Step] = []
+        for idx, tool_call in enumerate(tool_calls_with_args[-8:], start=1):
+            step_name, tool_name, args = self._task_step_name_from_call(tool_call)
+            step = Step(idx, step_name, tool_name=tool_name, params=args)
+            step.status = "completed"
+            steps.append(step)
+
+        if steps:
+            if exit_kind != "success":
+                steps[-1].status = "failed"
+            elif pending_review:
+                steps[-1].status = "running"
+
+            self.task_tracker.add_steps(task_id, steps)
+            for idx, step in enumerate(steps):
+                self.task_tracker.update_step(
+                    task_id,
+                    idx,
+                    status=step.status,
+                    result=(final_content or "")[:200] if idx == len(steps) - 1 else "",
+                )
+
+        if pending_review:
+            self.task_tracker.update_status(task_id, TaskStatus.PENDING_REVIEW)
+        elif exit_kind == "success":
+            self.task_tracker.update_status(task_id, TaskStatus.COMPLETED)
+        else:
+            self.task_tracker.update_status(task_id, TaskStatus.FAILED)
+        logger.debug(f"TaskTracker: updated task {task_id[:8]} to {task.status.value}")
     
 
     
@@ -785,7 +902,21 @@ class AgentLoop:
                 _exit_kind = "success"
                 break
 
-            # 3. Has tool calls — build TurnContext and run pipeline
+            # 3. Has tool calls — enforce the P0 observability contract first
+            if not _is_valid_p0_plan(response.content, response.reasoning_content):
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Error: P0 observability contract violation. "
+                        "You must include a numbered or bulleted plan inside "
+                        "<think> tags (or native reasoning channel) before calling tools."
+                    ),
+                })
+                continue
+
+            logger.info("P0 Plan Verified")
+
+            # 4. Build TurnContext and run pipeline
             tool_call_dicts = [
                 {
                     "id": tc.id,
@@ -829,7 +960,7 @@ class AgentLoop:
 
             await pipeline.run_turn(ctx)
 
-            # 4. Sync cross-turn state back to while-loop variables
+            # 5. Sync cross-turn state back to while-loop variables
             messages = ctx.messages
             consecutive_all_exceptions = ctx.consecutive_all_exceptions
             message_call_count = ctx.message_call_count
@@ -1466,6 +1597,7 @@ class AgentLoop:
         request_text = original_request or msg.content
 
         self._set_tool_context(msg.channel, msg.chat_id)
+        tracked_task_id = self._track_request_start(request_text, extracted_key, intent)
 
         target_model_override = None
         if intent == "chitchat_safe":
@@ -1587,6 +1719,13 @@ class AgentLoop:
         tool_calls_with_args = result.tool_calls_with_args
         final_milestone = result.milestone_summary
         action_reason = result.action_reason
+        self._track_request_outcome(
+            tracked_task_id,
+            tool_calls_with_args=tool_calls_with_args,
+            exit_kind=result.exit_kind,
+            pending_review=bool(session.pending_approval_task),
+            final_content=final_content,
+        )
 
         # Phase 31 L3: Post-reflection & knowledge extraction (fire-and-forget)
         if tools_used and verification.config.l3_enabled:

@@ -2,6 +2,7 @@
 
 **状态**: 已采纳 (Accepted)
 **日期**: 2026-04-19
+**验收状态**: Phase 62 已于 2026-05-03 完成人工与探针验证，通过
 **Harness 辩证轮次**: 5 阶辩证 (Sonnet Planner → Opus Critic → Gemini Pro High → Gemini Pro Low → Sonnet Final)
 **关联 ADR**: ADR-45B (R-SHELL-GUARD), ADR-59 (Antigravity 整合), ADR-60 (LiteLLM 网关), ADR-61 (命令控制分层)
 **受影响文件**:
@@ -205,7 +206,49 @@ tests/adversarial/
 
 ---
 
-## 5. 演化路线图
+## 5. 2026-05-03 验收补充复盘（Postmortem Addendum）
+
+Phase 62 / 59 的后续人工验收又暴露出一类与“代码是否存在”不同层级的问题：**运行时接线是否真的闭环，以及我们是否拿到了足够硬的证据。**
+
+### 5.1 主要失真来源
+
+1. **前门拒绝不等于后台熔断**：危险请求被前台直接拒绝，只能证明通用安全策略工作了，不能证明 Worker/Cron 的 `content_filter` 熔断分支真的生效。
+2. **模型答对不等于 KI / Prompt 注入真的生效**：如果日志里没有出现诸如 `L0: Injected KI rule ...` 这类硬信号，就不能把“推荐了正确工具”记为规则注入通过。
+3. **消费侧存在，不等于生产侧闭环**：TaskTracker 透明化如果只有 prompt 注入、没有主循环稳定写入状态，那只是“能显示”，不是“有真实状态可显示”。
+4. **repo 中有资源，不等于 runtime 一定加载到了**：规则文件、workspace 模板、工具注册、审批存储、运行时目录和环境变量，任何一个掉链子，都会让设计意图在 live 环境中失效。
+
+### 5.2 根因判断
+
+这轮问题的根因，不是单点实现缺失，而是**把“设计意图”误当成了“运行时事实”**。  
+我们过去容易在以下节点产生假阳性：
+
+- 看到回答像对，就默认机制已触发；
+- 看到仓库里有文件，就默认 runtime 会加载；
+- 看到 prompt 中能消费状态，就默认一定有人在生产状态；
+- 看到人工能复现某条 happy path，就默认 phase 可以宣告完成。
+
+### 5.3 固化后的组织级教训
+
+1. **Proof over prose**：自然语言总结只能作为辅助说明，不能作为通过证据。
+2. **Repo / Runtime parity is a deliverable**：运行时资源落点、加载路径、缺失时退化行为，本身就是要交付和验收的内容。
+3. **Producer + Consumer must both exist**：任何“透明化/注入/提示增强”能力，都必须同时验证状态生产端与消费端。
+4. **Manual bug must become deterministic evidence**：人工验收发现的问题，必须升格为 red test、behavior probe 或 adversarial regression，之后才能重新宣称完成。
+5. **Acceptance must isolate layers**：前台拒绝、后台熔断、规则注入、审批挂起、状态透明化等层必须分开验证，不能互相替代。
+
+### 5.4 对流程的强制回写
+
+上述教训已经回写到协作流程本身：
+
+- `execute_phase.md` 现在强制要求 `Runtime Artifact Parity Checklist` 与 `Proof Signals / Observable Success Criteria`
+- `execute_phase.md` 明确禁止“回答像对”被当成通过
+- `harness_lite.md` / `harness_heavy.md` 现在要求在设计阶段显式写出 `False Positive Success Paths`
+- `harness_heavy.md` 要求 ADR Candidate 在进入 `Accepted` 前必须写清运行时前提与验收硬证据
+
+这意味着：**后续类似 Phase 62 的问题，不应再被当成“调试细节”，而应被视为 workflow 未达标。**
+
+---
+
+## 6. 演化路线图
 
 | 优先级 | 任务 | 受影响文件 |
 |---|---|---|
@@ -218,7 +261,7 @@ tests/adversarial/
 
 ---
 
-## 6. 明确不在本 ADR 范围内
+## 7. 明确不在本 ADR 范围内
 
 - ❌ L1 引入 LLM 旁路嗅探（**辩证永久封禁，禁止重提**）
 - ❌ Bootstrap Files 的全量 Prompt 重写（风险过高，需独立 ADR）

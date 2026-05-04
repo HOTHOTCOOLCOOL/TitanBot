@@ -25,9 +25,12 @@ Design constraints (from ARCHITECTURE.md):
 
 import fnmatch
 import json
+import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, TYPE_CHECKING
+
 
 from loguru import logger
 
@@ -89,13 +92,74 @@ _SENSITIVE_PATHS = [
     "/etc/", "/boot/", "/usr/bin/", "/usr/sbin/",
     # User secrets
     "/.ssh/", "\\.ssh\\",
+    # Windows-native .ssh path (resolved by realpath on Windows: C:\Users\<user>\.ssh)
+    os.path.join(os.path.expanduser("~"), ".ssh"),
+    os.path.join(os.path.expanduser("~"), ".gnupg"),
     "/.gnupg/", "\\.gnupg\\",
+
     # macOS specific (Phase 36)
     "/system/library/",
     "/library/launchagents/",
     "/library/launchdaemons/",
     "/library/keychains/",
 ]
+
+
+def _looks_like_windows_absolute_path(path: str) -> bool:
+    """Return True for drive-letter or UNC Windows paths."""
+    return bool(re.match(r"^[a-zA-Z]:[\\/]", path)) or path.startswith("\\\\")
+
+
+def _should_resolve_sensitive_prefix(path: str) -> bool:
+    """Only pre-resolve stable absolute prefixes for the current host OS.
+
+    ADR-66's realpath hardening is for write/edit path prefix checks. On
+    Windows, resolving POSIX-rooted entries like ``/etc`` or bare keywords
+    like ``system32`` turns them into false absolute paths on the current
+    drive (for example ``D:\\etc`` or ``<cwd>\\system32``), which then
+    creates false positives. Those entries remain raw substring markers for
+    exec-command scanning instead of path-prefix matching.
+    """
+    expanded = os.path.expanduser(path)
+    if os.name == "nt":
+        return _looks_like_windows_absolute_path(expanded)
+    return expanded.startswith("/")
+
+
+def _resolve_sensitive_paths() -> set[str]:
+    """ADR-66 A1: Pre-resolve _SENSITIVE_PATHS at module load time.
+
+    Uses os.path.realpath to follow symlinks/junction points and normalises
+    to lowercase, but only for stable absolute prefixes on the current OS.
+    Bare keywords and cross-platform root markers stay out of the prefix set
+    so they can continue serving as substring fallbacks for exec-command
+    scanning without poisoning write/edit path checks.
+
+    Appends os.sep to directory entries to prevent prefix false-positives
+    (e.g. '/etc/pass' must not match '/etc/password_folder').
+    """
+    resolved: set[str] = set()
+    for p in _SENSITIVE_PATHS:
+        if not _should_resolve_sensitive_prefix(p):
+            continue
+
+        try:
+            rp = os.path.normpath(os.path.realpath(os.path.expanduser(p))).lower()
+        except (OSError, RuntimeError) as e:
+            logger.debug(
+                f"R07: Skipping sensitive prefix {p!r} because it could not be resolved: {e!r}"
+            )
+            continue
+
+        # Ensure directory entries end with separator for startswith safety
+        if not rp.endswith(os.sep):
+            rp = rp + os.sep
+        resolved.add(rp)
+    return resolved
+
+
+# Pre-resolved at module import — zero per-call I/O overhead
+_SENSITIVE_PATHS_RESOLVED: set[str] = _resolve_sensitive_paths()
 
 # Network exfiltration patterns — commands that send data to external hosts
 _EXFIL_PATTERNS: list[re.Pattern] = [
@@ -194,44 +258,118 @@ def _check_rule_exec_length(tool_calls: list[Any]) -> list[str]:
     return violations
 
 
-def _check_rule_sensitive_path(tool_calls: list[Any], *, extra_deny: list[str] | None = None) -> list[str]:
+def _check_rule_sensitive_path(
+    tool_calls: list[Any],
+    *,
+    extra_deny: list[str] | None = None,
+    workspace: Path | str | None = None,
+) -> list[str]:
     """R07: write_file / edit_file / exec must not target sensitive system paths.
+
+    ADR-66 A2: Hardened path traversal defense.
+    - write_file / edit_file: resolved via os.path.realpath to defeat ../
+      traversal, symlink, and Windows Junction Point attacks. Matched against
+      _SENSITIVE_PATHS_RESOLVED using startswith (pre-computed at module load).
+    - exec: the argument is a shell command, not a path — realpath is NOT
+      applied (would corrupt matching). Existing substring regex is retained.
 
     Phase 35v2: Also checks ``edit_file`` (closing a real blind spot) and
     supports configurable deny patterns from ``VerificationConfig.path_deny_patterns``.
     """
+    import os
     violations = []
     for tc in tool_calls:
-        path_to_check = ""
-        if tc.name == "write_file":
-            path_to_check = tc.arguments.get("path", "")
-        elif tc.name == "edit_file":
-            path_to_check = tc.arguments.get("file_path", "")
-        elif tc.name == "exec":
-            path_to_check = tc.arguments.get("command", "")
-        else:
-            continue
+        if tc.name in ("write_file", "edit_file"):
+            raw_path = str(tc.arguments.get("path", "") or tc.arguments.get("file_path", ""))
+            workspace_root: Path | None = None
 
-        path_lower = path_to_check.lower()
-
-        # Hardcoded sensitive paths (existing)
-        for sensitive in _SENSITIVE_PATHS:
-            if sensitive in path_lower:
-                violations.append(
-                    f"R07: Operation targets a sensitive system path containing '{sensitive}'. "
-                    f"This has been blocked for safety."
-                )
-                break
-
-        # Phase 35v2: Configurable deny patterns (Glob via fnmatch)
-        if extra_deny:
-            for pattern in extra_deny:
-                if fnmatch.fnmatch(path_lower, pattern.lower()):
+            if workspace is not None:
+                try:
+                    workspace_root = Path(workspace).expanduser().resolve(strict=False)
+                except (OSError, RuntimeError) as e:
+                    logger.warning(
+                        f"R07: Failed to resolve workspace root for boundary check: {e!r}"
+                    )
                     violations.append(
-                        f"R07: Path matches deny pattern '{pattern}'. "
-                        f"This has been blocked by sandbox configuration."
+                        "R07: Workspace boundary check failed while resolving the workspace directory. "
+                        "Refusing write until the target path can be verified."
+                    )
+                    continue
+
+            try:
+                target_path = Path(raw_path).expanduser()
+                if workspace_root is not None and not target_path.is_absolute():
+                    target_path = workspace_root / target_path
+                resolved_path = target_path.resolve(strict=False)
+            except (OSError, RuntimeError) as e:
+                logger.warning(
+                    f"R07: Failed to resolve write target '{raw_path}': {e!r}"
+                )
+                violations.append(
+                    "R07: Unable to resolve write target path. Refusing write until the target path can be "
+                    "checked against the workspace directory."
+                )
+                continue
+
+            if workspace_root is not None and not resolved_path.is_relative_to(workspace_root):
+                violations.append(
+                    "R07: Out of bounds write. Target path must be within the workspace directory."
+                )
+                continue
+
+            resolved = str(resolved_path).lower()
+
+            # L2 fix (A1+B2): Split prefix-check path from glob-match path.
+            # - resolved_prefix: has trailing os.sep for startswith safety
+            #   (prevents '/etc/pass' matching '/etc/password_folder')
+            # - resolved: raw realpath result WITHOUT trailing sep — used for
+            #   fnmatch glob matching (trailing sep breaks exact-file patterns
+            #   like 'c:\app\.env' and '**/.env')
+            resolved_norm = os.path.normpath(resolved)
+            if not resolved_norm.endswith(os.sep):
+                resolved_prefix = resolved_norm + os.sep
+            else:
+                resolved_prefix = resolved_norm
+
+            blocked = False
+            for sensitive in _SENSITIVE_PATHS_RESOLVED:
+                if resolved_prefix.startswith(sensitive):
+                    violations.append(
+                        f"R07: Operation targets a sensitive system path '{sensitive.rstrip(os.sep)}'. "
+                        f"This has been blocked for safety."
+                    )
+                    blocked = True
+                    break
+
+            # Configurable deny patterns (Glob via fnmatch)
+            # L2 fix: Use resolved_norm (no trailing sep) for fullpath glob,
+            # and os.path.basename(resolved_norm) for filename-level patterns
+            # like '*.env'.  normpath handles mixed separators and double
+            # slashes, preventing empty-basename edge cases in fallback paths.
+            if not blocked and extra_deny:
+                resolved_basename = os.path.basename(resolved_norm).lower()
+                for pattern in extra_deny:
+                    pat_lower = pattern.lower()
+                    if (fnmatch.fnmatch(resolved_norm, pat_lower)
+                            or fnmatch.fnmatch(resolved_basename, pat_lower)):
+                        violations.append(
+                            f"R07: Path matches deny pattern '{pattern}'. "
+                            f"This has been blocked by sandbox configuration."
+                        )
+                        break
+
+        elif tc.name == "exec":
+            # exec argument is a shell command string — do NOT run realpath on it
+            # (would produce garbage). Keep substring regex matching.
+            command_lower = tc.arguments.get("command", "").lower()
+            for sensitive in _SENSITIVE_PATHS:
+                if sensitive in command_lower:
+                    violations.append(
+                        f"R07: exec command references a sensitive path '{sensitive}'. "
+                        f"This has been blocked for safety."
                     )
                     break
+
     return violations
 
 
@@ -275,16 +413,30 @@ def _check_rule_browser_use_ssrf(tool_calls: list[Any]) -> list[str]:
     return violations
 
 
+# ADR-66 A3: Three-tier SSRS fatal detection — no DOTALL to prevent cross-message false positives
+_SSRS_FATAL_PATTERNS: list[re.Pattern] = [
+    re.compile(r'"error_type"\s*:\s*"DependencyFatal"'),       # Standard JSON format
+    re.compile(r'error_type["\s:]+DependencyFatal'),              # Loose / reformatted variant
+    re.compile(r'(?:error|fatal|failed)[^\n]{0,80}DependencyFatal'),  # Contextual bare keyword
+]
+
+
 def _check_rule_ssrs_fatal(tool_calls: list[Any], messages: list[dict] | None = None) -> list[str]:
-    """R-SSRS-001: Block outlook search and other workaround attempts after SSRS fatal failure (ADR-44)."""
+    """R-SSRS-001: Block outlook search and other workaround attempts after SSRS fatal failure (ADR-44).
+
+    ADR-66 A3: Replaced hard-coded magic string match with a 3-tier regex cascade.
+    DOTALL is intentionally omitted to prevent cross-message false positives
+    (e.g. user asking 'what is DependencyFatal?' triggering the rule).
+    Each pattern is tested against individual message content strings only.
+    """
     if not messages:
         return []
-    
+
     # Check if SSRS failed in recent history
     ssrs_failed = False
     for m in reversed(messages):
         content = str(m.get("content", ""))
-        if '"error_type": "DependencyFatal"' in content:
+        if any(pat.search(content) for pat in _SSRS_FATAL_PATTERNS):
             ssrs_failed = True
             break
         # Stop looking back too far (just current conversation turn)
@@ -409,6 +561,41 @@ class VerificationLayer:
         self.model = model
         self.knowledge_workflow = knowledge_workflow
 
+    def _iter_ki_rule_dirs(self) -> list[Path]:
+        """Return candidate KI rule directories in lookup order."""
+        candidates: list[Path] = []
+
+        config_workspace = getattr(self.config, "workspace", None)
+        if config_workspace:
+            candidates.append(Path(config_workspace).expanduser() / ".nanobot" / "ki_rules")
+
+        workflow_workspace = getattr(
+            getattr(self, "knowledge_workflow", None), "workspace", None
+        )
+        if workflow_workspace:
+            candidates.append(Path(workflow_workspace).expanduser() / ".nanobot" / "ki_rules")
+
+        candidates.append(Path.cwd() / ".nanobot" / "ki_rules")
+        candidates.append(Path(__file__).resolve().parents[2] / ".nanobot" / "ki_rules")
+
+        unique_candidates: list[Path] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = str(candidate.expanduser().resolve(strict=False))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_candidates.append(candidate)
+
+        return unique_candidates
+
+    def _get_ki_rules_dir(self) -> Path | None:
+        """Pick the first existing KI rule directory."""
+        for candidate in self._iter_ki_rule_dirs():
+            if candidate.is_dir():
+                return candidate
+        return None
+
     # ── L0: Pre-cognitive Experience Enrichment ───────────────────────
 
     def enrich_context(
@@ -444,40 +631,37 @@ class VerificationLayer:
 
         # 0. KI Rules (Phase 59: Short-circuit tactical rules)
         try:
-            import os
-            import json
-            ki_dir = None
-            if hasattr(self, 'config') and hasattr(self.config, 'workspace'):
-                ki_dir = os.path.join(self.config.workspace, ".nanobot/ki_rules")
-            elif hasattr(self, 'knowledge_workflow') and self.knowledge_workflow and hasattr(self.knowledge_workflow, 'workspace'):
-                ki_dir = os.path.join(self.knowledge_workflow.workspace, ".nanobot/ki_rules")
-            else:
-                import pathlib
-                ki_dir = os.path.join(pathlib.Path.cwd(), ".nanobot/ki_rules")
-                
-            if os.path.exists(ki_dir):
-                mtime = os.stat(ki_dir).st_mtime
-                for f in os.listdir(ki_dir):
-                    if f.endswith(".ki.json"):
-                        f_mtime = os.stat(os.path.join(ki_dir, f)).st_mtime
-                        if f_mtime > mtime:
-                            mtime = f_mtime
+            ki_dir = self._get_ki_rules_dir()
 
-                if getattr(self, "_ki_rules_cache", None) is None or getattr(self, "_ki_rules_mtime", 0) < mtime:
+            if ki_dir:
+                mtime = ki_dir.stat().st_mtime
+                for ki_file in ki_dir.glob("*.ki.json"):
+                    f_mtime = ki_file.stat().st_mtime
+                    if f_mtime > mtime:
+                        mtime = f_mtime
+
+                cache_dir = str(ki_dir.expanduser().resolve(strict=False))
+                if (
+                    getattr(self, "_ki_rules_cache", None) is None
+                    or getattr(self, "_ki_rules_mtime", 0) < mtime
+                    or getattr(self, "_ki_rules_cache_dir", None) != cache_dir
+                ):
                     self._ki_rules_cache = []
                     self._ki_rules_mtime = mtime
-                    for f in os.listdir(ki_dir):
-                        if f.endswith(".ki.json"):
-                            try:
-                                with open(os.path.join(ki_dir, f), "r", encoding="utf-8") as fp:
-                                    data = json.load(fp)
-                                    self._ki_rules_cache.append({
-                                        "name": f,
-                                        "keywords": [k.lower() for k in data.get("keywords", [])],
-                                        "rule": data.get("rule", "")[:500]  # Runtime strict truncation
-                                    })
-                            except Exception:
-                                pass
+                    self._ki_rules_cache_dir = cache_dir
+                    for ki_file in ki_dir.glob("*.ki.json"):
+                        try:
+                            with ki_file.open("r", encoding="utf-8") as fp:
+                                data = json.load(fp)
+                                self._ki_rules_cache.append({
+                                    "name": ki_file.name,
+                                    "keywords": [k.lower() for k in data.get("keywords", [])],
+                                    "rule": data.get("rule", "")[:500]  # Runtime strict truncation
+                                })
+                        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as e:
+                            logger.debug(
+                                f"L0: Skipping KI rule {ki_file.name} due to load failure: {e!r}"
+                            )
 
                 request_lower = request_text.lower()
                 for ki in self._ki_rules_cache:
@@ -487,7 +671,7 @@ class VerificationLayer:
                             system_messages[0]["content"] += rule_text
                             injection_used += len(rule_text)
                             logger.debug(f"L0: Injected KI rule {ki['name']}")
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.debug(f"KI Rules injection skipped: {e}")
 
         # 1. Experience Bank tactical hints
@@ -530,6 +714,7 @@ class VerificationLayer:
         *,
         registry: Any | None = None,
         config_overrides: dict | None = None,
+        workspace: Path | str | None = None,
     ) -> RuleResult:
         """L1: Run all rigid rules against proposed tool calls.
 
@@ -553,7 +738,7 @@ class VerificationLayer:
         all_violations: list[str] = []
         for rule_fn in _L1_RULES:
             if rule_fn is _check_rule_sensitive_path:
-                violations = rule_fn(tool_calls, extra_deny=extra_deny)
+                violations = rule_fn(tool_calls, extra_deny=extra_deny, workspace=workspace)
             elif rule_fn is _check_rule_ssrs_fatal:
                 violations = rule_fn(tool_calls, messages=messages)
             elif rule_fn is _check_rule_destructive_guard:
@@ -636,8 +821,11 @@ class VerificationLayer:
                 try:
                     if ap["match"](tc):
                         findings.append(f"{ap['id']}: {ap['desc']} — tool={tc.name}")
-                except Exception:
-                    pass
+                except (AttributeError, KeyError, TypeError, ValueError) as e:
+                    logger.debug(
+                        "L3 anti-pattern matcher failed for %s: %r"
+                        % (ap.get("id", "unknown"), e)
+                    )
 
         # Check retry threshold
         if retry_count >= 3:
@@ -657,7 +845,7 @@ class VerificationLayer:
         tools_used: list[str],
         tool_calls_with_args: list[dict],
         session: Any,
-        exit_kind: str = "success",
+        exit_kind: str,
     ) -> None:
         """L3: Extract success patterns or failure lessons after agent loop.
 

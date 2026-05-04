@@ -61,6 +61,7 @@ class TestSession:
         s.pending_knowledge = {"key": "test"}
         s.pending_save = {"key": "test"}
         s.pending_upgrade = {"key": "test"}
+        s.last_task_key = "previous_task"
         s.last_tool_calls = [{"tool": "exec"}]
         s.message_count_since_consolidation = 5
 
@@ -70,6 +71,7 @@ class TestSession:
         assert s.pending_knowledge is None
         assert s.pending_save is None
         assert s.pending_upgrade is None
+        assert s.last_task_key is None
         assert s.last_tool_calls is None
         assert s.message_count_since_consolidation == 0
 

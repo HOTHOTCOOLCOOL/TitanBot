@@ -23,3 +23,12 @@ This phase successfully demonstrated the new `execute_phase` Artifact-First work
 
 ## Lessons Learned
 - **Defensive Testing**: When testing length boundaries, do not rely on generating many items if the underlying logic caps the item count. Instead, generate extremely long items to physically breach the threshold. (Added to `ARCHITECTURE.md`).
+- **Manual fallback validation needs a clean runtime**: if the workspace already contains strong RAG/KG context for the test topic, Scenario 2 can short-circuit before explicit tool-calling. A graph-only test workspace (or equivalent isolation) is sometimes required to exercise the fallback path honestly.
+
+## Manual Acceptance Record (2026-05-04)
+- **Scenario 1**: PASS. `knowledge_map({})` was invoked and the dashboard summary matched the top hubs present in `graph.json`.
+- **Scenario 2**: PASS WITH NOTE. The accepted run issued `knowledge_map({})` plus two `memory(...)` searches in the same reasoning round: one broad architecture query and one more specific submodule query. This was accepted as satisfying the fallback goal even though the calls were parallelized.
+- **Regression Target 1**: PASS. `exec({"command": "echo hello", ...})` executed successfully and returned `hello`, confirming `tool_setup.py` registration integrity was not regressed.
+- **Regression Target 2**: PASS. A large `tasks_tracking.json` read ended with `[OUTPUT TRUNCATED — original length: 52,183 chars]` in the dashboard, confirming the global output-cap path still works without crashing the agent loop.
+- **Test-environment note**: a temporary graph-only shadow workspace was used for the clean Scenario 2 rerun because automatic vector/KG context injection could otherwise answer the architecture prompt before any tool calls. Runtime config was restored to `~/.nanobot/workspace` after validation.
+- **Log-interpretation note**: the `_execute_with_llm` console line may show only the beginning of a long response. For truncation validation, use the dashboard-visible footer as the authoritative signal.

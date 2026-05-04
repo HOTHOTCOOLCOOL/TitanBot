@@ -1,0 +1,15 @@
+{
+  "job_id": "lite_20260425_outside_repo",
+  "mode": "lite",
+  "goal": "Outside repo",
+  "source": "docs/spec.md",
+  "artifact_dir": ".agent/artifacts/harness_lite/lite_20260425_outside_repo",
+  "created_at": "2026-04-25T09:16:27Z",
+  "last_checked_at": "2026-04-25T09:16:27Z",
+  "derived_stage": "INIT",
+  "blockers": [
+    "problem_statement.md is not ready",
+    "baseline.md is not ready",
+    "draft_v1.md is not ready"
+  ]
+}

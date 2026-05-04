@@ -15,6 +15,7 @@ from nanobot.config.schema import (
     VLMConfig,
     VisionConfig,
     MCPServerConfig,
+    ToolsConfig,
 )
 
 
@@ -59,6 +60,11 @@ class TestConfigDefaults:
         assert mcp.args == []
         assert mcp.url == ""
 
+    def test_tools_config_defaults(self) -> None:
+        tools = ToolsConfig()
+        assert tools.copilot_studio.enabled is False
+        assert tools.copilot_studio.secret == ""
+
 
 # ── camelCase / snake_case Parsing ──
 
@@ -87,6 +93,16 @@ class TestCamelSnakeParsing:
         sc = SlackConfig(**{"botToken": "xoxb-xxx", "appToken": "xapp-xxx"})
         assert sc.bot_token == "xoxb-xxx"
         assert sc.app_token == "xapp-xxx"
+
+    def test_copilot_studio_camel_case(self) -> None:
+        tools = ToolsConfig(**{"copilotStudio": {"enabled": True, "secret": "secret"}})
+        assert tools.copilot_studio.enabled is True
+        assert tools.copilot_studio.secret == "secret"
+
+    def test_copilot_studio_snake_case(self) -> None:
+        tools = ToolsConfig(**{"copilot_studio": {"enabled": True, "secret": "secret"}})
+        assert tools.copilot_studio.enabled is True
+        assert tools.copilot_studio.secret == "secret"
 
 
 # ── Channel Instantiation ──

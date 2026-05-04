@@ -1,7 +1,7 @@
 # Epoch 65: execute_phase Artifact-First Handoff Upgrade
 
 **Date:** 2026-04-25
-**Status:** Workflow documentation landed; orchestration code still pending
+**Status:** Phase 65 slice complete; remaining runtime orchestration spun out to Phase 68
 
 ## 1. Background
 
@@ -102,3 +102,40 @@
 - **Prompt 只负责定位 Artifact**
 - **Artifact 才是唯一真实契约**
 - **缺件时阻塞，禁止 Codex 自行重规划**
+
+## 7. Follow-up Automation Confirmation (2026-05-04)
+
+在工作流协议落盘之后，我们又补上了针对 Phase 65 契约本身的确定性回归：
+
+- 新增 `tests/test_phase65_execute_phase_contract.py`
+  - 校验 `.agent/workflows/execute_phase.md` 仍然要求 Artifact-first launcher 与结构化返工
+  - 校验代表性 Phase 65 job 的 `codex_handoff.md`、`codex_result.md`、`codex_feedback.md` 没有退化回“聊天口头协议”
+- 联动既有 `tests/test_harness_cli.py` 与 `tests/test_auto_reviewer.py`
+  - 验证 Harness Phase 1 边界、Artifact 限域 review scope 与本地 L2 fallback 仍然成立
+
+定向组合回归命令：
+
+- `.\\.venv311\\Scripts\\python.exe -m pytest tests/test_commands.py tests/test_cli_input.py tests/test_harness_cli.py tests/test_auto_reviewer.py tests/test_phase65_execute_phase_contract.py -W ignore -v`
+
+2026-05-04 记录结果：
+
+- `24 passed`
+
+这不等于完整的无人值守 auto-dispatch 已经存在；它的含义是：Phase 65 的工作流契约已经不再只靠文档叙述，而是已经被回归测试锁定。
+
+## 8. Phase Closure & Successor Split (2026-05-04)
+
+截至 2026-05-04，我们将 Phase 65 正式收束为“契约与回归自动化”这一已完成切片：
+
+- `execute_phase` 的 Artifact-first handoff / result / feedback 协议已落盘
+- Harness Phase 1 lite-only orchestration 已落盘
+- Phase 65 两份 manual guide 的核心 contract 场景已有 `24 passed` 的定向自动化证据
+
+但以下工作不再继续挂在 Phase 65 名下，而是拆分为新的 **Phase 68**：
+
+- Codex 自动派工器
+- `codex_result.md` 完成信号检测器
+- plan-scoped approval token
+- 真实多会话 / HITL / provider / sandbox 环境下的 runtime orchestration 验收
+
+这样做的目的，是避免把“已完成的 contract hardening”与“尚未完成的 runtime automation”混在同一个 phase 里，导致 Phase bookkeeping 与验收口径持续模糊。

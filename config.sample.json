@@ -79,6 +79,10 @@
   "tools": {
     "web": {
       "search": { "apiKey": "your_brave_search_api_key_here" }
+    },
+    "copilotStudio": {
+      "enabled": false,
+      "secret": "your_direct_line_secret_here"
     }
   }
 }

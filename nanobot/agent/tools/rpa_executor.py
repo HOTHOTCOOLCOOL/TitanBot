@@ -229,23 +229,143 @@ class RPAExecutorTool(Tool):
         except Exception:
             return None
 
-    def _check_bounds(self, x: int, y: int) -> str | None:
-        """Check if coordinates are within the captured monitor area. Returns warning string or None."""
+    def _check_bounds(self, x: int, y: int) -> tuple[bool, str | None]:
+        """Check if coordinates are within the captured monitor area.
+
+        ADR-66 B1: Returns a tuple (is_hard_blocked, message) to decouple
+        stale-context warnings from true out-of-bounds hard blocks.
+
+        Returns:
+            (False, warning_str): Context is stale but coords are in-bounds
+                                  — caller appends warning to result prefix,
+                                  action is allowed to proceed.
+            (True, error_str):   Coordinates are physically outside the
+                                  monitor boundary — caller MUST hard-block.
+            (False, None):       No issue detected.
+        """
         ctx = self._load_monitor_context()
         if not ctx:
-            return None
-            
-        warnings = []
+            return False, None
+
+        stale_msg: str | None = None
         if ctx.get("stale"):
-            warnings.append("⚠️ Monitor context is >60s old. Run screen_capture again if the window has moved.")
-            
+            stale_msg = "⚠️ Monitor context is >60s old. Run screen_capture again if the window has moved."
+
         ox, oy = ctx.get("offset_x", 0), ctx.get("offset_y", 0)
         r, b = ctx.get("right", 99999), ctx.get("bottom", 99999)
         if x < ox or x > r or y < oy or y > b:
-            warnings.append(f"⚠️ WARNING: Target ({x},{y}) is OUTSIDE the captured monitor area "
-                    f"(monitor {ctx.get('monitor_index')}: {ox},{oy} → {r},{b}). "
-                    f"The click may land on the wrong screen.")
-        return "\n".join(warnings) if warnings else None
+            error_msg = (
+                f"Target ({x},{y}) is OUTSIDE the captured monitor area "
+                f"(monitor {ctx.get('monitor_index')}: {ox},{oy} → {r},{b}). "
+                f"The action has been blocked to prevent accidental clicks on hidden screens."
+            )
+            return True, error_msg
+
+        return False, stale_msg
+
+    def _get_failsafe_corners(self) -> set[tuple[int, int]]:
+        """Return PyAutoGUI's four hard-coded emergency-stop corners."""
+        if not HAS_RPA_DEPS:
+            return set()
+
+        try:
+            width, height = pyautogui.size()
+            max_x = max(int(width) - 1, 0)
+            max_y = max(int(height) - 1, 0)
+        except Exception:
+            return set()
+
+        return {
+            (0, 0),
+            (max_x, 0),
+            (0, max_y),
+            (max_x, max_y),
+        }
+
+    def _is_failsafe_corner(self, x: int | None, y: int | None) -> bool:
+        """Check whether a coordinate is one of PyAutoGUI's abort corners."""
+        if x is None or y is None:
+            return False
+
+        try:
+            point = (int(x), int(y))
+        except (TypeError, ValueError):
+            return False
+
+        return point in self._get_failsafe_corners()
+
+    def _recover_from_failsafe_corner(self, target_x: int, target_y: int) -> bool:
+        """Nudge the cursor off a FailSafe corner before an ordinary mouse action.
+
+        PyAutoGUI raises FailSafeException whenever the current cursor position is
+        already parked in a screen corner. That is useful as an emergency stop, but
+        it can also accidentally poison benign tests such as "click screen center".
+
+        We only auto-recover when:
+        - FAILSAFE is enabled,
+        - the cursor is currently in a corner,
+        - and the requested target is *not* itself a corner.
+
+        Explicit corner targets still preserve the emergency stop semantics.
+        """
+        if not HAS_RPA_DEPS or not getattr(pyautogui, "FAILSAFE", False):
+            return False
+
+        try:
+            current_x, current_y = pyautogui.position()
+            current_x = int(current_x)
+            current_y = int(current_y)
+        except Exception:
+            return False
+
+        if not self._is_failsafe_corner(current_x, current_y):
+            return False
+
+        if self._is_failsafe_corner(target_x, target_y):
+            logger.warning(
+                "[RPA] Cursor is in a FailSafe corner and the requested target is also "
+                "a corner; preserving emergency-stop behavior."
+            )
+            return False
+
+        corners = self._get_failsafe_corners()
+        if not corners:
+            return False
+
+        max_x = max(x for x, _ in corners)
+        max_y = max(y for _, y in corners)
+        safe_x = min(1, max_x) if current_x == 0 else max(max_x - 1, 0)
+        safe_y = min(1, max_y) if current_y == 0 else max(max_y - 1, 0)
+
+        if (safe_x, safe_y) == (current_x, current_y):
+            return False
+
+        logger.info(
+            f"[RPA] Cursor parked in FailSafe corner at ({current_x}, {current_y}); "
+            f"nudging to ({safe_x}, {safe_y}) before continuing."
+        )
+
+        if platform.system() == "Windows":
+            try:
+                ctypes.windll.user32.SetCursorPos(int(safe_x), int(safe_y))
+                time.sleep(0.05)
+                return True
+            except Exception as e:
+                logger.warning(
+                    f"[RPA] Windows corner recovery failed, falling back to PyAutoGUI: {e}"
+                )
+
+        original_failsafe = getattr(pyautogui, "FAILSAFE", True)
+        try:
+            pyautogui.FAILSAFE = False
+            pyautogui.moveTo(safe_x, safe_y, duration=0)
+            time.sleep(0.05)
+            return True
+        except Exception as e:
+            logger.warning(f"[RPA] Fallback corner recovery failed: {e}")
+            return False
+        finally:
+            pyautogui.FAILSAFE = original_failsafe
 
     def _find_by_name(self, mapping: dict, target_name: str) -> tuple:
         """
@@ -406,11 +526,22 @@ class RPAExecutorTool(Tool):
                     return (f"Error: Action '{action}' requires ui_name, ui_index, or (x, y) coordinates. "
                             f"Recommended: use ui_name with the element's label text.")
                 
-                # Multi-monitor boundary check
-                bounds_warning = self._check_bounds(x, y)
-                if bounds_warning:
-                    logger.info(f"[RPA Debug] {bounds_warning}")
-                    result_prefix = f"{bounds_warning}\n{result_prefix}" if result_prefix else f"{bounds_warning}\n"
+                # ADR-66 B2: Decouple stale-context warning from hard out-of-bounds block
+                is_blocked, bounds_msg = self._check_bounds(x, y)
+                if is_blocked:
+                    # Hard block: do NOT call pyautogui — return Error immediately
+                    logger.warning(f"[RPA] Out-of-bounds BLOCKED: {bounds_msg}")
+                    return (
+                        f"Error: RPA action '{action}' BLOCKED — {bounds_msg}\n"
+                        f"Please run screen_capture again to refresh the monitor context, "
+                        f"or verify the target coordinates."
+                    )
+                if bounds_msg:
+                    # Stale context: allow action but prepend warning
+                    logger.info(f"[RPA Debug] Stale context warning: {bounds_msg}")
+                    result_prefix = f"{bounds_msg}\n{result_prefix}" if result_prefix else f"{bounds_msg}\n"
+
+                self._recover_from_failsafe_corner(x, y)
                 
                 logger.info(f"[RPA Debug] Executing mouse movement to ({x}, {y}) over 0.5s smoothly...")
                 # Move to location smoothly (0.5 seconds)
@@ -476,7 +607,11 @@ class RPAExecutorTool(Tool):
             return result
 
         except pyautogui.FailSafeException:
-            return "Error: PyAutoGUI FailSafe triggered (mouse moved to corner). Action aborted for safety."
+            return (
+                "Error: PyAutoGUI FailSafe triggered (cursor is in a screen corner). "
+                "This is the local RPA emergency stop, not a Phase 61 permission block. "
+                "Move the mouse away from the corner and retry."
+            )
         except Exception as e:
             if isinstance(e, asyncio.CancelledError):
                 raise

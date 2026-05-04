@@ -3,6 +3,7 @@
 import asyncio
 import os
 import select
+import shutil
 import signal
 import sys
 from pathlib import Path
@@ -198,7 +199,26 @@ def onboard():
     console.print("  2. Chat: [cyan]nanobot agent -m \"Hello!\"[/cyan]")
     console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/HOTHOTCOOLCOOL/nanobot#-chat-apps[/dim]")
 
+def _copy_default_ki_rules(workspace: Path) -> None:
+    """Seed workspace KI rules from the bundled defaults when available."""
+    source_dirs = [
+        Path(__file__).resolve().parents[2] / ".nanobot" / "ki_rules",
+        Path.cwd() / ".nanobot" / "ki_rules",
+    ]
 
+    target_dir = workspace / ".nanobot" / "ki_rules"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    for source_dir in source_dirs:
+        if not source_dir.is_dir():
+            continue
+        for source_file in sorted(source_dir.glob("*.ki.json")):
+            target_file = target_dir / source_file.name
+            if target_file.exists():
+                continue
+            shutil.copyfile(source_file, target_file)
+            console.print(f"  [dim]Created .nanobot/ki_rules/{source_file.name}[/dim]")
+        return
 
 
 def _create_workspace_templates(workspace: Path):
@@ -214,6 +234,11 @@ You are a helpful AI assistant. Be concise, accurate, and friendly.
 - Ask for clarification when the request is ambiguous
 - Use tools to help accomplish tasks
 - Remember important information in memory/MEMORY.md; past events are logged in memory/HISTORY.md
+
+## Complex Task Protocol
+
+- For migrations, bulk refactors, or tasks with more than 3 mutating steps, call `write_artifact` first
+- Write `implementation_plan.md` and wait for approval before editing files or running mutating execution tools
 """,
         "SOUL.md": """# Soul
 
@@ -276,6 +301,8 @@ This file stores important information that should persist across sessions.
     if not history_file.exists():
         history_file.write_text("")
         console.print("  [dim]Created memory/HISTORY.md[/dim]")
+
+    _copy_default_ki_rules(workspace)
 
     # Create skills directory for custom user skills
     skills_dir = workspace / "skills"
@@ -697,6 +724,208 @@ def agent(
 # ============================================================================
 # Channel Commands
 # ============================================================================
+
+
+harness_app = typer.Typer(
+    help="Artifact-first lite-only harness orchestration commands (Phase 1 MVP)"
+)
+app.add_typer(harness_app, name="harness")
+
+
+def _load_harness_symbol(module_name: str, symbol_name: str):
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+    from importlib import import_module
+
+    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        module = import_module(module_name)
+    return getattr(module, symbol_name)
+
+
+def _refresh_harness_state(repo_root: Path, job_id: str) -> tuple[Path, dict[str, object]]:
+    load_state = _load_harness_symbol("nanobot.agent.harness.job", "load_state")
+    utc_now_iso = _load_harness_symbol("nanobot.agent.harness.job", "utc_now_iso")
+    write_state = _load_harness_symbol("nanobot.agent.harness.job", "write_state")
+    artifact_dir_for_job = _load_harness_symbol(
+        "nanobot.agent.harness.scaffold", "artifact_dir_for_job"
+    )
+    artifact_rel_dir = _load_harness_symbol(
+        "nanobot.agent.harness.scaffold", "artifact_rel_dir"
+    )
+    derive_lite_state = _load_harness_symbol(
+        "nanobot.agent.harness.stages", "derive_lite_state"
+    )
+
+    artifact_dir = artifact_dir_for_job(repo_root, job_id)
+    if not artifact_dir.exists():
+        raise FileNotFoundError(
+            f"job artifact directory not found: {artifact_rel_dir(job_id)}"
+        )
+
+    state_path = artifact_dir / "state.json"
+    existing_state = load_state(state_path)
+    derived = derive_lite_state(artifact_dir)
+
+    snapshot = {
+        "job_id": existing_state.get("job_id", job_id),
+        "mode": "lite",
+        "goal": existing_state.get("goal", ""),
+        "source": existing_state.get("source", ""),
+        "artifact_dir": existing_state.get("artifact_dir", artifact_rel_dir(job_id)),
+        "created_at": existing_state.get("created_at", utc_now_iso()),
+        "last_checked_at": utc_now_iso(),
+        "derived_stage": derived["derived_stage"],
+        "blockers": derived["blockers"],
+    }
+    write_state(state_path, snapshot)
+
+    return artifact_dir, derived
+
+
+@harness_app.command("start")
+def harness_start(
+    goal: str = typer.Option(..., "--goal", help="One-sentence goal for the harness job"),
+    source: str = typer.Option(..., "--source", help="Source path or issue reference"),
+    mode: str = typer.Option(
+        "lite",
+        "--mode",
+        help="Phase 1 supports lite only; heavy is explicitly deferred.",
+    ),
+    root: str | None = typer.Option(
+        None,
+        "--root",
+        help="Explicit repository root for repo/workspace-separated runs",
+    ),
+):
+    """Start a repo-local harness_lite job and print the exact launcher."""
+    generate_job_id = _load_harness_symbol(
+        "nanobot.agent.harness.job", "generate_job_id"
+    )
+    build_start_launcher = _load_harness_symbol(
+        "nanobot.agent.harness.prompts", "build_start_launcher"
+    )
+    resolve_repo_root = _load_harness_symbol(
+        "nanobot.agent.harness.root", "resolve_repo_root"
+    )
+    artifact_dir_for_job = _load_harness_symbol(
+        "nanobot.agent.harness.scaffold", "artifact_dir_for_job"
+    )
+    scaffold_lite_job = _load_harness_symbol(
+        "nanobot.agent.harness.scaffold", "scaffold_lite_job"
+    )
+
+    normalized_mode = mode.strip().lower()
+    if normalized_mode == "heavy":
+        typer.echo("heavy deferred to later phase")
+        raise typer.Exit(1)
+    if normalized_mode != "lite":
+        typer.echo(f"unsupported mode: {mode}. Phase 1 supports lite only.")
+        raise typer.Exit(1)
+
+    try:
+        repo_root = resolve_repo_root(root)
+    except ValueError as exc:
+        typer.echo(f"BLOCKED: {exc}")
+        raise typer.Exit(1)
+
+    base_job_id = generate_job_id(goal, mode="lite")
+    job_id = base_job_id
+    suffix = 2
+    while artifact_dir_for_job(repo_root, job_id).exists():
+        job_id = f"{base_job_id}_{suffix}"
+        suffix += 1
+
+    scaffold_lite_job(repo_root, job_id, source, goal)
+    typer.echo(build_start_launcher(job_id, source, goal))
+
+
+@harness_app.command("status")
+def harness_status(
+    job: str = typer.Option(..., "--job", help="Harness job id"),
+    root: str | None = typer.Option(
+        None,
+        "--root",
+        help="Explicit repository root for repo/workspace-separated runs",
+    ),
+):
+    """Show the artifact-derived stage and refresh the diagnostic snapshot."""
+    resolve_repo_root = _load_harness_symbol(
+        "nanobot.agent.harness.root", "resolve_repo_root"
+    )
+
+    try:
+        repo_root = resolve_repo_root(root)
+        artifact_dir, derived = _refresh_harness_state(repo_root, job)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"BLOCKED: {exc}")
+        raise typer.Exit(1)
+
+    blockers = derived["blockers"]
+    next_launcher_key = derived["next_launcher_key"]
+    next_step = (
+        f"{next_launcher_key} launcher ready" if next_launcher_key else "none"
+    )
+    blocker_text = "none" if not blockers else " | ".join(blockers)
+
+    typer.echo(
+        "\n".join(
+            [
+                f"Job ID: {job}",
+                f"Artifact Directory: {artifact_dir}",
+                f"Derived Stage: {derived['derived_stage']}",
+                f"Blockers: {blocker_text}",
+                f"Next Step: {next_step}",
+            ]
+        )
+    )
+
+
+@harness_app.command("advance")
+def harness_advance(
+    job: str = typer.Option(..., "--job", help="Harness job id"),
+    root: str | None = typer.Option(
+        None,
+        "--root",
+        help="Explicit repository root for repo/workspace-separated runs",
+    ),
+):
+    """Advance by recomputing the stage from artifacts and printing the next launcher."""
+    build_critic_launcher = _load_harness_symbol(
+        "nanobot.agent.harness.prompts", "build_critic_launcher"
+    )
+    build_synthesis_launcher = _load_harness_symbol(
+        "nanobot.agent.harness.prompts", "build_synthesis_launcher"
+    )
+    resolve_repo_root = _load_harness_symbol(
+        "nanobot.agent.harness.root", "resolve_repo_root"
+    )
+
+    try:
+        repo_root = resolve_repo_root(root)
+        _, derived = _refresh_harness_state(repo_root, job)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"BLOCKED: {exc}")
+        raise typer.Exit(1)
+
+    next_launcher_key = derived["next_launcher_key"]
+    if next_launcher_key == "critic":
+        typer.echo(build_critic_launcher(job))
+        raise typer.Exit(0)
+    if next_launcher_key == "synthesis":
+        typer.echo(build_synthesis_launcher(job))
+        raise typer.Exit(0)
+    if derived["derived_stage"] == "DONE":
+        typer.echo("DONE: evidence gate is PASS")
+        raise typer.Exit(0)
+
+    blockers = derived["blockers"]
+    if blockers:
+        typer.echo(f"BLOCKED: {' | '.join(blockers)}")
+    else:
+        typer.echo(
+            "not ready: current artifacts do not unlock a new launcher yet"
+        )
+    raise typer.Exit(1)
 
 
 channels_app = typer.Typer(help="Manage channels")

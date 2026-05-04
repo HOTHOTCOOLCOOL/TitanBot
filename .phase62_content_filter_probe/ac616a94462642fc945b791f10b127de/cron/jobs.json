@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "9cbb3f85-2020-4ddc-85e6-44e36909f48d",
+      "name": "Phase62 Content Filter Fuse Probe",
+      "enabled": false,
+      "schedule": {
+        "kind": "every",
+        "atMs": null,
+        "everyMs": 60000,
+        "expr": null,
+        "tz": null
+      },
+      "payload": {
+        "kind": "agent_turn",
+        "message": "Synthetic content filter probe",
+        "deliver": false,
+        "channel": null,
+        "to": null
+      },
+      "state": {
+        "nextRunAtMs": null,
+        "lastRunAtMs": 1777800272561,
+        "lastStatus": "error_fatal",
+        "lastError": "Azure Content Filter Blocked: Synthetic Azure content_filter from Phase 62 probe",
+        "retryCount": 0,
+        "parentTraceId": null
+      },
+      "createdAtMs": 1777800272549,
+      "updatedAtMs": 1777800272568,
+      "deleteAfterRun": false
+    }
+  ]
+}

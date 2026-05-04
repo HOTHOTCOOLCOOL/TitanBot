@@ -49,6 +49,12 @@ def test_onboard_fresh_install(mock_paths):
     assert config_file.exists()
     assert (workspace_dir / "AGENTS.md").exists()
     assert (workspace_dir / "memory" / "MEMORY.md").exists()
+    assert (workspace_dir / ".nanobot" / "ki_rules" / "excel-com.ki.json").exists()
+    assert (workspace_dir / ".nanobot" / "ki_rules" / "async-cancel.ki.json").exists()
+    agents_text = (workspace_dir / "AGENTS.md").read_text(encoding="utf-8")
+    assert "Complex Task Protocol" in agents_text
+    assert "write_artifact" in agents_text
+    assert "implementation_plan.md" in agents_text
 
 
 def test_onboard_existing_config_refresh(mock_paths):
@@ -90,3 +96,4 @@ def test_onboard_existing_workspace_safe_create(mock_paths):
     assert "Created workspace" not in result.stdout
     assert "Created AGENTS.md" in result.stdout
     assert (workspace_dir / "AGENTS.md").exists()
+    assert (workspace_dir / ".nanobot" / "ki_rules" / "excel-com.ki.json").exists()

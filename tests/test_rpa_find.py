@@ -87,11 +87,12 @@ class TestRPAExecuteWithUiName:
     async def test_ui_name_click_success(self, tool):
         """ui_name should resolve to coordinates and click."""
         with patch.object(tool, "_load_anchors") as mock_load, \
+             patch.object(tool, "_load_monitor_context", return_value=None), \
              patch("pyautogui.moveTo") as mock_move, \
              patch("pyautogui.click") as mock_click:
             mock_load.return_value = (SAMPLE_ANCHORS, Path("/fake/anchors.json"))
             
-            result = await tool.execute(action="click", ui_name="One")
+            result = await tool.execute(action="click", ui_name="One", wait_after=0)
             
             assert "UI Name Match" in result
             assert "'One'" in result
@@ -126,12 +127,13 @@ class TestRPAExecuteWithUiName:
     async def test_ui_name_priority_over_ui_index(self, tool):
         """ui_name should take priority when both ui_name and ui_index are provided."""
         with patch.object(tool, "_load_anchors") as mock_load, \
+             patch.object(tool, "_load_monitor_context", return_value=None), \
              patch("pyautogui.moveTo"), \
              patch("pyautogui.click"):
             mock_load.return_value = (SAMPLE_ANCHORS, Path("/fake/anchors.json"))
             
             # Provide both ui_name="One" (index 1) and ui_index="5" (Five)
-            result = await tool.execute(action="click", ui_name="One", ui_index="5")
+            result = await tool.execute(action="click", ui_name="One", ui_index="5", wait_after=0)
             
             # Should use ui_name (One) not ui_index (Five)
             assert "'One'" in result

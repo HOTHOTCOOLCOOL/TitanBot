@@ -2,6 +2,8 @@ import sys
 import argparse
 
 def main():
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description="Read a PDF and print its text.")
     parser.add_argument("pdf_path", help="Path to the PDF file")
     parser.add_argument("--page", type=int, help="Specific page to read (0-indexed)", default=None)

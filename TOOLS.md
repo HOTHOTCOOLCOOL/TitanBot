@@ -255,3 +255,19 @@
 - **Consistent error format** so models reliably detect failures (L4)
 - **Smart defaults** that reduce the number of required params
 - **Structured output** that models can parse and act on
+
+---
+
+## Addendum: ConsultCopilotTool (`consult_copilot.py`)
+
+| Dimension | Status | Notes |
+|-----------|--------|-------|
+| Error Prefix | PASS | Returns `Error: ...` for missing config, Direct Line HTTP failures, and response timeouts |
+| Output Format | PASS | Returns the final plain-text reply from Copilot Studio |
+| Smart Defaults | PASS | Single required `prompt` parameter; secret is loaded from config |
+| Description | PASS | Scoped to external consultation and enterprise knowledge retrieval |
+| Idempotency | NOTE | Each call creates a fresh Direct Line conversation, so repeated prompts may vary |
+
+Use cases: second opinion on a plan, large-text synthesis, and enterprise knowledge lookups through a Copilot Studio agent connected to Microsoft 365 data.
+
+Config: `tools.copilot_studio.enabled` and `tools.copilot_studio.secret`.

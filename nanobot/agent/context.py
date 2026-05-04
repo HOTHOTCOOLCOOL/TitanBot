@@ -34,7 +34,7 @@ class ContextBuilder:
         self.memory = MemoryStore(workspace)
         self.vector_memory = VectorMemory(workspace, provider=provider, model=model,
                                           embedding_model=embedding_model)
-        self.skills = SkillsLoader(workspace)
+        self.skills = SkillsLoader(workspace, provider=provider, model=model)
         # C3: Track persisted visual memory hashes to avoid duplicates in tool loops
         self._persisted_visual_hashes: set[str] = set()
     
@@ -96,11 +96,8 @@ class ContextBuilder:
             current_len = 0
             
             for skill_name in final_skills:
-                # Approximate length based on load_skills_for_context output
-                content_raw = self.skills.load_skill(skill_name)
-                if content_raw:
-                    stripped = self.skills._strip_frontmatter(content_raw)
-                    block = f"### Skill: {skill_name}\n\n{stripped}"
+                block = self.skills.get_skill_context_block(skill_name, emit_logs=False)
+                if block:
                     block_len = len(block) + 4
                     
                     if current_len + block_len > budget:

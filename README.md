@@ -762,7 +762,7 @@ Feel free to [open an issue](https://github.com/HOTHOTCOOLCOOL/nanobot/issues) o
 | Phase 69 | ⏳ Next | Harness orchestration phase 2 |
 | Phase 70 | 📋 Backlog | Multi-Agent MCP Integration review |
 
-> **Recently Completed**: Harness Orchestration MVP (Phase 65 ✅), Graph Architecture (Phase 67 ✅), Paper Integration & Observability Gates (Phase 68 ✅), Copilot Studio integration, SSRS/RPA Failsafe mechanisms.
+> **Recently Landed**: Harness Orchestration MVP (Phase 65 ✅), Graph Architecture (Phase 67 ✅), multiple Phase 68 execute_phase jobs (paper integration, write boundary, SSL observability), Copilot Studio integration, SSRS/RPA Failsafe mechanisms.
 
 
 ### Contributors

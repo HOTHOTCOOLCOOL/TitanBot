@@ -8,6 +8,7 @@ from uuid import uuid4
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.middleware.base import TurnContext
 from nanobot.agent.middleware.verification_mw import VerificationMiddleware
+from nanobot.agent.tools.filesystem import WriteFileTool
 from nanobot.agent.verification import VerificationLayer
 from nanobot.agent.skills import SkillsLoader
 from nanobot.agent.context import ContextBuilder
@@ -64,7 +65,29 @@ def _make_runtime_workspace() -> Path:
     root.mkdir(exist_ok=True)
     workspace = root / uuid4().hex
     workspace.mkdir()
-    return workspace
+    return workspace.resolve()
+
+
+def _make_verification_agent_stub(workspace: Path, verification: VerificationLayer) -> MagicMock:
+    agent = MagicMock()
+    agent.workspace = workspace
+    agent.tools = None
+    agent._get_verification.return_value = verification
+    agent._get_config.return_value = SimpleNamespace(
+        agents=SimpleNamespace(sandbox=None)
+    )
+    agent.context = SimpleNamespace(
+        add_tool_result=lambda messages, tc_id, tool_name, content: messages
+        + [
+            {
+                "role": "tool",
+                "tool_call_id": tc_id,
+                "name": tool_name,
+                "content": content,
+            }
+        ]
+    )
+    return agent
 
 
 class TestSkillDependencies:
@@ -296,24 +319,7 @@ async def test_allowed_write_set_block(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.chdir(workspace)
 
     verification = VerificationLayer(config=VerificationConfig())
-    agent = MagicMock()
-    agent.workspace = workspace
-    agent.tools = None
-    agent._get_verification.return_value = verification
-    agent._get_config.return_value = SimpleNamespace(
-        agents=SimpleNamespace(sandbox=None)
-    )
-    agent.context = SimpleNamespace(
-        add_tool_result=lambda messages, tc_id, tool_name, content: messages
-        + [
-            {
-                "role": "tool",
-                "tool_call_id": tc_id,
-                "name": tool_name,
-                "content": content,
-            }
-        ]
-    )
+    agent = _make_verification_agent_stub(workspace, verification)
 
     ctx = TurnContext(
         messages=[{"role": "user", "content": "write outside the workspace"}],
@@ -341,3 +347,86 @@ async def test_allowed_write_set_block(monkeypatch: pytest.MonkeyPatch):
         "Out of bounds write" in (message.get("content") or "")
         for message in ctx.messages
     )
+
+
+@pytest.mark.asyncio
+async def test_allowed_write_set_blocks_workspace_root_outside_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace = _make_runtime_workspace()
+    monkeypatch.chdir(workspace)
+
+    verification = VerificationLayer(config=VerificationConfig())
+    agent = _make_verification_agent_stub(workspace, verification)
+
+    ctx = TurnContext(
+        messages=[{"role": "user", "content": "write to the workspace root"}],
+        iteration=1,
+        channel="api",
+        chat_id="test",
+        consecutive_all_exceptions=0,
+        recent_call_sigs=[],
+        action_log=[],
+        message_call_count=0,
+        loop_injection_used=0,
+    )
+    ctx.tool_calls = [
+        ToolCallRequest(
+            id="call_1",
+            name="write_file",
+            arguments={"path": "phase68_manual_ok.txt", "content": "ok"},
+        )
+    ]
+
+    await VerificationMiddleware(agent).pre_process(ctx)
+
+    assert ctx.action_reason == "l1_violation"
+    assert any(
+        "sandbox" in (message.get("content") or "").lower()
+        for message in ctx.messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_allowed_write_set_allows_sandbox_write(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace = _make_runtime_workspace()
+    # Reproduce the real dashboard/runtime case where the process cwd is not the
+    # agent workspace. Relative sandbox paths must still resolve from workspace.
+    monkeypatch.chdir(workspace.parent)
+
+    verification = VerificationLayer(config=VerificationConfig())
+    agent = _make_verification_agent_stub(workspace, verification)
+
+    ctx = TurnContext(
+        messages=[{"role": "user", "content": "write to sandbox"}],
+        iteration=1,
+        channel="api",
+        chat_id="test",
+        consecutive_all_exceptions=0,
+        recent_call_sigs=[],
+        action_log=[],
+        message_call_count=0,
+        loop_injection_used=0,
+    )
+    ctx.tool_calls = [
+        ToolCallRequest(
+            id="call_1",
+            name="write_file",
+            arguments={"path": "sandbox/phase68_manual_ok.txt", "content": "ok"},
+        )
+    ]
+
+    await VerificationMiddleware(agent).pre_process(ctx)
+
+    assert ctx.action_reason == ""
+    result = await WriteFileTool(
+        allowed_dir=workspace / "sandbox",
+        base_dir=workspace,
+    ).execute(
+        path="sandbox/phase68_manual_ok.txt",
+        content="ok",
+    )
+    assert result.startswith("Successfully wrote")
+    assert (workspace / "sandbox" / "phase68_manual_ok.txt").read_text(encoding="utf-8") == "ok"

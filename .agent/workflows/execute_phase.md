@@ -81,6 +81,8 @@ goal: <一句话目标>
 1. 优先使用稳定、无空格、ASCII 的名字。
 2. 推荐格式：`phase_<编号>_<短描述>` 或 `job_<YYYYMMDD>_<短描述>`。
 3. 如果用户没有给出 `job_id`，AgentManager 必须自行生成，并在阶段结束提示语中明确告诉用户。
+4. 同一 Phase 可以并行拆出多个 `job_id`；它们共享 Phase 编号，但 Artifact 目录、回执、返工与验收都必须继续按各自 `job_id` 独立维护，禁止把两个 job 混写到同一个目录。
+5. 当同一 Phase 下存在多个 `job_id` 时，任何 review / acceptance / closeout 文档都必须显式枚举相关 `job_id`；不要依赖“最新 Artifact”去猜当前目标 job。
 
 该目录下至少必须有以下文件：
 
@@ -110,6 +112,7 @@ goal: <一句话目标>
 - **防御性开发**：必须将旧系统视作易碎品。
 - **行为契约显式化 (Behavior Contract over Implied State)**：对工具、RPA、安全分级、审批链路、通道集成等运行时敏感任务，`implementation_plan.md` 必须显式写出 `Behavior Contract Matrix`。至少列出：`场景输入`、`预期行为/分级`、`隐藏运行时状态`、`自动验证方式`、`人工验收信号`。禁止把“鼠标当前在哪”“是否 headless”“是否有陈旧缓存/审批态”等真实前提留给 Codex 或人工脑补。
 - **回答像对不算通过 (Answer Shape Is Not Proof)**：对运行时敏感任务，禁止仅凭“模型回答看起来正确”“工具返回语气合理”或“前台表现像成功”判定机制生效。验收必须至少命中一类硬证据：结构化日志、状态迁移、持久化文件、审批状态、禁用标记、探针脚本输出。若只能证明“行为像对”，不能证明“机制真的触发”，一律视为未完成。
+- **提议不等于执行 (Proposal Is Not Execution)**：对 success/task/trace/knowledge/pending_save 这类步骤账本，验收时必须以真正经过 ToolExecutor 的 executed call source 为准；禁止把 `response.tool_calls` 或其他 pre-dispatch proposal 列表直接当成成功步骤证据。若 blocked、HITL reject、middleware abort 等未执行路径仍出现在 trace、任务记忆或步骤明细里，一律视为未完成。
 - **Repo / Runtime 一致性先查明 (Repo-Runtime Parity First)**：凡依赖 `ki_rules/`、workspace 模板、工具注册、ApprovalStore、TaskTracker、Cron 配置、环境变量、Provider 开关等运行时资源的任务，必须在规划阶段逐项写清：`代码位置`、`运行时落点`、`加载路径`、`缺失时的退化行为`。禁止默认认为“仓库里有文件，运行时就一定加载到了”。
 - **人工发现缺陷必须升格为确定性回归 (Promote Manual Bugs to Deterministic Regressions)**：凡在最终人工验收中发现的缺陷，必须回流到第二/第三阶段，补成 red test、behavior probe 或 adversarial test 后，才允许标记 phase complete。禁止以“人工知道怎么绕过”或“重启后大概没事”作为完成标准。
 - **强制微提交 (Micro-Commits)**：每次 Codex 完成一个子功能并通过验收后，必须提醒用户做小步提交。

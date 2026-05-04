@@ -52,6 +52,19 @@ def test_execute_phase_workflow_keeps_artifact_first_launchers_and_rework_contra
     assert "转告 Codex" not in workflow_text
 
 
+def test_execute_phase_workflow_explicitly_supports_multiple_jobs_per_phase():
+    workflow_text = _read(EXECUTE_PHASE_WORKFLOW)
+
+    _assert_contains_all(
+        workflow_text,
+        (
+            "同一 Phase 可以并行拆出多个 `job_id`",
+            "回执、返工与验收都必须继续按各自 `job_id` 独立维护",
+            "不要依赖“最新 Artifact”去猜当前目标 job",
+        ),
+    )
+
+
 def test_phase65_job_handoff_has_required_execute_phase_contract_sections():
     implementation_plan = PHASE65_JOB_DIR / "implementation_plan.md"
     task = PHASE65_JOB_DIR / "task.md"

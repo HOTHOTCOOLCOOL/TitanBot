@@ -194,8 +194,55 @@ def _parse_markdown_bullets(path: Path, section_name: str) -> list[str]:
     return ordered
 
 
-def _infer_execute_phase_files() -> tuple[list[str], Path | None]:
+def _existing_repo_paths(files: list[str]) -> list[str]:
+    return [item for item in files if (REPO_ROOT / item).exists()]
+
+
+def _scope_from_execute_phase_source(source: Path, section_name: str) -> list[str]:
+    if not source.exists():
+        return []
+    return _existing_repo_paths(_parse_markdown_bullets(source, section_name))
+
+
+def _recent_execute_phase_jobs(
+    sources: list[Path], *, window_seconds: int = 6 * 60 * 60
+) -> list[str]:
+    if not sources:
+        return []
+
+    newest_mtime = sources[0].stat().st_mtime
+    jobs: list[str] = []
+    for source in sources:
+        if newest_mtime - source.stat().st_mtime > window_seconds:
+            break
+        job_id = source.parent.name
+        if job_id not in jobs:
+            jobs.append(job_id)
+    return jobs
+
+
+def _infer_execute_phase_files(job_id: str | None = None) -> tuple[list[str], Path | None]:
     artifact_root = REPO_ROOT / ".agent" / "artifacts" / "execute_phase"
+    if job_id:
+        if not artifact_root.exists():
+            raise RuntimeError(f"execute_phase job not found: {job_id}")
+        artifact_dir = artifact_root / job_id
+        if not artifact_dir.exists():
+            raise RuntimeError(f"execute_phase job not found: {job_id}")
+
+        for filename, section_name in (
+            ("codex_handoff.md", "Allowed Write Set"),
+            ("codex_result.md", "Changed Files"),
+        ):
+            source = artifact_dir / filename
+            existing = _scope_from_execute_phase_source(source, section_name)
+            if existing:
+                return existing, source
+
+        raise RuntimeError(
+            f"No usable review scope found in execute_phase job: {job_id}"
+        )
+
     if not artifact_root.exists():
         return [], None
 
@@ -204,33 +251,44 @@ def _infer_execute_phase_files() -> tuple[list[str], Path | None]:
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
-    for handoff in handoffs:
-        files = _parse_markdown_bullets(handoff, "Allowed Write Set")
-        existing = [item for item in files if (REPO_ROOT / item).exists()]
-        if existing:
-            return existing, handoff
-
     results = sorted(
         artifact_root.glob("*/codex_result.md"),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
+
+    recent_jobs = _recent_execute_phase_jobs(
+        sorted([*handoffs, *results], key=lambda path: path.stat().st_mtime, reverse=True)
+    )
+    if len(recent_jobs) > 1:
+        print(
+            "[!] Multiple execute_phase jobs were updated recently. "
+            f"Pass --job <job_id> or --files to pin the review scope. Recent jobs: {', '.join(recent_jobs)}"
+        )
+
+    for handoff in handoffs:
+        existing = _scope_from_execute_phase_source(handoff, "Allowed Write Set")
+        if existing:
+            return existing, handoff
+
     for result in results:
-        files = _parse_markdown_bullets(result, "Changed Files")
-        existing = [item for item in files if (REPO_ROOT / item).exists()]
+        existing = _scope_from_execute_phase_source(result, "Changed Files")
         if existing:
             return existing, result
 
     return [], None
 
 
-def _resolve_review_files(files: list[str]) -> list[str]:
+def _resolve_review_files(files: list[str], job_id: str | None = None) -> list[str]:
     if files:
         return files
 
-    inferred, source = _infer_execute_phase_files()
+    inferred, source = _infer_execute_phase_files(job_id=job_id)
     if inferred and source:
-        print(f"[*] Inferred review scope from: {source}")
+        if job_id:
+            print(f"[*] Inferred review scope from execute_phase job {job_id}: {source}")
+        else:
+            print(f"[*] Inferred review scope from: {source}")
         return inferred
 
     return files
@@ -362,14 +420,18 @@ def _run_local_fallback_review(files: list[str], diff_content: str, context: str
     return True
 
 
-async def run_review(files: list[str], context: str) -> bool:
+async def run_review(files: list[str], context: str, job_id: str | None = None) -> bool:
     env_path = _load_repo_env()
     if env_path:
         print(f"[*] Loaded env overrides from: {env_path}")
 
     config = load_config()
     _apply_env_overrides(config)
-    review_files = _resolve_review_files(files)
+    try:
+        review_files = _resolve_review_files(files, job_id=job_id)
+    except RuntimeError as exc:
+        print(f"[!] {exc}")
+        return False
 
     diff_content = _run_git_diff(review_files, staged=False)
     if not diff_content:
@@ -454,6 +516,12 @@ if __name__ == "__main__":
         help="Specific files to diff and review (leave empty for all)",
     )
     parser.add_argument(
+        "--job",
+        type=str,
+        default=None,
+        help="Explicit execute_phase job_id to infer review scope from when --files is omitted",
+    )
+    parser.add_argument(
         "--context",
         type=str,
         required=True,
@@ -461,7 +529,7 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    ok = asyncio.run(run_review(args.files, args.context))
+    ok = asyncio.run(run_review(args.files, args.context, job_id=args.job))
     # Some provider stacks crash during interpreter teardown on Windows even
     # after a successful review response. Exit directly after flushing output
     # so automation sees the real status code.

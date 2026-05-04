@@ -1,4 +1,5 @@
 import asyncio
+import copy
 """Lightweight Entity-Relation Graph for structured memory.
 
 Phase 24 (MDER-DR): Enhanced with triple descriptions, entity disambiguation,
@@ -412,19 +413,21 @@ Do not include markdown fences."""
                 if idx not in entities[name]["triple_indices"]:
                     entities[name]["triple_indices"].append(idx)
 
-        # Preserve standalone reasoning templates so manually curated entities
-        # remain durable across reindex flows even without backing triples.
+        # Preserve standalone typed entities so manually curated metadata remains
+        # durable across reindex flows even without backing triples.
         for name, info in previous_entities.items():
             if name in entities:
+                if info.get("type") == "skill_ssl" and "properties" in info:
+                    entities[name]["properties"] = copy.deepcopy(info["properties"])
                 continue
-            if info.get("type") != "reasoning_template":
+            if info.get("type") not in {"reasoning_template", "skill_ssl"}:
                 continue
-            entities[name] = {
-                "type": info.get("type", ""),
-                "summary": info.get("summary", ""),
-                "triple_indices": [],
-                "updated_at": info.get("updated_at", now),
-            }
+            preserved = copy.deepcopy(info)
+            preserved.setdefault("type", "")
+            preserved.setdefault("summary", "")
+            preserved.setdefault("triple_indices", [])
+            preserved.setdefault("updated_at", now)
+            entities[name] = preserved
 
         self._entities = entities
         return entities

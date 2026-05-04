@@ -66,7 +66,10 @@
   - 详见 `docs/adr/ADR-67-knowledge-map-tool.md`
 - [x] **Job 20260426: Copilot Studio External Consultant Tool**: `consult_copilot_studio` 已完成配置契约、内建注册、Direct Line mock 回归和人工验收手册沉淀，具备进入真实租户联调的交付状态。
 - [x] **Job 20260503: ReasoningSkill KG Prompt Budget**: `reasoning_template` 现已作为 Knowledge Graph 单一真源实体稳定持久化，`context.py` 在注入时对其施加严格 1000 字符预算截断，且 `rebuild_entity_index()` 不再抹掉人工维护的类型元数据。
-- [x] **Job 20260503: Phase 68 Paper Integration Slice**: `loop.py` 的 pre-dispatch P0 可观测 gate 与 `verification.py` / `verification_mw.py` 的 workspace 写边界拦截已经落地，并在 `tests/test_phase68_paper_integration.py`、Zone A 回归集和限域 `auto_reviewer.py` 验收中于 2026-05-04 全部通过。
+- [x] **Job 20260503: Phase 68 Paper Integration Slice**: `loop.py` 的 pre-dispatch P0 可观测 gate 已经落地，并在 `tests/test_phase68_paper_integration.py`、Zone A 回归集和限域 `auto_reviewer.py` 验收中于 2026-05-04 全部通过。
+- [x] **Job 20260504: Phase 68 Write Boundary Contract**: `verification_mw.py` / `verification.py` 现已把 generic `write_file` / `edit_file` 的 L1 边界与 runtime 统一到 `workspace/sandbox`，`loop.py` 也把 `LoopResult.tool_calls_with_args`、`pending_save`、trace 与 `memory/tasks.json` 收口为 executed-only bookkeeping；锁定红测、`tests/test_phase68_paper_integration.py`、196 项 Zone A 回归与限域 `auto_reviewer.py` 于 2026-05-04 全部通过。
+- [x] **Job phase_68_ssl_observability: SSL Skill Representation Integration**: 已完成 `SkillNormalizer` 与 `SkillsLoader` 的集成。通过 Composite Hash 机制实现了 `SKILL.md` 到 `skill_ssl` 3层 JSON Graph 的降维转换。成功重构 `ContextBuilder` 优先注入 1000 字符以内的高优 `Scheduling` 层，大幅削减 Prompt Token 占用；同时强化了 `KnowledgeGraph.rebuild_entity_index()` 深度拷贝机制保护自定义 Schema。测试套件全绿并于 2026-05-04 验收通过。
+- [x] **Phase 68 Tracking Model**: Phase 68 明确允许一个 phase 下并行推进多个 sibling `execute_phase` job。phase-level 状态应聚合相关 `job_id`，但 Artifact、`codex_result.md`、`codex_feedback.md` 与验收证据仍必须按 job 独立保留，禁止用“最新 Artifact”替代明确 `job_id`。
 
 ## 📅 Next Steps / Backlog (后续计划)
 

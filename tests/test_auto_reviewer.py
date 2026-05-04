@@ -63,6 +63,53 @@ def test_auto_reviewer_infers_allowed_write_set_from_latest_execute_phase_handof
     ]
 
 
+def test_auto_reviewer_can_pin_scope_to_explicit_execute_phase_job(local_tmp_path: Path):
+    auto_reviewer = _load_auto_reviewer()
+    auto_reviewer.REPO_ROOT = local_tmp_path
+
+    artifact_root = local_tmp_path / ".agent" / "artifacts" / "execute_phase"
+    target_dir = artifact_root / "job_target"
+    newer_dir = artifact_root / "job_newer"
+    target_dir.mkdir(parents=True)
+    newer_dir.mkdir(parents=True)
+
+    (local_tmp_path / "nanobot" / "agent").mkdir(parents=True)
+    (local_tmp_path / "tests").mkdir(parents=True)
+    (local_tmp_path / "nanobot" / "agent" / "context.py").write_text("", encoding="utf-8")
+    (local_tmp_path / "tests" / "test_newer_scope.py").write_text("", encoding="utf-8")
+
+    (target_dir / "codex_handoff.md").write_text(
+        """# Codex Handoff
+
+## Allowed Write Set
+
+- `nanobot/agent/context.py`
+""",
+        encoding="utf-8",
+    )
+    (newer_dir / "codex_handoff.md").write_text(
+        """# Codex Handoff
+
+## Allowed Write Set
+
+- `tests/test_newer_scope.py`
+""",
+        encoding="utf-8",
+    )
+
+    resolved = auto_reviewer._resolve_review_files([], job_id="job_target")
+
+    assert resolved == ["nanobot/agent/context.py"]
+
+
+def test_auto_reviewer_errors_for_missing_explicit_execute_phase_job(local_tmp_path: Path):
+    auto_reviewer = _load_auto_reviewer()
+    auto_reviewer.REPO_ROOT = local_tmp_path
+
+    with pytest.raises(RuntimeError, match="execute_phase job not found"):
+        auto_reviewer._resolve_review_files([], job_id="job_missing")
+
+
 def test_auto_reviewer_local_fallback_passes_clean_python_plus_tests_scope():
     auto_reviewer = _load_auto_reviewer()
 

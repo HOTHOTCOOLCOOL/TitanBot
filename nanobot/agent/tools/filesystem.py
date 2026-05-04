@@ -8,9 +8,23 @@ from nanobot.agent.tools.base import Tool
 from nanobot.agent.capability import CapabilityTag
 
 
-def _resolve_path(path: str, allowed_dir: Path | None = None, forbidden_dirs: list[Path] | None = None) -> Path:
-    """Resolve path and optionally enforce directory whitelist and blacklist restrictions."""
-    resolved = Path(path).expanduser().resolve()
+def _resolve_path(
+    path: str,
+    allowed_dir: Path | None = None,
+    forbidden_dirs: list[Path] | None = None,
+    base_dir: Path | None = None,
+) -> Path:
+    """Resolve a path and optionally enforce whitelist/blacklist restrictions.
+
+    Relative paths are resolved against ``base_dir`` when provided; otherwise
+    they retain the legacy behavior of resolving against the current process
+    working directory.
+    """
+    target = Path(path).expanduser()
+    if not target.is_absolute() and base_dir is not None:
+        target = base_dir / target
+
+    resolved = target.resolve()
     if allowed_dir and not resolved.is_relative_to(allowed_dir.resolve()):
         raise PermissionError(f"Path {path} is outside allowed directory {allowed_dir}")
     if forbidden_dirs:
@@ -23,9 +37,15 @@ def _resolve_path(path: str, allowed_dir: Path | None = None, forbidden_dirs: li
 class ReadFileTool(Tool):
     """Tool to read file contents."""
     
-    def __init__(self, allowed_dir: Path | None = None, forbidden_dirs: list[Path] | None = None):
+    def __init__(
+        self,
+        allowed_dir: Path | None = None,
+        forbidden_dirs: list[Path] | None = None,
+        base_dir: Path | None = None,
+    ):
         self._allowed_dir = allowed_dir
         self._forbidden_dirs = forbidden_dirs
+        self._base_dir = base_dir
 
     @property
     def name(self) -> str:
@@ -58,7 +78,12 @@ class ReadFileTool(Tool):
     
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
-            file_path = _resolve_path(path, self._allowed_dir, self._forbidden_dirs)
+            file_path = _resolve_path(
+                path,
+                self._allowed_dir,
+                self._forbidden_dirs,
+                self._base_dir,
+            )
             if not file_path.exists():
                 return f"Error: File not found: {path}"
             if not file_path.is_file():
@@ -83,9 +108,15 @@ class WriteFileTool(Tool):
     
     _MAX_WRITE_BYTES = 10 * 1024 * 1024  # 10 MB
 
-    def __init__(self, allowed_dir: Path | None = None, forbidden_dirs: list[Path] | None = None):
+    def __init__(
+        self,
+        allowed_dir: Path | None = None,
+        forbidden_dirs: list[Path] | None = None,
+        base_dir: Path | None = None,
+    ):
         self._allowed_dir = allowed_dir
         self._forbidden_dirs = forbidden_dirs
+        self._base_dir = base_dir
 
     @property
     def name(self) -> str:
@@ -122,7 +153,12 @@ class WriteFileTool(Tool):
         if len(content.encode("utf-8")) > self._MAX_WRITE_BYTES:
             return f"Error: Content too large ({len(content)} chars). Max write size is 10MB."
         try:
-            file_path = _resolve_path(path, self._allowed_dir, self._forbidden_dirs)
+            file_path = _resolve_path(
+                path,
+                self._allowed_dir,
+                self._forbidden_dirs,
+                self._base_dir,
+            )
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
             return f"Successfully wrote {len(content)} bytes to {path}"
@@ -137,9 +173,15 @@ class WriteFileTool(Tool):
 class EditFileTool(Tool):
     """Tool to edit a file by replacing text."""
     
-    def __init__(self, allowed_dir: Path | None = None, forbidden_dirs: list[Path] | None = None):
+    def __init__(
+        self,
+        allowed_dir: Path | None = None,
+        forbidden_dirs: list[Path] | None = None,
+        base_dir: Path | None = None,
+    ):
         self._allowed_dir = allowed_dir
         self._forbidden_dirs = forbidden_dirs
+        self._base_dir = base_dir
 
     @property
     def name(self) -> str:
@@ -177,7 +219,12 @@ class EditFileTool(Tool):
     
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
-            file_path = _resolve_path(path, self._allowed_dir, self._forbidden_dirs)
+            file_path = _resolve_path(
+                path,
+                self._allowed_dir,
+                self._forbidden_dirs,
+                self._base_dir,
+            )
             if not file_path.exists():
                 return f"Error: File not found: {path}"
             
@@ -206,9 +253,15 @@ class EditFileTool(Tool):
 class ListDirTool(Tool):
     """Tool to list directory contents."""
     
-    def __init__(self, allowed_dir: Path | None = None, forbidden_dirs: list[Path] | None = None):
+    def __init__(
+        self,
+        allowed_dir: Path | None = None,
+        forbidden_dirs: list[Path] | None = None,
+        base_dir: Path | None = None,
+    ):
         self._allowed_dir = allowed_dir
         self._forbidden_dirs = forbidden_dirs
+        self._base_dir = base_dir
 
     @property
     def name(self) -> str:
@@ -241,7 +294,12 @@ class ListDirTool(Tool):
     
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
-            dir_path = _resolve_path(path, self._allowed_dir, self._forbidden_dirs)
+            dir_path = _resolve_path(
+                path,
+                self._allowed_dir,
+                self._forbidden_dirs,
+                self._base_dir,
+            )
             if not dir_path.exists():
                 return f"Error: Directory not found: {path}"
             if not dir_path.is_dir():

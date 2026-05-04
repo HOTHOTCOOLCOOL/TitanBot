@@ -1,13 +1,20 @@
 """Tests for Phase 8 loop.py integration: implicit feedback, stats display,
 last_task_key, few-shot injection, upgrade commands, consolidation counter."""
 
+import json
 import pytest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
+from nanobot.agent.loop import AgentLoop
 from nanobot.agent.knowledge_workflow import KnowledgeWorkflow
 from nanobot.agent.task_knowledge import TaskKnowledgeStore
+from nanobot.agent.trace_archive import TraceArchive
 from nanobot.session.manager import Session, SessionManager
 from nanobot.agent.i18n import msg as i18n_msg, set_language
+from nanobot.bus.events import InboundMessage
+from nanobot.bus.queue import MessageBus
+from nanobot.providers.base import LLMResponse, ToolCallRequest
 
 
 # ── Fixtures ──
@@ -278,3 +285,231 @@ class TestSkillUpgradeIntegration:
 
         prompt_en = KnowledgeWorkflow.format_skill_upgrade_prompt(match, lang="en")
         assert "upgrade" in prompt_en.lower() or "skill" in prompt_en.lower()
+
+
+class TestExecutedOnlyBookkeeping:
+    @pytest.mark.asyncio
+    async def test_blocked_write_proposal_is_not_recorded_as_success(
+        self,
+        tmp_workspace: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        workspace = tmp_workspace
+        monkeypatch.chdir(workspace)
+
+        agent = AgentLoop(
+            model="test-model",
+            provider=AsyncMock(),
+            workspace=workspace,
+            bus=MessageBus(),
+            max_iterations=4,
+        )
+        agent._get_verification().config.l3_enabled = False
+
+        task_key = "executed-only boundary probe"
+        expected_steps = [
+            {
+                "tool": "write_file",
+                "args": {
+                    "path": "sandbox/phase68_manual_ok.txt",
+                    "content": "ok",
+                },
+            }
+        ]
+        agent.knowledge_workflow.knowledge_store.add_task(
+            key=task_key,
+            description="Existing task for implicit-feedback update",
+            steps=expected_steps,
+            params={},
+            result_summary="Previously succeeded",
+            steps_detail=[
+                {
+                    "tool": "read_file",
+                    "args": {"path": "old.txt"},
+                    "result": "old",
+                }
+            ],
+        )
+
+        session = agent.sessions.get_or_create("api:user")
+        msg = InboundMessage(
+            channel="api",
+            sender_id="user",
+            chat_id="user",
+            content="probe the generic write boundary",
+        )
+
+        agent._call_llm_for_turn = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCallRequest(
+                            id="call_1",
+                            name="write_file",
+                            arguments={
+                                "path": "../outside_workspace.txt",
+                                "content": "bad",
+                            },
+                        )
+                    ],
+                    reasoning_content="- first try a blocked path",
+                ),
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCallRequest(
+                            id="call_2",
+                            name="write_file",
+                            arguments={
+                                "path": "sandbox/phase68_manual_ok.txt",
+                                "content": "ok",
+                            },
+                        )
+                    ],
+                    reasoning_content="- then retry inside sandbox",
+                ),
+                LLMResponse(
+                    content="Wrote the boundary probe into sandbox.",
+                    tool_calls=[],
+                ),
+                LLMResponse(content="Acknowledged.", tool_calls=[]),
+            ]
+        )
+
+        with patch(
+            "nanobot.utils.trace_context.get_current_trace_id",
+            return_value="trace_exec_only",
+        ):
+            outbound = await agent._execute_with_llm(
+                session,
+                msg,
+                extracted_key=task_key,
+                session_key="api:user",
+            )
+
+        assert "sandbox" in outbound.content
+        assert session.pending_save is not None
+        assert session.pending_save["steps"] == expected_steps
+        assert session.last_tool_calls == expected_steps
+
+        trace_calls = TraceArchive(workspace).get_tool_calls("trace_exec_only")
+        assert trace_calls == expected_steps
+        assert (workspace / "sandbox" / "phase68_manual_ok.txt").read_text(encoding="utf-8") == "ok"
+
+        feedback_msg = InboundMessage(
+            channel="api",
+            sender_id="user",
+            chat_id="user",
+            content="谢谢",
+        )
+        await agent._process_message(feedback_msg, session_key="api:user")
+
+        tasks_data = json.loads(
+            (workspace / "memory" / "tasks.json").read_text(encoding="utf-8")
+        )
+        task = next(item for item in tasks_data["tasks"] if item["key"] == task_key)
+        assert task["last_steps_detail"] == expected_steps
+
+    @pytest.mark.asyncio
+    async def test_blocked_then_relative_sandbox_retry_succeeds_when_cwd_differs_from_workspace(
+        self,
+        tmp_workspace: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        workspace = tmp_workspace
+        monkeypatch.chdir(Path(__file__).resolve().parents[1])
+
+        agent = AgentLoop(
+            model="test-model",
+            provider=AsyncMock(),
+            workspace=workspace,
+            bus=MessageBus(),
+            max_iterations=4,
+        )
+        agent._get_verification().config.l3_enabled = False
+
+        task_key = "executed-only relative sandbox retry"
+        expected_steps = [
+            {
+                "tool": "write_file",
+                "args": {
+                    "path": "sandbox/phase68_manual_ok.txt",
+                    "content": "mixed boundary probe",
+                },
+            }
+        ]
+        agent.knowledge_workflow.knowledge_store.add_task(
+            key=task_key,
+            description="Existing task for cwd-drift retry verification",
+            steps=expected_steps,
+            params={},
+            result_summary="Previously succeeded",
+            steps_detail=[],
+        )
+
+        session = agent.sessions.get_or_create("api:user")
+        msg = InboundMessage(
+            channel="api",
+            sender_id="user",
+            chat_id="user",
+            content="probe the generic write boundary under cwd drift",
+        )
+
+        agent._call_llm_for_turn = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCallRequest(
+                            id="call_1",
+                            name="write_file",
+                            arguments={
+                                "path": "../outside_workspace.txt",
+                                "content": "mixed boundary probe",
+                            },
+                        )
+                    ],
+                    reasoning_content="- first try a blocked path",
+                ),
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCallRequest(
+                            id="call_2",
+                            name="write_file",
+                            arguments={
+                                "path": "sandbox/phase68_manual_ok.txt",
+                                "content": "mixed boundary probe",
+                            },
+                        )
+                    ],
+                    reasoning_content="- then retry inside sandbox",
+                ),
+                LLMResponse(
+                    content="The sandbox retry succeeded.",
+                    tool_calls=[],
+                ),
+                LLMResponse(content="Acknowledged.", tool_calls=[]),
+            ]
+        )
+
+        with patch(
+            "nanobot.utils.trace_context.get_current_trace_id",
+            return_value="trace_exec_only_cwd_drift",
+        ):
+            outbound = await agent._execute_with_llm(
+                session,
+                msg,
+                extracted_key=task_key,
+                session_key="api:user",
+            )
+
+        assert "sandbox" in outbound.content.lower()
+        assert session.pending_save is not None
+        assert session.pending_save["steps"] == expected_steps
+        assert session.last_tool_calls == expected_steps
+
+        trace_calls = TraceArchive(workspace).get_tool_calls("trace_exec_only_cwd_drift")
+        assert trace_calls == expected_steps
+        assert (workspace / "sandbox" / "phase68_manual_ok.txt").read_text(encoding="utf-8") == "mixed boundary probe"

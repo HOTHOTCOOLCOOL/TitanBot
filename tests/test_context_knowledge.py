@@ -135,3 +135,39 @@ class TestReasoningTemplatePromptBudget:
         sys_prompt = messages[0]["content"]
 
         assert "B" * 1500 in sys_prompt
+
+
+class TestSkillSslPromptCompression:
+    def test_skill_ssl_scheduling_preferred_in_system_prompt(
+        self, workspace_without_knowledge: Path
+    ):
+        """T05: Active skill injection should prefer persisted SSL Scheduling over raw SKILL.md."""
+        from nanobot.agent.knowledge_graph import KnowledgeGraph
+
+        workspace = workspace_without_knowledge
+        skill_dir = workspace / "skills" / "mock_skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("A" * 5000, encoding="utf-8")
+
+        kg = KnowledgeGraph(workspace)
+        kg._entities["mock_skill_ssl"] = {
+            "type": "skill_ssl",
+            "summary": "",
+            "triple_indices": [],
+            "properties": {
+                "hash": "mockhash",
+                "graph": {
+                    "Scheduling": {"trigger": "always", "cost": "low"},
+                    "Structural": {"depends_on": []},
+                    "Logical": {"rules": []},
+                },
+            },
+        }
+        kg._save()
+
+        ctx = ContextBuilder(workspace, language="zh")
+        prompt = ctx.build_system_prompt(skill_names=["mock_skill"])
+
+        assert "Scheduling" in prompt
+        assert "trigger" in prompt
+        assert "A" * 200 not in prompt

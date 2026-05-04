@@ -120,17 +120,19 @@ def build_worker_toolset(workspace: Path, restrict_to_workspace: bool, brave_api
     if worker_sandbox:
         allowed_dir = worker_sandbox
         sandbox_dir = worker_sandbox
+        base_dir = worker_sandbox
     else:
         allowed_dir = workspace if restrict_to_workspace else None
         sandbox_dir = workspace / "sandbox"
+        base_dir = workspace
     sandbox_dir.mkdir(parents=True, exist_ok=True)
     
-    restricted_tools.register(ReadFileTool(allowed_dir=allowed_dir))
-    restricted_tools.register(ListDirTool(allowed_dir=allowed_dir))
+    restricted_tools.register(ReadFileTool(allowed_dir=allowed_dir, base_dir=base_dir))
+    restricted_tools.register(ListDirTool(allowed_dir=allowed_dir, base_dir=base_dir))
     
     # Writes MUST strictly align to Zone C
-    restricted_tools.register(WriteFileTool(allowed_dir=sandbox_dir))
-    restricted_tools.register(EditFileTool(allowed_dir=sandbox_dir))
+    restricted_tools.register(WriteFileTool(allowed_dir=sandbox_dir, base_dir=base_dir))
+    restricted_tools.register(EditFileTool(allowed_dir=sandbox_dir, base_dir=base_dir))
     
     if brave_api_key:
         restricted_tools.register(WebSearchTool(api_key=brave_api_key))

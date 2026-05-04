@@ -2,6 +2,7 @@ import asyncio
 """Skills loader for agent capabilities."""
 
 import importlib.util
+import hashlib
 import json
 import os
 import re
@@ -62,10 +63,220 @@ class SkillsLoader:
     specific tools or perform certain tasks.
     """
     
-    def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None):
+    _SKILL_SSL_CONTEXT_MAX_CHARS = 1000
+
+    def __init__(
+        self,
+        workspace: Path,
+        builtin_skills_dir: Path | None = None,
+        provider: Any | None = None,
+        model: str | None = None,
+        knowledge_graph: Any | None = None,
+    ):
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
+        self.provider = provider
+        self.model = model
+        self.kg = knowledge_graph
+
+    def _get_knowledge_graph(self):
+        """Lazily load the workspace Knowledge Graph for SSL metadata lookups."""
+        if self.kg is None:
+            from nanobot.agent.knowledge_graph import KnowledgeGraph
+
+            self.kg = KnowledgeGraph(self.workspace)
+        return self.kg
+
+    @staticmethod
+    def _skill_ssl_entity_name(skill_name: str) -> str:
+        """Canonical Knowledge Graph entity name for SSL skill metadata."""
+        return f"{skill_name}_ssl"
+
+    @staticmethod
+    def _looks_like_skill_hash(value: Any) -> bool:
+        """Return True only for real SHA-256 style hashes used by SSL invalidation."""
+        if not isinstance(value, str) or len(value) != 64:
+            return False
+        return all(ch in "0123456789abcdef" for ch in value.lower())
+
+    def _compute_skill_hash(self, skill_name: str) -> str:
+        """Compute a deterministic hash across all skill markdown/python files."""
+        skill_dir = self._get_skill_dir(skill_name)
+        if not skill_dir:
+            return ""
+
+        digest = hashlib.sha256()
+        tracked_files = sorted(
+            (
+                path for path in skill_dir.rglob("*")
+                if path.is_file() and path.suffix.lower() in {".md", ".py"}
+            ),
+            key=lambda path: str(path.relative_to(skill_dir)).lower(),
+        )
+        for path in tracked_files:
+            rel_path = str(path.relative_to(skill_dir)).replace("\\", "/")
+            digest.update(rel_path.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+        return digest.hexdigest()
+
+    def _get_skill_ssl_entity(self, skill_name: str) -> dict[str, Any] | None:
+        """Return the persisted SSL entity for a skill if present."""
+        try:
+            kg = self._get_knowledge_graph()
+        except Exception as exc:
+            logger.debug(f"Skill SSL lookup skipped for '{skill_name}': {exc}")
+            return None
+
+        entity = getattr(kg, "_entities", {}).get(self._skill_ssl_entity_name(skill_name))
+        if isinstance(entity, dict) and entity.get("type") == "skill_ssl":
+            return entity
+        return None
+
+    def _persist_skill_ssl(
+        self,
+        skill_name: str,
+        skill_hash: str,
+        graph: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist the normalized SSL graph into the Knowledge Graph."""
+        kg = self._get_knowledge_graph()
+        entity = {
+            "type": "skill_ssl",
+            "summary": json.dumps(
+                {"Scheduling": graph.get("Scheduling", {})},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "triple_indices": [],
+            "updated_at": datetime.now().isoformat(),
+            "properties": {
+                "hash": skill_hash,
+                "graph": graph,
+            },
+        }
+        kg._entities[self._skill_ssl_entity_name(skill_name)] = entity
+        kg._save()
+        return entity
+
+    async def refresh_skill_ssl(self, skill_name: str) -> dict[str, Any] | None:
+        """Refresh persisted SSL metadata when the composite skill hash changes."""
+        skill_text = self.load_skill(skill_name)
+        if not skill_text:
+            return None
+
+        skill_hash = self._compute_skill_hash(skill_name)
+        if not skill_hash:
+            return None
+
+        existing = self._get_skill_ssl_entity(skill_name)
+        existing_hash = None
+        if isinstance(existing, dict):
+            existing_hash = (
+                existing.get("properties", {}) if isinstance(existing.get("properties"), dict) else {}
+            ).get("hash")
+        if existing_hash == skill_hash:
+            return existing
+
+        kg = self._get_knowledge_graph()
+        entity_name = self._skill_ssl_entity_name(skill_name)
+        if existing is not None:
+            kg._entities.pop(entity_name, None)
+            kg._save()
+
+        logger.info(
+            f"[SkillsLoader] Computed new composite hash for skill '{skill_name}', triggering SSL rebuild"
+        )
+        if self.provider is None:
+            logger.debug(
+                f"Skill SSL rebuild skipped for '{skill_name}': no provider available; falling back to raw SKILL.md"
+            )
+            return None
+
+        from nanobot.agent.ssl_normalizer import SkillNormalizer
+
+        model = self.model
+        if model is None and hasattr(self.provider, "get_default_model"):
+            try:
+                model = self.provider.get_default_model()
+            except Exception:
+                model = None
+        normalizer = SkillNormalizer(provider=self.provider, model=model)
+        graph = await normalizer.normalize(skill_name, skill_text)
+        if graph is None:
+            return None
+        return self._persist_skill_ssl(skill_name, skill_hash, graph)
+
+    def _ensure_skill_ssl(self, skill_name: str) -> dict[str, Any] | None:
+        """Synchronously ensure SSL metadata is fresh when the runtime allows it."""
+        existing = self._get_skill_ssl_entity(skill_name)
+        current_hash = self._compute_skill_hash(skill_name)
+        existing_hash = None
+        if isinstance(existing, dict):
+            existing_hash = (
+                existing.get("properties", {}) if isinstance(existing.get("properties"), dict) else {}
+            ).get("hash")
+        if existing is not None and (
+            not self._looks_like_skill_hash(existing_hash) or existing_hash == current_hash
+        ):
+            return existing
+        if (
+            existing is not None
+            and self._looks_like_skill_hash(existing_hash)
+            and existing_hash != current_hash
+        ):
+            try:
+                kg = self._get_knowledge_graph()
+                kg._entities.pop(self._skill_ssl_entity_name(skill_name), None)
+                kg._save()
+            except Exception as exc:
+                logger.debug(f"Failed to invalidate stale SSL entity for '{skill_name}': {exc}")
+
+        if self.provider is None:
+            return None
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.refresh_skill_ssl(skill_name))
+
+        logger.debug(
+            f"Skill SSL rebuild deferred for '{skill_name}' because a running event loop cannot await the normalizer here"
+        )
+        return None
+
+    def get_skill_context_block(
+        self,
+        skill_name: str,
+        *,
+        max_chars: int | None = None,
+        emit_logs: bool = False,
+    ) -> str | None:
+        """Return the prompt block for a skill, preferring persisted SSL Scheduling."""
+        context_budget = max_chars or self._SKILL_SSL_CONTEXT_MAX_CHARS
+        entity = self._ensure_skill_ssl(skill_name)
+        if entity is not None:
+            properties = entity.get("properties", {})
+            graph = properties.get("graph", {}) if isinstance(properties, dict) else {}
+            scheduling = graph.get("Scheduling", {})
+            if isinstance(scheduling, dict):
+                serialized = json.dumps(
+                    {"Scheduling": scheduling},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                block = f"### Skill: {skill_name}\n\n<skill_ssl>\n{serialized}\n</skill_ssl>"
+                if emit_logs:
+                    logger.info(f"[SkillsLoader] Injected SSL Scheduling for skill '{skill_name}'")
+                return block[:context_budget]
+
+        content = self.load_skill(skill_name)
+        if not content:
+            return None
+        stripped = self._strip_frontmatter(content)
+        return f"### Skill: {skill_name}\n\n{stripped}"[:context_budget]
     
     def list_skills(self, filter_unavailable: bool = True) -> list[dict[str, str]]:
         """
@@ -135,10 +346,9 @@ class SkillsLoader:
         """
         parts = []
         for name in skill_names:
-            content = self.load_skill(name)
-            if content:
-                content = self._strip_frontmatter(content)
-                parts.append(f"### Skill: {name}\n\n{content}")
+            block = self.get_skill_context_block(name, emit_logs=True)
+            if block:
+                parts.append(block)
         
         return "\n\n---\n\n".join(parts) if parts else ""
     

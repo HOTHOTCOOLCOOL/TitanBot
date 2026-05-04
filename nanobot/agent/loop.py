@@ -934,10 +934,9 @@ class AgentLoop:
                 milestone_summary=_milestone_summary,
             )
 
-            # Record tool calls for return value
+            # Proposed calls may be logged for diagnostics, but persisted
+            # bookkeeping must only include calls that reached ToolExecutor.
             for tc in response.tool_calls:
-                tools_used.append(tc.name)
-                tool_calls_with_args.append({"tool": tc.name, "args": tc.arguments})
                 args_str = json.dumps(tc.arguments, ensure_ascii=False)
                 logger.info(f"Tool call: {tc.name}({args_str[:200]})")
 
@@ -965,6 +964,12 @@ class AgentLoop:
             consecutive_all_exceptions = ctx.consecutive_all_exceptions
             message_call_count = ctx.message_call_count
             # recent_call_sigs, action_log are mutable refs — auto-synced
+            executed_tool_calls_this_turn = [
+                {"tool": tc.name, "args": tc.arguments}
+                for tc, _ in zip(ctx.tool_calls, ctx.results)
+            ]
+            tool_calls_with_args.extend(executed_tool_calls_this_turn)
+            tools_used.extend(tc["tool"] for tc in executed_tool_calls_this_turn)
 
             # 5. Decide while-loop behavior based on TurnAction
             if ctx.action == TurnAction.ABORT:

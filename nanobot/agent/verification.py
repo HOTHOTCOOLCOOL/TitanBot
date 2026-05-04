@@ -262,7 +262,8 @@ def _check_rule_sensitive_path(
     tool_calls: list[Any],
     *,
     extra_deny: list[str] | None = None,
-    workspace: Path | str | None = None,
+    write_boundary_dir: Path | str | None = None,
+    path_resolution_base_dir: Path | str | None = None,
 ) -> list[str]:
     """R07: write_file / edit_file / exec must not target sensitive system paths.
 
@@ -281,25 +282,39 @@ def _check_rule_sensitive_path(
     for tc in tool_calls:
         if tc.name in ("write_file", "edit_file"):
             raw_path = str(tc.arguments.get("path", "") or tc.arguments.get("file_path", ""))
-            workspace_root: Path | None = None
+            write_boundary_root: Path | None = None
+            path_resolution_root: Path | None = None
 
-            if workspace is not None:
+            if write_boundary_dir is not None:
                 try:
-                    workspace_root = Path(workspace).expanduser().resolve(strict=False)
+                    write_boundary_root = Path(write_boundary_dir).expanduser().resolve(strict=False)
                 except (OSError, RuntimeError) as e:
                     logger.warning(
-                        f"R07: Failed to resolve workspace root for boundary check: {e!r}"
+                        f"R07: Failed to resolve write boundary root for boundary check: {e!r}"
                     )
                     violations.append(
-                        "R07: Workspace boundary check failed while resolving the workspace directory. "
+                        "R07: Sandbox boundary check failed while resolving the allowed write directory. "
+                        "Refusing write until the target path can be verified."
+                    )
+                    continue
+
+            if path_resolution_base_dir is not None:
+                try:
+                    path_resolution_root = Path(path_resolution_base_dir).expanduser().resolve(strict=False)
+                except (OSError, RuntimeError) as e:
+                    logger.warning(
+                        f"R07: Failed to resolve path resolution base for boundary check: {e!r}"
+                    )
+                    violations.append(
+                        "R07: Sandbox boundary check failed while resolving the workspace-relative path base. "
                         "Refusing write until the target path can be verified."
                     )
                     continue
 
             try:
                 target_path = Path(raw_path).expanduser()
-                if workspace_root is not None and not target_path.is_absolute():
-                    target_path = workspace_root / target_path
+                if not target_path.is_absolute() and path_resolution_root is not None:
+                    target_path = path_resolution_root / target_path
                 resolved_path = target_path.resolve(strict=False)
             except (OSError, RuntimeError) as e:
                 logger.warning(
@@ -307,13 +322,13 @@ def _check_rule_sensitive_path(
                 )
                 violations.append(
                     "R07: Unable to resolve write target path. Refusing write until the target path can be "
-                    "checked against the workspace directory."
+                    "checked against the sandbox write boundary."
                 )
                 continue
 
-            if workspace_root is not None and not resolved_path.is_relative_to(workspace_root):
+            if write_boundary_root is not None and not resolved_path.is_relative_to(write_boundary_root):
                 violations.append(
-                    "R07: Out of bounds write. Target path must be within the workspace directory."
+                    "R07: Out of bounds write. Target path must stay inside the workspace sandbox directory."
                 )
                 continue
 
@@ -714,7 +729,8 @@ class VerificationLayer:
         *,
         registry: Any | None = None,
         config_overrides: dict | None = None,
-        workspace: Path | str | None = None,
+        write_boundary_dir: Path | str | None = None,
+        path_resolution_base_dir: Path | str | None = None,
     ) -> RuleResult:
         """L1: Run all rigid rules against proposed tool calls.
 
@@ -725,6 +741,9 @@ class VerificationLayer:
             messages: Conversation history (used by context-sensitive rules).
             registry: ToolRegistry instance for Tag-Driven rules (R-SHELL-GUARD).
             config_overrides: Per-tool capability tag overrides from config.
+            write_boundary_dir: Explicit generic file-write boundary root.
+            path_resolution_base_dir: Base directory for resolving relative
+                write/edit paths before boundary checks.
 
         Returns:
             RuleResult with pass/fail status and any violation messages.
@@ -738,7 +757,12 @@ class VerificationLayer:
         all_violations: list[str] = []
         for rule_fn in _L1_RULES:
             if rule_fn is _check_rule_sensitive_path:
-                violations = rule_fn(tool_calls, extra_deny=extra_deny, workspace=workspace)
+                violations = rule_fn(
+                    tool_calls,
+                    extra_deny=extra_deny,
+                    write_boundary_dir=write_boundary_dir,
+                    path_resolution_base_dir=path_resolution_base_dir,
+                )
             elif rule_fn is _check_rule_ssrs_fatal:
                 violations = rule_fn(tool_calls, messages=messages)
             elif rule_fn is _check_rule_destructive_guard:

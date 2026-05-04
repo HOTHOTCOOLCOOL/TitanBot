@@ -51,12 +51,36 @@ def _register_default_tools(agent: "AgentLoop") -> None:
     sandbox_dir = agent.workspace / "sandbox"
     sandbox_dir.mkdir(parents=True, exist_ok=True)
     
-    agent.tools.register(ReadFileTool(allowed_dir=allowed_dir, forbidden_dirs=None))
-    agent.tools.register(ListDirTool(allowed_dir=allowed_dir, forbidden_dirs=None))
+    agent.tools.register(
+        ReadFileTool(
+            allowed_dir=allowed_dir,
+            forbidden_dirs=None,
+            base_dir=agent.workspace,
+        )
+    )
+    agent.tools.register(
+        ListDirTool(
+            allowed_dir=allowed_dir,
+            forbidden_dirs=None,
+            base_dir=agent.workspace,
+        )
+    )
     
     # Write and Edit are strictly limited to the Sandbox (Zone C)
-    agent.tools.register(WriteFileTool(allowed_dir=sandbox_dir, forbidden_dirs=None))
-    agent.tools.register(EditFileTool(allowed_dir=sandbox_dir, forbidden_dirs=None))
+    agent.tools.register(
+        WriteFileTool(
+            allowed_dir=sandbox_dir,
+            forbidden_dirs=None,
+            base_dir=agent.workspace,
+        )
+    )
+    agent.tools.register(
+        EditFileTool(
+            allowed_dir=sandbox_dir,
+            forbidden_dirs=None,
+            base_dir=agent.workspace,
+        )
+    )
     agent.tools.register(WriteArtifactTool(agent.workspace))
     
     # Shell tool

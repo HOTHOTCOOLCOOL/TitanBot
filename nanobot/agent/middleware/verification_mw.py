@@ -37,12 +37,26 @@ class VerificationMiddleware(AgentMiddleware):
         registry = getattr(ctx, "tool_registry_override", None) or self._agent.tools
         cfg = self._agent._get_config()
         overrides = cfg.agents.sandbox.capability_overrides if cfg and getattr(cfg, 'agents', None) and getattr(cfg.agents, 'sandbox', None) else {}
+        write_tool = registry.get("write_file") if registry and hasattr(registry, "get") else None
+        edit_tool = registry.get("edit_file") if registry and hasattr(registry, "get") else None
+
+        write_boundary_dir = (
+            getattr(write_tool, "_allowed_dir", None)
+            or getattr(edit_tool, "_allowed_dir", None)
+            or self._agent.workspace / "sandbox"
+        )
+        path_resolution_base_dir = (
+            getattr(write_tool, "_base_dir", None)
+            or getattr(edit_tool, "_base_dir", None)
+            or self._agent.workspace
+        )
         rule_result = verification.check_rules(
             ctx.tool_calls,
             ctx.messages,
             registry=registry,
             config_overrides=overrides,
-            workspace=self._agent.workspace,
+            write_boundary_dir=write_boundary_dir,
+            path_resolution_base_dir=path_resolution_base_dir,
         )
 
         if not rule_result.passed:
@@ -69,7 +83,7 @@ class VerificationMiddleware(AgentMiddleware):
         """L3: Anti-pattern audit (log-only, non-critical)."""
         tool_calls_with_args = [
             {"tool": tc.name, "args": tc.arguments}
-            for tc in ctx.tool_calls
+            for tc, _ in zip(ctx.tool_calls, ctx.results)
         ]
         if not tool_calls_with_args:
             return

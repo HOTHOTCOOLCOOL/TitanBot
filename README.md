@@ -5,11 +5,11 @@
     <img src="https://img.shields.io/badge/python-≥3.11-blue" alt="Python">
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
     <img src="https://img.shields.io/badge/tests-1324%20passed-brightgreen" alt="Tests">
-    <img src="https://img.shields.io/badge/phases-45%20completed-blueviolet" alt="Phases">
-    <img src="https://img.shields.io/badge/papers-12%20referenced-orange" alt="Papers">
+    <img src="https://img.shields.io/badge/phases-68%20completed-blueviolet" alt="Phases">
+    <img src="https://img.shields.io/badge/papers-16%20referenced-orange" alt="Papers">
   </p>
   <p>
-    <em>Built upon <a href="https://github.com/HKUDS/nanobot">nanobot</a> by HKUDS — extended through 45 phases of evolution, 11 academic papers, and 1324+ tests.</em>
+    <em>Built upon <a href="https://github.com/HKUDS/nanobot">nanobot</a> by HKUDS — extended through 68 phases of evolution, 16 academic papers, and 1324+ tests.</em>
   </p>
 </div>
 
@@ -17,7 +17,7 @@
 
 > **TitanBot** is a derivative work based on [nanobot](https://github.com/HKUDS/nanobot) by [HKUDS](https://github.com/HKUDS), licensed under the [MIT License](./LICENSE).
 >
-> We deeply respect the original nanobot team's work. Starting from their elegant ultra-lightweight foundation (~10 files, ~4,000 lines), we extended the project through **45 major phases** of independent development, incorporating insights from **11 academic papers** to build an enterprise-grade AI agent framework.
+> We deeply respect the original nanobot team's work. Starting from their elegant ultra-lightweight foundation (~10 files, ~4,000 lines), we extended the project through **68 major phases** of independent development, incorporating insights from **16+ academic papers** to build an enterprise-grade AI agent framework.
 >
 > All original code is used in compliance with the MIT License. The original copyright notice is preserved in our [LICENSE](./LICENSE) file.
 
@@ -36,8 +36,8 @@ TitanBot started as a fork of nanobot and grew into a significantly enhanced AI 
 | **Sub-packages** | 2 | **14** | ×7 |
 | **Memory layers** | 1 (single file) | **7-layer architecture** | ×7 |
 | **Knowledge retrieval** | keyword match | **5-layer hybrid pyramid** | 5 strategies |
-| **Security fixes** | 0 | **32 items** | 0 → 32 |
-| **Academic papers referenced** | 0 | **12** | — |
+| **Security fixes** | 0 | **35+ items** | 0 → 35+ |
+| **Academic papers referenced** | 0 | **16+** | — |
 
 ### 📚 Academic Papers Referenced
 
@@ -52,6 +52,9 @@ Our enhancements were inspired by and implement ideas from the following papers:
 | **AI Memory Survey** | Comprehensive memory system design patterns |
 | **MDER-DR** (arXiv 2603.11223) | Knowledge graph evolution — "move multi-hop complexity from query-time to index-time" |
 | **BubbleRAG** (arXiv 2603.20309) | KG retrieval enhancement — semantic anchor grouping, coverage penalty, schema relaxation |
+| **Skill Dependency Framework** (arXiv 2604.04804v2 & 2604.25727v1) | Strict prompt injection budget and dependency injection ordering for safe execution |
+| **Eywa MCP Framework** (arXiv 2604.27351v1) | Heterogeneous Scientific Foundation Model Collaboration, evaluated for architectural limits |
+| **Reasoning Distillation** | "Reasoning_template" entities for knowledge graph and token-optimized semantic retrieval |
 
 ### 🏗️ Key Enhancements Over Original
 
@@ -756,12 +759,11 @@ Feel free to [open an issue](https://github.com/HOTHOTCOOLCOOL/nanobot/issues) o
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Phase 38A | ⏳ Next | Manager Base Abstraction (Refactoring) |
-| Phase 38B | ⏳ Next | Manager-SubAgent Orchestration (Coordinator Mode) |
-| Phase 36 | 📋 Backlog | Worker Security v2 (Docker seccomp) |
-| Phase 46 | 📋 Backlog | Next steps to be arranged |
+| Phase 69 | ⏳ Next | Harness orchestration phase 2 |
+| Phase 70 | 📋 Backlog | Multi-Agent MCP Integration review |
 
-> **Recently Completed**: Browser Automation (Phase 26B+C ✅), Verification Layer & Smart HITL (Phase 31/32 ✅), Cron Retry/SSRS Guard (Phase 44 ✅), Dynamic Sandbox & Tag-Driven L1 Shell Guard (Phase 45 ✅)
+> **Recently Completed**: Harness Orchestration MVP (Phase 65 ✅), Graph Architecture (Phase 67 ✅), Paper Integration & Observability Gates (Phase 68 ✅), Copilot Studio integration, SSRS/RPA Failsafe mechanisms.
+
 
 ### Contributors
 
@@ -778,7 +780,7 @@ This project follows open source best practices:
 
 - **License**: [MIT License](./LICENSE) — original nanobot copyright preserved
 - **Attribution**: Based on [nanobot](https://github.com/HKUDS/nanobot) by HKUDS
-- **Changes documented**: All 33 phases of evolution are documented in [EVOLUTION.md](./EVOLUTION.md)
+- **Changes documented**: Key phases of evolution are documented in our workspace.
 - **Original features preserved**: Core nanobot functionality maintained and enhanced
 - **Independent development**: All enhancements are original work by HOTHOTCOOLCOOL
 
